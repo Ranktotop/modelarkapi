@@ -1,0 +1,13 @@
+services:
+  modelark-video-proxy:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - modelark-reference-media:/app/data/references
+
+volumes:
+  modelark-reference-media:
+

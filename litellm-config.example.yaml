@@ -1,0 +1,8 @@
+model_list:
+  - model_name: seedance
+    litellm_params:
+      # LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
+      # Keep this stable; MODEL_MAP on the adapter selects the account's model.
+      model: openai/seedance
+      api_base: http://modelark-video-proxy:8080/v1
+      api_key: os.environ/MODELARK_PROXY_API_KEY
