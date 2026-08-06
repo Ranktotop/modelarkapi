@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -30,7 +31,10 @@ def ark_transport(captured: list[httpx.Request]) -> httpx.MockTransport:
                 "id": "cgt-123",
                 "model": "dreamina-seedance-2-0-260128",
                 "status": "succeeded",
-                "content": {"video_url": "https://out.volces.com/generated.mp4"},
+                "content": {
+                    "video_url": "https://out.volces.com/generated.mp4",
+                    "last_frame_url": "https://out.volces.com/last.png",
+                },
                 "created_at": 100,
                 "updated_at": 200,
                 "resolution": "720p",
@@ -238,3 +242,193 @@ async def test_invalid_asset_id_is_rejected_before_modelark(settings: Settings):
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
     assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_first_and_last_frame_roles_and_user_are_translated(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={
+                "prompt": "Transition between the frames",
+                "user": "hashed-user-42",
+                "reference_assets": [
+                    {"id": "asset-first", "type": "image", "role": "first_frame"},
+                    {"id": "asset-last", "type": "image", "role": "last_frame"},
+                ],
+            },
+        )
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert [item["role"] for item in upstream["content"][1:]] == [
+        "first_frame",
+        "last_frame",
+    ]
+    assert upstream["safety_identifier"] == "hashed-user-42"
+
+
+@pytest.mark.asyncio
+async def test_list_videos_is_translated(settings: Settings):
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        task = {
+            "id": "cgt-list-1",
+            "model": "dreamina-seedance-2-0-260128",
+            "status": "running",
+            "created_at": 100,
+            "updated_at": 110,
+        }
+        return httpx.Response(200, json={"items": [task], "total": 3})
+
+    app = create_app(settings, ark_transport=httpx.MockTransport(handler))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.get(
+            "/v1/videos?limit=2&page_num=1&filter.status=running&ignored=x"
+        )
+    assert response.status_code == 200
+    assert response.json()["data"][0]["status"] == "in_progress"
+    assert response.json()["has_more"] is True
+    assert dict(captured[0].url.params) == {
+        "page_size": "2",
+        "page_num": "1",
+        "filter.status": "running",
+    }
+
+
+@pytest.mark.asyncio
+async def test_last_frame_is_streamed(settings: Settings):
+    download = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=b"png-bytes")
+    )
+    app = create_app(
+        settings, ark_transport=ark_transport([]), download_transport=download
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.get("/v1/videos/cgt-123/last_frame")
+    assert response.status_code == 200
+    assert response.content == b"png-bytes"
+    assert response.headers["content-type"].startswith("image/png")
+
+
+@pytest.mark.asyncio
+async def test_multiple_reference_media_are_uploaded_and_deleted(settings: Settings):
+    app = create_app(settings, ark_transport=ark_transport([]))
+    fake_mp4 = b"\x00\x00\x00\x18ftypmp42" + b"x" * 32
+    fake_mp3 = b"ID3" + b"x" * 32
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/media/references",
+            files=[
+                ("files", ("clip.mp4", fake_mp4, "video/mp4")),
+                ("files", ("sound.mp3", fake_mp3, "audio/mpeg")),
+            ],
+        )
+        assert response.status_code == 200
+        references = response.json()["data"]
+        assert [item["kind"] for item in references] == ["video", "audio"]
+        assert all(item["url"].startswith(settings.public_base_url) for item in references)
+
+        media_response = await client.get(
+            f"/media/reference/{references[1]['id']}"
+        )
+        assert media_response.content == fake_mp3
+        assert media_response.headers["content-type"].startswith("audio/mpeg")
+
+        deleted = await client.delete(
+            f"/v1/media/references/{references[0]['id']}"
+        )
+        assert deleted.json()["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_previous_task_last_frame_can_continue_a_video(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={
+                "prompt": "Continue seamlessly",
+                "input_reference_task_id": "cgt-previous",
+            },
+        )
+    assert response.status_code == 200
+    assert captured[0].method == "GET"
+    upstream = json.loads(captured[1].content)
+    assert upstream["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "https://out.volces.com/last.png"},
+        "role": "first_frame",
+    }
+
+
+@pytest.mark.asyncio
+async def test_many_video_tasks_are_submitted_concurrently(settings: Settings):
+    active = 0
+    max_active = 0
+    counter = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, max_active, counter
+        assert request.method == "POST"
+        counter += 1
+        task_number = counter
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return httpx.Response(200, json={"id": f"cgt-parallel-{task_number}"})
+
+    app = create_app(settings, ark_transport=httpx.MockTransport(handler))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        requests = [
+            asyncio.create_task(
+                client.post(
+                    "/v1/videos",
+                    json={"prompt": f"Parallel scene {index}", "duration": 4},
+                )
+            )
+            for index in range(32)
+        ]
+        await asyncio.sleep(0.01)
+        health = await client.get("/health")
+        responses = await asyncio.gather(*requests)
+
+    assert health.status_code == 200
+    assert all(response.status_code == 200 for response in responses)
+    assert len({response.json()["id"] for response in responses}) == 32
+    assert max_active >= 16

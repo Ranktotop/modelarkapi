@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import mimetypes
 import re
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 from urllib.parse import urlparse
 
@@ -16,7 +18,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from .client import ModelArkClient, ModelArkError
 from .config import Settings
 from .media import MediaStore, UploadTooLarge
-from .schemas import VideoObject
+from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError, apply_openai_format, byteplus_to_openai
 
 PASSTHROUGH_FIELDS = {
@@ -41,6 +43,16 @@ ASSET_KINDS = {
     "image": ("image_url", "reference_image"),
     "video": ("video_url", "reference_video"),
     "audio": ("audio_url", "reference_audio"),
+}
+VALID_REFERENCE_ROLES = {
+    "image": {"reference_image", "first_frame", "last_frame"},
+    "video": {"reference_video"},
+    "audio": {"reference_audio"},
+}
+REFERENCE_SIZE_LIMITS = {
+    "image": 30 * 1024 * 1024,
+    "video": 200 * 1024 * 1024,
+    "audio": 15 * 1024 * 1024,
 }
 
 
@@ -147,20 +159,38 @@ def _media_kind(media_type: str | None, default: str = "video") -> str:
     return normalized
 
 
-def _reference_content(url: str, media_type: str | None = None) -> dict[str, Any]:
+def _reference_content(
+    url: str, media_type: str | None = None, role: str | None = None
+) -> dict[str, Any]:
     _validate_public_reference_url(url)
     kind = _media_kind(media_type)
-    content_type, role = ASSET_KINDS[kind]
-    return {"type": content_type, content_type: {"url": url}, "role": role}
+    content_type, _ = ASSET_KINDS[kind]
+    selected_role = _reference_role(kind, role)
+    return {
+        "type": content_type,
+        content_type: {"url": url},
+        "role": selected_role,
+    }
 
 
-def _asset_content(value: str, kind: str = "image") -> dict[str, Any]:
+def _reference_role(kind: str, requested: str | None) -> str:
+    default_role = ASSET_KINDS[kind][1]
+    role = requested or default_role
+    if role not in VALID_REFERENCE_ROLES[kind]:
+        allowed = ", ".join(sorted(VALID_REFERENCE_ROLES[kind]))
+        raise TranslationError(f"Invalid role for {kind}; allowed values: {allowed}")
+    return role
+
+
+def _asset_content(
+    value: str, kind: str = "image", role: str | None = None
+) -> dict[str, Any]:
     normalized_kind = _media_kind(kind, default="image")
-    content_type, role = ASSET_KINDS[normalized_kind]
+    content_type, _ = ASSET_KINDS[normalized_kind]
     return {
         "type": content_type,
         content_type: {"url": _asset_uri(value)},
-        "role": role,
+        "role": _reference_role(normalized_kind, role),
     }
 
 
@@ -171,7 +201,9 @@ def _append_asset_references(
     if isinstance(single_asset, str):
         content.append(
             _asset_content(
-                single_asset, str(data.get("input_reference_asset_type", "image"))
+                single_asset,
+                str(data.get("input_reference_asset_type", "image")),
+                data.get("input_reference_role"),
             )
         )
 
@@ -198,7 +230,10 @@ def _append_asset_references(
         kind = asset.get("type") or asset.get("kind") or "image"
         if not isinstance(kind, str):
             raise TranslationError("Reference asset type must be a string")
-        content.append(_asset_content(asset_id, kind))
+        role = asset.get("role")
+        if role is not None and not isinstance(role, str):
+            raise TranslationError("Reference asset role must be a string")
+        content.append(_asset_content(asset_id, kind, role))
 
 
 def _validate_reference_limits(content: list[dict[str, Any]]) -> None:
@@ -215,9 +250,30 @@ def _validate_reference_limits(content: list[dict[str, Any]]) -> None:
     if counts["audio"] and not (counts["image"] or counts["video"]):
         raise TranslationError("Reference audio requires at least one image or video")
 
+    frame_roles = [
+        item.get("role")
+        for item in content
+        if item.get("role") in {"first_frame", "last_frame"}
+    ]
+    multimodal_roles = {
+        "reference_image",
+        "reference_video",
+        "reference_audio",
+    }
+    if frame_roles and any(item.get("role") in multimodal_roles for item in content):
+        raise TranslationError(
+            "First/last-frame generation cannot be mixed with multimodal references"
+        )
+    if frame_roles.count("first_frame") > 1 or frame_roles.count("last_frame") > 1:
+        raise TranslationError("Only one first_frame and one last_frame are allowed")
+    if "last_frame" in frame_roles and "first_frame" not in frame_roles:
+        raise TranslationError("last_frame requires a first_frame reference")
+
 
 def build_task_payload(
-    data: dict[str, Any], settings: Settings, hosted_reference: tuple[str, str] | None
+    data: dict[str, Any],
+    settings: Settings,
+    hosted_reference: tuple[str, str, str | None] | None,
 ) -> dict[str, Any]:
     prompt = str(data.get("prompt", "")).strip()
     content: list[dict[str, Any]] = []
@@ -232,7 +288,11 @@ def build_task_payload(
     input_url = data.get("input_reference_url")
     if isinstance(input_url, str):
         content.append(
-            _reference_content(input_url, data.get("input_reference_media_type"))
+            _reference_content(
+                input_url,
+                data.get("input_reference_media_type"),
+                data.get("input_reference_role"),
+            )
         )
 
     reference_urls = data.get("reference_urls", [])
@@ -243,7 +303,11 @@ def build_task_payload(
             if isinstance(item, str):
                 content.append(_reference_content(item))
             elif isinstance(item, dict) and isinstance(item.get("url"), str):
-                content.append(_reference_content(item["url"], item.get("media_type")))
+                content.append(
+                    _reference_content(
+                        item["url"], item.get("media_type"), item.get("role")
+                    )
+                )
 
     supplied_content = data.get("content")
     if isinstance(supplied_content, list):
@@ -261,6 +325,8 @@ def build_task_payload(
     for field in PASSTHROUGH_FIELDS:
         if field in data and data[field] is not None:
             payload[field] = data[field]
+    if "safety_identifier" not in payload and data.get("user") is not None:
+        payload["safety_identifier"] = str(data["user"])
 
     if "duration" not in payload and data.get("seconds") is not None:
         try:
@@ -299,11 +365,22 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         media.cleanup()
-        yield
-        await ark.close()
+        async def cleanup_media() -> None:
+            while True:
+                await asyncio.sleep(settings.media_cleanup_interval_seconds)
+                media.cleanup()
+
+        cleanup_task = asyncio.create_task(cleanup_media())
+        try:
+            yield
+        finally:
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
+            await ark.close()
 
     app = FastAPI(
-        title="ModelArk OpenAI Video Proxy", version="0.1.0", lifespan=lifespan
+        title="ModelArk OpenAI Video Proxy", version="0.2.0", lifespan=lifespan
     )
     app.state.settings = settings
     app.state.ark = ark
@@ -334,12 +411,86 @@ def create_app(
         path = media.resolve(name)
         if not path:
             raise HTTPException(status_code=404, detail="Reference not found")
-        media_type = "video/quicktime" if path.suffix == ".mov" else None
+        media_type = mimetypes.guess_type(path.name)[0]
         return FileResponse(path, media_type=media_type)
+
+    @app.post("/v1/media/references", response_model=MediaReferenceList)
+    async def upload_references(request: Request) -> MediaReferenceList:
+        if not settings.public_base_url:
+            raise TranslationError(
+                "PUBLIC_BASE_URL is required for uploaded references"
+            )
+        form = await request.form()
+        uploads = [
+            value
+            for _, value in form.multi_items()
+            if isinstance(value, StarletteUploadFile)
+        ]
+        if not uploads:
+            raise TranslationError("At least one reference file is required")
+        if len(uploads) > 15:
+            raise TranslationError("At most 15 reference files are allowed per upload")
+
+        saved: list[str] = []
+        references: list[MediaReference] = []
+        try:
+            for upload in uploads:
+                name, media_type = await media.save(
+                    _upload_chunks(upload),
+                    filename=upload.filename,
+                    declared_type=upload.content_type,
+                )
+                saved.append(name)
+                kind = media_type.split("/", 1)[0]
+                path = media.resolve(name)
+                size_limit = REFERENCE_SIZE_LIMITS[kind]
+                if path and path.stat().st_size > size_limit:
+                    raise UploadTooLarge(
+                        f"{kind.capitalize()} reference exceeds {size_limit} bytes"
+                    )
+                references.append(
+                    MediaReference(
+                        id=name,
+                        url=(
+                            f"{settings.public_base_url.rstrip('/')}"
+                            f"/media/reference/{name}"
+                        ),
+                        media_type=media_type,
+                        kind=kind,
+                        filename=upload.filename,
+                        expires_at=int(time.time()) + settings.media_ttl_seconds,
+                    )
+                )
+        except Exception:
+            for name in saved:
+                media.remove(name)
+            raise
+        return MediaReferenceList(data=references)
+
+    @app.delete("/v1/media/references/{reference_id}")
+    async def delete_reference(reference_id: str) -> dict[str, Any]:
+        return {"id": reference_id, "deleted": media.remove(reference_id)}
 
     async def create_video(request: Request) -> VideoObject:
         data, upload = await parse_create_request(request)
-        hosted_reference: tuple[str, str] | None = None
+        source_task_id = data.get("input_reference_task_id")
+        if source_task_id is not None:
+            if not isinstance(source_task_id, str) or not source_task_id.startswith("cgt-"):
+                raise TranslationError("input_reference_task_id must be a ModelArk task ID")
+            source_task = await ark.get_task(source_task_id)
+            last_frame_url = (source_task.get("content") or {}).get("last_frame_url")
+            if not isinstance(last_frame_url, str):
+                raise TranslationError(
+                    "Source task has no last frame; create it with return_last_frame=true"
+                )
+            if data.get("input_reference_url"):
+                raise TranslationError(
+                    "input_reference_task_id and input_reference_url cannot be combined"
+                )
+            data["input_reference_url"] = last_frame_url
+            data["input_reference_media_type"] = "image"
+            data["input_reference_role"] = "first_frame"
+        hosted_reference: tuple[str, str, str | None] | None = None
         if upload:
             if not settings.public_base_url:
                 raise TranslationError(
@@ -353,6 +504,7 @@ def create_app(
             hosted_reference = (
                 f"{settings.public_base_url.rstrip('/')}/media/reference/{name}",
                 media_type,
+                data.get("input_reference_role"),
             )
         media.cleanup()
         payload = build_task_payload(data, settings, hosted_reference)
@@ -378,6 +530,63 @@ def create_app(
         create_video,
         methods=["POST"],
         response_model=VideoObject,
+        include_in_schema=False,
+    )
+
+    async def list_videos(request: Request) -> VideoList:
+        allowed = {
+            "page_num",
+            "page_size",
+            "filter.status",
+            "filter.task_ids",
+            "filter.model",
+        }
+        params: list[tuple[str, str]] = []
+        for key, value in request.query_params.multi_items():
+            upstream_key = "page_size" if key == "limit" else key
+            if upstream_key in allowed:
+                params.append((upstream_key, value))
+        try:
+            page_num = next(
+                (int(value) for key, value in params if key == "page_num"), None
+            )
+            page_size = next(
+                (int(value) for key, value in params if key == "page_size"), None
+            )
+        except ValueError as exc:
+            raise TranslationError("page_num and page_size must be integers") from exc
+        if page_num is not None and page_num < 1:
+            raise TranslationError("page_num must be at least 1")
+        if page_size is not None and not 1 <= page_size <= 500:
+            raise TranslationError("page_size must be between 1 and 500")
+        result = await ark.list_tasks(params)
+        items = result.get("items", [])
+        if not isinstance(items, list):
+            raise HTTPException(
+                status_code=502, detail="ModelArk task list has no items array"
+            )
+        total = result.get("total")
+        has_more = (
+            page_num * page_size < total
+            if all(isinstance(value, int) for value in (page_num, page_size, total))
+            else None
+        )
+        return VideoList(
+            data=[byteplus_to_openai(item) for item in items],
+            total=total if isinstance(total, int) else None,
+            page_num=page_num,
+            page_size=page_size,
+            has_more=has_more,
+        )
+
+    app.add_api_route(
+        "/v1/videos", list_videos, methods=["GET"], response_model=VideoList
+    )
+    app.add_api_route(
+        "/videos",
+        list_videos,
+        methods=["GET"],
+        response_model=VideoList,
         include_in_schema=False,
     )
 
@@ -415,7 +624,9 @@ def create_app(
         include_in_schema=False,
     )
 
-    async def video_content(video_id: str):
+    async def stream_task_output(
+        video_id: str, field: str, media_type: str
+    ) -> StreamingResponse | JSONResponse:
         task = await ark.get_task(video_id)
         if task.get("status") != "succeeded":
             return openai_error(
@@ -423,10 +634,14 @@ def create_app(
                 409,
                 "video_not_ready",
             )
-        url = (task.get("content") or {}).get("video_url")
+        url = (task.get("content") or {}).get(field)
         if not isinstance(url, str):
+            detail = f"Successful ModelArk task has no {field}"
+            if field == "last_frame_url":
+                detail += "; enable return_last_frame when creating the task"
             raise HTTPException(
-                status_code=502, detail="Successful ModelArk task has no video_url"
+                status_code=404,
+                detail=detail,
             )
         _safe_download_url(url, settings)
 
@@ -443,12 +658,27 @@ def create_app(
                 async for chunk in response.aiter_bytes():
                     yield chunk
 
-        return StreamingResponse(stream(), media_type="video/mp4")
+        return StreamingResponse(stream(), media_type=media_type)
+
+    async def video_content(video_id: str):
+        return await stream_task_output(video_id, "video_url", "video/mp4")
+
+    async def last_frame_content(video_id: str):
+        return await stream_task_output(video_id, "last_frame_url", "image/png")
 
     app.add_api_route("/v1/videos/{video_id}/content", video_content, methods=["GET"])
     app.add_api_route(
         "/videos/{video_id}/content",
         video_content,
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        "/v1/videos/{video_id}/last_frame", last_frame_content, methods=["GET"]
+    )
+    app.add_api_route(
+        "/videos/{video_id}/last_frame",
+        last_frame_content,
         methods=["GET"],
         include_in_schema=False,
     )

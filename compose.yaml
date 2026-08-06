@@ -7,7 +7,45 @@ services:
       - "8080:8080"
     volumes:
       - modelark-reference-media:/app/data/references
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  seedance-studio:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    restart: unless-stopped
+    environment:
+      MODELARK_PROXY_URL: http://modelark-video-proxy:8080/v1
+      MODELARK_PROXY_API_KEY: ${PROXY_API_KEY}
+      UI_PASSWORD: ${UI_PASSWORD}
+      UI_AUTH_DISABLED: ${UI_AUTH_DISABLED:-false}
+      UI_SESSION_SECRET: ${UI_SESSION_SECRET}
+      UI_COOKIE_SECURE: ${UI_COOKIE_SECURE:-false}
+      UI_MODEL_NAME: seedance
+      UI_JOB_TTL_SECONDS: ${UI_JOB_TTL_SECONDS:-86400}
+      UI_CLEANUP_INTERVAL_SECONDS: ${UI_CLEANUP_INTERVAL_SECONDS:-900}
+      UI_POLL_INTERVAL_SECONDS: ${UI_POLL_INTERVAL_SECONDS:-10}
+      UI_POLL_CONCURRENCY: ${UI_POLL_CONCURRENCY:-20}
+      UI_MAX_PROXY_CONNECTIONS: ${UI_MAX_PROXY_CONNECTIONS:-100}
+      UI_SESSION_TTL_SECONDS: ${UI_SESSION_TTL_SECONDS:-43200}
+      UI_DB_PATH: /app/data/ui.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - seedance-studio-state:/app/data
+    depends_on:
+      modelark-video-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   modelark-reference-media:
-
+  seedance-studio-state:

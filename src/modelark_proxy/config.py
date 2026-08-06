@@ -20,9 +20,12 @@ class Settings(BaseSettings):
     default_generate_audio: bool = True
     media_dir: Path = Path("./data/references")
     media_ttl_seconds: int = 86_400
+    media_cleanup_interval_seconds: int = 900
     max_upload_bytes: int = 200 * 1024 * 1024
     request_timeout_seconds: float = 60.0
     download_timeout_seconds: float = 600.0
+    max_upstream_connections: int = 100
+    max_keepalive_connections: int = 20
     allowed_download_host_suffixes: list[str] = Field(
         default_factory=lambda: [".bytepluses.com", ".volces.com"]
     )

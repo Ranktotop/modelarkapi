@@ -1,6 +1,6 @@
 [project]
 name = "modelark-openai-video-proxy"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenAI Videos API adapter for BytePlus ModelArk Seedance"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,5 +31,5 @@ packages = ["src/modelark_proxy"]
 [tool.pytest.ini_options]
 addopts = "-q"
 asyncio_mode = "auto"
-testpaths = ["tests"]
-
+testpaths = ["tests", "ui/tests"]
+pythonpath = ["ui/backend"]

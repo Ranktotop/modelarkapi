@@ -26,10 +26,18 @@ def detect_media_type(
         return "image/gif", ".gif"
     if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
         return "image/webp", ".webp"
+    if header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+        return "audio/wav", ".wav"
+    if header.startswith((b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")):
+        return "audio/mpeg", ".mp3"
     if declared in {"video/mp4", "video/quicktime"}:
         return declared, ".mp4" if declared == "video/mp4" else ".mov"
+    if declared in {"audio/mpeg", "audio/mp3"} and lower_name.endswith(".mp3"):
+        return "audio/mpeg", ".mp3"
+    if declared in {"audio/wav", "audio/x-wav"} and lower_name.endswith(".wav"):
+        return "audio/wav", ".wav"
     raise ValueError(
-        "input_reference must be an MP4/MOV video or PNG/JPEG/GIF/WEBP image"
+        "reference must be MP4/MOV video, PNG/JPEG/GIF/WEBP image, or MP3/WAV audio"
     )
 
 
@@ -75,6 +83,13 @@ class MediaStore:
             return None
         path = self.directory / name
         return path if path.is_file() else None
+
+    def remove(self, name: str) -> bool:
+        path = self.resolve(name)
+        if not path:
+            return False
+        path.unlink()
+        return True
 
     def cleanup(self) -> None:
         cutoff = time.time() - self.ttl_seconds

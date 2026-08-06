@@ -97,4 +97,9 @@ def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
         size=size,
         model=data.get("model"),
         usage=data.get("usage"),
+        provider_status=provider_status,
+        last_frame_available=isinstance(
+            (data.get("content") or {}).get("last_frame_url"), str
+        ),
+        service_tier=data.get("service_tier"),
     )

@@ -5,11 +5,22 @@ asynchrone Video-API von BytePlus ModelArk. Damit lässt sich Seedance hinter
 einem bestehenden LiteLLM Gateway wie ein OpenAI-kompatibles Videomodell
 verwenden.
 
+Die vollständige, thematisch gegliederte Dokumentation beginnt unter
+[docs/dokumentation.md](docs/dokumentation.md).
+
+Zusätzlich enthält das Projekt ein temporäres
+[Seedance Web Studio](docs/web-studio/README.md) als separaten Docker-Container.
+Es ermöglicht direkte Single-User-Generierungen ohne LiteLLM und speichert
+fertige Videos nicht dauerhaft auf dem Server.
+
 Unterstützt sind:
 
 - `POST /v1/videos` (JSON oder Multipart, inklusive `input_reference`)
+- `POST /v1/media/references` (mehrere temporäre Bild-/Video-/Audio-Uploads)
+- `GET /v1/videos` (Taskliste und Filter)
 - `GET /v1/videos/{id}` (Status)
 - `GET /v1/videos/{id}/content` (MP4-Download als Stream)
+- `GET /v1/videos/{id}/last_frame` (optionales PNG-Endframe)
 - `DELETE /v1/videos/{id}` (Abbruch/Löschen bei ModelArk)
 - Text-to-video, Bildreferenz und eine hochgeladene MP4/MOV-Videoreferenz
 - zusätzliche Referenzen als öffentliche URLs (`reference_urls`)
@@ -47,10 +58,14 @@ Dateisignatur und erkennt MP4/MOV unabhängig vom von LiteLLM gesetzten MIME-Typ
 
 ```bash
 cp .env.example .env
-# .env ausfüllen
+# .env ausfüllen, einschließlich UI_PASSWORD und UI_SESSION_SECRET
 docker compose up --build -d
 curl http://localhost:8080/health
+curl http://localhost:3000/health
 ```
+
+Die Single-User-Oberfläche ist anschließend unter `http://localhost:3000`
+erreichbar. Bei Betrieb hinter HTTPS muss `UI_COOKIE_SECURE=true` gesetzt sein.
 
 Wesentliche Variablen:
 

@@ -23,6 +23,10 @@ class ModelArkClient:
             base_url=settings.ark_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.ark_api_key}"},
             timeout=settings.request_timeout_seconds,
+            limits=httpx.Limits(
+                max_connections=settings.max_upstream_connections,
+                max_keepalive_connections=settings.max_keepalive_connections,
+            ),
             transport=transport,
         )
 
@@ -54,6 +58,12 @@ class ModelArkClient:
 
     async def get_task(self, task_id: str) -> dict[str, Any]:
         response = await self.http.get(f"/contents/generations/tasks/{task_id}")
+        return await self._json(response)
+
+    async def list_tasks(
+        self, params: list[tuple[str, str]]
+    ) -> dict[str, Any]:
+        response = await self.http.get("/contents/generations/tasks", params=params)
         return await self._json(response)
 
     async def delete_task(self, task_id: str) -> dict[str, Any]:

@@ -6,4 +6,7 @@ __pycache__
 *.pyc
 tests
 data
-
+node_modules
+**/node_modules
+ui/frontend/dist
+**/*.tsbuildinfo
