@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,6 +34,13 @@ PASSTHROUGH_FIELDS = {
     "priority",
     "callback_url",
     "safety_identifier",
+}
+
+ASSET_ID_PATTERN = re.compile(r"^asset-[A-Za-z0-9_-]+$")
+ASSET_KINDS = {
+    "image": ("image_url", "reference_image"),
+    "video": ("video_url", "reference_video"),
+    "audio": ("audio_url", "reference_audio"),
 }
 
 
@@ -87,7 +95,12 @@ async def parse_create_request(
                 "return_last_frame",
             }:
                 data[key] = str(value).lower() in {"1", "true", "yes", "on"}
-            elif key in {"reference_urls", "content"}:
+            elif key in {
+                "reference_urls",
+                "reference_asset_ids",
+                "reference_assets",
+                "content",
+            }:
                 try:
                     data[key] = json.loads(value)
                 except json.JSONDecodeError:
@@ -114,15 +127,93 @@ def _validate_public_reference_url(url: str) -> None:
         raise TranslationError("Reference URLs must be absolute HTTP(S) URLs")
 
 
+def _asset_uri(value: str) -> str:
+    asset_id = value.removeprefix("asset://")
+    if not ASSET_ID_PATTERN.fullmatch(asset_id):
+        raise TranslationError(
+            "Asset IDs must use the form 'asset-…' or 'asset://asset-…'"
+        )
+    return f"asset://{asset_id}"
+
+
+def _media_kind(media_type: str | None, default: str = "video") -> str:
+    if not media_type:
+        return default
+    normalized = media_type.lower().strip()
+    if "/" in normalized:
+        normalized = normalized.split("/", 1)[0]
+    if normalized not in ASSET_KINDS:
+        raise TranslationError("Reference type must be image, video, or audio")
+    return normalized
+
+
 def _reference_content(url: str, media_type: str | None = None) -> dict[str, Any]:
     _validate_public_reference_url(url)
-    if media_type and media_type.startswith("image/"):
-        return {
-            "type": "image_url",
-            "image_url": {"url": url},
-            "role": "reference_image",
-        }
-    return {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
+    kind = _media_kind(media_type)
+    content_type, role = ASSET_KINDS[kind]
+    return {"type": content_type, content_type: {"url": url}, "role": role}
+
+
+def _asset_content(value: str, kind: str = "image") -> dict[str, Any]:
+    normalized_kind = _media_kind(kind, default="image")
+    content_type, role = ASSET_KINDS[normalized_kind]
+    return {
+        "type": content_type,
+        content_type: {"url": _asset_uri(value)},
+        "role": role,
+    }
+
+
+def _append_asset_references(
+    content: list[dict[str, Any]], data: dict[str, Any]
+) -> None:
+    single_asset = data.get("input_reference_asset") or data.get("asset_id")
+    if isinstance(single_asset, str):
+        content.append(
+            _asset_content(
+                single_asset, str(data.get("input_reference_asset_type", "image"))
+            )
+        )
+
+    asset_ids = data.get("reference_asset_ids", [])
+    if isinstance(asset_ids, str):
+        asset_ids = [asset_ids]
+    if isinstance(asset_ids, list):
+        for asset_id in asset_ids:
+            if not isinstance(asset_id, str):
+                raise TranslationError("reference_asset_ids must contain only strings")
+            content.append(_asset_content(asset_id))
+
+    assets = data.get("reference_assets", [])
+    if isinstance(assets, dict):
+        assets = [assets]
+    if not isinstance(assets, list):
+        raise TranslationError("reference_assets must be an array")
+    for asset in assets:
+        if not isinstance(asset, dict):
+            raise TranslationError("Each reference_assets entry must be an object")
+        asset_id = asset.get("id") or asset.get("asset_id")
+        if not isinstance(asset_id, str):
+            raise TranslationError("Each reference asset requires an id")
+        kind = asset.get("type") or asset.get("kind") or "image"
+        if not isinstance(kind, str):
+            raise TranslationError("Reference asset type must be a string")
+        content.append(_asset_content(asset_id, kind))
+
+
+def _validate_reference_limits(content: list[dict[str, Any]]) -> None:
+    counts = {
+        kind: sum(item.get("type") == f"{kind}_url" for item in content)
+        for kind in ASSET_KINDS
+    }
+    if counts["image"] > 9:
+        raise TranslationError("Seedance 2.0 accepts at most 9 reference images")
+    if counts["video"] > 3:
+        raise TranslationError("Seedance 2.0 accepts at most 3 reference videos")
+    if counts["audio"] > 3:
+        raise TranslationError("Seedance 2.0 accepts at most 3 reference audio files")
+    if counts["audio"] and not (counts["image"] or counts["video"]):
+        raise TranslationError("Reference audio requires at least one image or video")
 
 
 def build_task_payload(
@@ -135,6 +226,8 @@ def build_task_payload(
 
     if hosted_reference:
         content.append(_reference_content(*hosted_reference))
+
+    _append_asset_references(content, data)
 
     input_url = data.get("input_reference_url")
     if isinstance(input_url, str):
@@ -155,6 +248,8 @@ def build_task_payload(
     supplied_content = data.get("content")
     if isinstance(supplied_content, list):
         content.extend(item for item in supplied_content if isinstance(item, dict))
+
+    _validate_reference_limits(content)
 
     if not content:
         raise TranslationError("A prompt or at least one reference is required")

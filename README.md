@@ -13,6 +13,8 @@ Unterstützt sind:
 - `DELETE /v1/videos/{id}` (Abbruch/Löschen bei ModelArk)
 - Text-to-video, Bildreferenz und eine hochgeladene MP4/MOV-Videoreferenz
 - zusätzliche Referenzen als öffentliche URLs (`reference_urls`)
+- verifizierte Real-Human-Assets über `asset://...` (`asset_id`,
+  `reference_asset_ids` oder `reference_assets`)
 - Übersetzung von `seconds` → `duration` und `size` → `resolution` + `ratio`
 
 ## Die wichtige Einschränkung bei Video-Uploads
@@ -117,6 +119,105 @@ LiteLLM kodiert die zurückgegebene Video-ID intern mit Routing-Informationen.
 Beim Status- und Download-Aufruf muss deshalb genau die von LiteLLM erhaltene
 ID verwendet werden.
 
+## Eigene Gesichter: Freischaltung und Verifizierung
+
+Seedance 2.0 akzeptiert ein Foto oder Video mit einer realen Person nicht als
+gewöhnliche URL oder Datei. Für das eigene Gesicht ist die private
+**Real-human Asset Library** vorgesehen. BytePlus führt dabei eine
+Echtzeit-Lebendprüfung durch und vergleicht spätere Uploads biometrisch mit der
+verifizierten Person.
+
+Offizielle Dokumentation:
+
+- [Real-human Assets über die Konsole hinzufügen](https://docs.byteplus.com/en/docs/ModelArk/2315856)
+- [Private Real-human Asset Library und Assets API](https://docs.byteplus.com/en/docs/ModelArk/2333589)
+- [Advanced Creation Rights](https://docs.byteplus.com/en/docs/ModelArk/2377608)
+
+### Checkliste für die Freischaltung
+
+- [ ] Im BytePlus-Konto die persönliche Real-Human- oder
+      Unternehmensverifizierung abschließen.
+- [ ] Unter **Model activation → Advanced Creation Rights** prüfen, welche
+      kostenlose Stufe für das Konto verfügbar ist.
+- [ ] Im **ModelArk Playground → My assets → Real-human → Add real-human
+      assets** eine Asset-Gruppe anlegen.
+- [ ] Gültigkeitszeitraum und Verwendungszweck festlegen und den
+      Autorisierungs-QR-Code erzeugen.
+- [ ] QR-Code mit dem persönlichen BytePlus-Konto öffnen, Einwilligungen
+      bestätigen und die Echtzeit-Gesichtsprüfung durchführen.
+- [ ] Frontalbilder oder Videos derselben Person hochladen. Eine Asset-Gruppe
+      darf nur eine Person enthalten; Material mit mehreren Gesichtern wird
+      nicht akzeptiert.
+- [ ] Das autorisierte Material im ModelArk-Konto annehmen und warten, bis der
+      Asset-Status **Active** ist.
+- [ ] Die Asset-ID kopieren. Für die API wird daraus
+      `asset://<asset_id>`; eine öffentliche `PUBLIC_BASE_URL` ist dafür nicht
+      erforderlich.
+- [ ] Erst danach den unten beschriebenen lokalen Übersetzungstest ausführen.
+- [ ] Den kostenpflichtigen Live-Test ganz zuletzt mit 4 Sekunden, 480p und
+      ohne Audio starten.
+
+Die Verifizierung ist pro Person und Asset-Gruppe nur einmal nötig. Weitere
+Looks derselben Person können später ergänzt werden, durchlaufen aber jeweils
+eine Konsistenzprüfung. Die kostenlose Basic-Stufe wird derzeit mit bis zu 50
+Assets und 50 Asset-Gruppen geführt; die vollständige Assets-API kann je nach
+Account eine Enterprise-/Entry-Freischaltung oder Einladung erfordern.
+
+### Verifiziertes Bild über LiteLLM verwenden
+
+Der Proxy akzeptiert eine einzelne Bild-Asset-ID über `asset_id`. LiteLLM
+reicht das Feld über `extra_body` an den Adapter weiter:
+
+```python
+from litellm import video_generation
+
+video = video_generation(
+    model="openai/seedance",
+    prompt="The person in Image 1 walks into a modern studio and looks at the camera.",
+    seconds="4",
+    size="864x496",
+    api_base="http://modelark-video-proxy:8080/v1",
+    api_key="your-proxy-key",
+    extra_body={
+        "asset_id": "asset-2026...",
+        "generate_audio": False,
+    },
+)
+```
+
+Über das LiteLLM Gateway kann dasselbe Feld im JSON-Body stehen:
+
+```bash
+curl -X POST http://localhost:4000/v1/videos \
+  -H "Authorization: Bearer $LITELLM_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "seedance",
+    "prompt": "The person in Image 1 walks into a modern studio.",
+    "seconds": "4",
+    "size": "864x496",
+    "asset_id": "asset-2026...",
+    "generate_audio": false
+  }'
+```
+
+Mehrere oder typisierte Assets werden mit `reference_assets` übergeben:
+
+```json
+{
+  "reference_assets": [
+    {"id": "asset-image-...", "type": "image"},
+    {"id": "asset-video-...", "type": "video"},
+    {"id": "asset-audio-...", "type": "audio"}
+  ]
+}
+```
+
+Erlaubte Typen sind `image`, `video` und `audio`. Im Prompt werden sie anhand
+ihrer Reihenfolge als `Image 1`, `Video 1` oder `Audio 1` bezeichnet – nicht
+mit der Asset-ID. Der Adapter normalisiert und validiert die IDs und erzeugt
+die von ModelArk erwarteten `asset://...`-URIs.
+
 ## Provider-spezifische Optionen
 
 Bei einem direkten Request an diesen Proxy können ModelArk-Felder wie
@@ -139,9 +240,9 @@ Referenzen sind über `reference_urls` möglich:
 ```
 
 Die standardisierte OpenAI/LiteLLM-Oberfläche besitzt nur ein
-`input_reference`-Feld. Für bis zu drei Videos und neun Bilder ist daher
-entweder `reference_urls`/`content` als Provider-Erweiterung oder ein späterer
-nativer LiteLLM-Provider erforderlich.
+`input_reference`-Feld. Der Adapter nutzt deshalb `reference_urls`,
+`reference_assets` oder `content` als Provider-Erweiterungen für mehrere
+Referenzen.
 
 ## Lokal entwickeln und testen
 
@@ -153,3 +254,5 @@ pytest
 ```
 
 Die Tests verwenden simulierte ModelArk-Antworten und verursachen keine Kosten.
+Der Live-Test für ein verifiziertes Real-Human-Asset bleibt bewusst ausstehend,
+bis Freischaltung, Einwilligung und Asset-Status `Active` bestätigt sind.

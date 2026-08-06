@@ -159,3 +159,82 @@ async def test_upload_requires_public_base_url(settings: Settings):
         )
     assert response.status_code == 400
     assert "PUBLIC_BASE_URL" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_authorized_asset_is_translated_without_public_url(settings: Settings):
+    settings.public_base_url = None
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={
+                "model": "seedance",
+                "prompt": "The person in Image 1 walks into the studio.",
+                "asset_id": "asset-20260807-portrait",
+            },
+        )
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert upstream["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "asset://asset-20260807-portrait"},
+        "role": "reference_image",
+    }
+
+
+@pytest.mark.asyncio
+async def test_typed_authorized_assets_are_translated(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={
+                "prompt": "Use Image 1, Video 1, and Audio 1.",
+                "reference_assets": [
+                    {"id": "asset-image", "type": "image"},
+                    {"id": "asset://asset-video", "type": "video"},
+                    {"id": "asset-audio", "type": "audio"},
+                ],
+            },
+        )
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert [item["type"] for item in upstream["content"]] == [
+        "text",
+        "image_url",
+        "video_url",
+        "audio_url",
+    ]
+    assert upstream["content"][2]["video_url"]["url"] == "asset://asset-video"
+
+
+@pytest.mark.asyncio
+async def test_invalid_asset_id_is_rejected_before_modelark(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={"prompt": "test", "asset_id": "https://attacker.example/file"},
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert captured == []
