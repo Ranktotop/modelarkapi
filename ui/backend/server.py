@@ -30,7 +30,9 @@ class UISettings:
         self.proxy_url = os.getenv(
             "MODELARK_PROXY_URL", "http://modelark-video-proxy:8080/v1"
         ).rstrip("/")
-        self.proxy_key = os.getenv("MODELARK_PROXY_API_KEY", "")
+        self.proxy_key = os.getenv(
+            "MODELARK_PROXY_API_KEY", os.getenv("PROXY_API_KEY", "")
+        )
         self.password = os.getenv("UI_PASSWORD", "")
         self.auth_disabled = os.getenv("UI_AUTH_DISABLED", "false").lower() in {
             "1",
@@ -319,7 +321,9 @@ def create_app(
         public_api = path in {"/api/login", "/api/session", "/health"}
         if path.startswith("/api/") and not public_api:
             if not _valid_session(request.cookies.get("seedance_session"), settings):
-                return JSONResponse({"error": "authentication_required"}, status_code=401)
+                return JSONResponse(
+                    {"error": "authentication_required"}, status_code=401
+                )
             if request.method not in {"GET", "HEAD", "OPTIONS"} and (
                 request.headers.get("x-ui-request") != "1"
             ):
@@ -379,9 +383,7 @@ def create_app(
     async def upload_references(request: Request) -> JSONResponse:
         form = await request.form()
         uploads = [
-            value
-            for _, value in form.multi_items()
-            if isinstance(value, UploadFile)
+            value for _, value in form.multi_items() if isinstance(value, UploadFile)
         ]
         if not uploads:
             raise HTTPException(status_code=400, detail="No files supplied")
@@ -435,9 +437,7 @@ def create_app(
 
     @app.delete("/api/videos/{task_id}")
     async def delete_video(task_id: str) -> JSONResponse:
-        status, body = await proxy_json(
-            "DELETE", f"/videos/{quote(task_id, safe='')}"
-        )
+        status, body = await proxy_json("DELETE", f"/videos/{quote(task_id, safe='')}")
         if status < 400 or status == 404:
             store.delete(task_id)
         return JSONResponse(body, status_code=status)

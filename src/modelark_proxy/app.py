@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,6 +16,8 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from .asset_jobs import AssetJobManager
+from .assets import AssetAPIError, AssetClient
 from .client import ModelArkClient, ModelArkError
 from .config import Settings
 from .media import MediaStore, UploadTooLarge
@@ -105,6 +108,7 @@ async def parse_create_request(
                 "watermark",
                 "camera_fixed",
                 "return_last_frame",
+                "real_human",
             }:
                 data[key] = str(value).lower() in {"1", "true", "yes", "on"}
             elif key in {
@@ -338,6 +342,63 @@ def build_task_payload(
     return payload
 
 
+def _local_reference_id(url: str, settings: Settings) -> str | None:
+    if not settings.public_base_url:
+        return None
+    prefix = f"{settings.public_base_url.rstrip('/')}/media/reference/"
+    return url[len(prefix) :] if url.startswith(prefix) else None
+
+
+def extract_real_human_sources(
+    source_data: dict[str, Any], settings: Settings
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Remove references marked real_human and return them for asset ingestion."""
+    data = deepcopy(source_data)
+    sources: list[dict[str, Any]] = []
+
+    input_url = data.get("input_reference_url")
+    if data.get("real_human") is True and isinstance(input_url, str):
+        kind = _media_kind(data.get("input_reference_media_type"))
+        sources.append(
+            {
+                "url": input_url,
+                "kind": kind,
+                "role": _reference_role(kind, data.get("input_reference_role")),
+                "local_id": _local_reference_id(input_url, settings),
+            }
+        )
+        data.pop("input_reference_url", None)
+
+    references = data.get("reference_urls", [])
+    if isinstance(references, list):
+        ordinary: list[Any] = []
+        for item in references:
+            if isinstance(item, dict) and item.get("real_human") is True:
+                url = item.get("url")
+                if not isinstance(url, str):
+                    raise TranslationError("A real-human reference requires a URL")
+                _validate_public_reference_url(url)
+                kind = _media_kind(item.get("media_type"))
+                sources.append(
+                    {
+                        "url": url,
+                        "kind": kind,
+                        "role": _reference_role(kind, item.get("role")),
+                        "local_id": _local_reference_id(url, settings),
+                    }
+                )
+            else:
+                ordinary.append(item)
+        data["reference_urls"] = ordinary
+
+    if sources and not settings.real_human_assets_configured:
+        raise TranslationError(
+            "Real-human processing requires BYTEPLUS_ACCESS_KEY_ID, "
+            "BYTEPLUS_SECRET_ACCESS_KEY, and BYTEPLUS_ASSET_GROUP_ID"
+        )
+    return data, sources
+
+
 def _safe_download_url(url: str, settings: Settings) -> None:
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
@@ -354,6 +415,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     ark_transport: httpx.AsyncBaseTransport | None = None,
+    asset_transport: httpx.AsyncBaseTransport | None = None,
     download_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -361,22 +423,42 @@ def create_app(
         settings.media_dir, settings.max_upload_bytes, settings.media_ttl_seconds
     )
     ark = ModelArkClient(settings, ark_transport)
+    assets = AssetClient(settings, asset_transport)
+    asset_jobs = AssetJobManager(
+        settings,
+        assets,
+        ark,
+        lambda data: build_task_payload(data, settings, None),
+        media.remove,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         media.cleanup()
+
         async def cleanup_media() -> None:
             while True:
                 await asyncio.sleep(settings.media_cleanup_interval_seconds)
                 media.cleanup()
 
+        async def maintain_asset_jobs() -> None:
+            while True:
+                await asset_jobs.maintenance()
+                await asyncio.sleep(settings.asset_maintenance_interval_seconds)
+
         cleanup_task = asyncio.create_task(cleanup_media())
+        asset_task = asyncio.create_task(maintain_asset_jobs())
         try:
             yield
         finally:
             cleanup_task.cancel()
+            asset_task.cancel()
             with suppress(asyncio.CancelledError):
                 await cleanup_task
+            with suppress(asyncio.CancelledError):
+                await asset_task
+            await asset_jobs.close()
+            await assets.close()
             await ark.close()
 
     app = FastAPI(
@@ -384,6 +466,8 @@ def create_app(
     )
     app.state.settings = settings
     app.state.ark = ark
+    app.state.assets = assets
+    app.state.asset_jobs = asset_jobs
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
@@ -397,6 +481,8 @@ def create_app(
             return await call_next(request)
         except ModelArkError as exc:
             return openai_error(str(exc), exc.status_code, "modelark_error")
+        except AssetAPIError as exc:
+            return openai_error(str(exc), 502, "modelark_asset_error")
         except TranslationError as exc:
             return openai_error(str(exc), 400, "invalid_request")
         except UploadTooLarge as exc:
@@ -405,6 +491,30 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/real-human/configuration")
+    @app.get("/real-human/configuration", include_in_schema=False)
+    async def real_human_configuration() -> dict[str, Any]:
+        if not settings.real_human_assets_configured:
+            return {"configured": False, "verified": False}
+        result = await assets.list_asset_groups()
+        items = result.get("Items", [])
+        matched = next(
+            (
+                item
+                for item in items
+                if isinstance(item, dict)
+                and item.get("Id") == settings.byteplus_asset_group_id
+            ),
+            None,
+        )
+        return {
+            "configured": True,
+            "verified": matched is not None,
+            "group_id": settings.byteplus_asset_group_id,
+            "project_name": settings.byteplus_project_name,
+            "group_type": matched.get("GroupType") if matched else None,
+        }
 
     @app.get("/media/reference/{name}", include_in_schema=False)
     async def reference_media(name: str):
@@ -475,8 +585,12 @@ def create_app(
         data, upload = await parse_create_request(request)
         source_task_id = data.get("input_reference_task_id")
         if source_task_id is not None:
-            if not isinstance(source_task_id, str) or not source_task_id.startswith("cgt-"):
-                raise TranslationError("input_reference_task_id must be a ModelArk task ID")
+            if not isinstance(source_task_id, str) or not source_task_id.startswith(
+                "cgt-"
+            ):
+                raise TranslationError(
+                    "input_reference_task_id must be a ModelArk task ID"
+                )
             source_task = await ark.get_task(source_task_id)
             last_frame_url = (source_task.get("content") or {}).get("last_frame_url")
             if not isinstance(last_frame_url, str):
@@ -506,7 +620,14 @@ def create_app(
                 media_type,
                 data.get("input_reference_role"),
             )
+            if data.get("real_human") is True:
+                data["input_reference_url"] = hosted_reference[0]
+                data["input_reference_media_type"] = hosted_reference[1]
+                hosted_reference = None
         media.cleanup()
+        data, real_human_sources = extract_real_human_sources(data, settings)
+        if real_human_sources:
+            return asset_jobs.create(data, real_human_sources)
         payload = build_task_payload(data, settings, hosted_reference)
         result = await ark.create_task(payload)
         now = int(time.time())
@@ -591,6 +712,9 @@ def create_app(
     )
 
     async def get_video(video_id: str) -> VideoObject:
+        local = asset_jobs.get_video(video_id)
+        if local:
+            return local
         return byteplus_to_openai(await ark.get_task(video_id))
 
     app.add_api_route(
@@ -605,6 +729,8 @@ def create_app(
     )
 
     async def delete_video(video_id: str) -> VideoObject:
+        if asset_jobs.get_video(video_id):
+            return await asset_jobs.cancel(video_id)
         result = await ark.delete_task(video_id)
         result.setdefault("id", video_id)
         result.setdefault("status", "cancelled")
@@ -627,6 +753,16 @@ def create_app(
     async def stream_task_output(
         video_id: str, field: str, media_type: str
     ) -> StreamingResponse | JSONResponse:
+        local = asset_jobs.get_video(video_id)
+        if local:
+            provider_id = asset_jobs.provider_id(video_id)
+            if not provider_id:
+                return openai_error(
+                    f"Video is not ready (status: {local.status})",
+                    409,
+                    "video_not_ready",
+                )
+            video_id = provider_id
         task = await ark.get_task(video_id)
         if task.get("status") != "succeeded":
             return openai_error(

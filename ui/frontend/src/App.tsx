@@ -150,6 +150,12 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     await api(`/api/references/${encodeURIComponent(reference.id)}`, { method: "DELETE" }).catch(() => undefined);
   }
 
+  function toggleRealHuman(referenceId: string) {
+    setReferences(current => current.map(item =>
+      item.id === referenceId ? { ...item, real_human: !item.real_human } : item
+    ));
+  }
+
   function addAsset() {
     const id = assetId.trim().replace(/^asset:\/\//, "");
     if (!id.startsWith("asset-")) return setError("Asset-IDs müssen mit asset- beginnen.");
@@ -192,7 +198,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       watermark,
       return_last_frame: returnLastFrame,
       priority,
-      ...(includeReferences && references.length ? { reference_urls: references.map(item => ({ url: item.url, media_type: item.kind, role: roleFor(item.kind) })) } : {}),
+      ...(includeReferences && references.length ? { reference_urls: references.map(item => ({ url: item.url, media_type: item.kind, role: roleFor(item.kind), real_human: Boolean(item.real_human) })) } : {}),
       ...(includeReferences && assets.length ? { reference_assets: assets.map(item => ({ id: item.id, type: item.type, role: roleFor(item.type) })) } : {}),
       ...(includeReferences && continuationTaskId ? { input_reference_task_id: continuationTaskId } : {}),
     };
@@ -261,7 +267,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>
           {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>Letztes Frame aus vorherigem Job</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
           {(references.length > 0 || assets.length > 0) && <div className="reference-list">
-            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span></div><button onClick={() => removeReference(item)}><Icon name="trash" /></button></div>)}
+            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label></div><button onClick={() => removeReference(item)}><Icon name="trash" /></button></div>)}
             {assets.map((item, index) => <div className="reference-card asset" key={`${item.id}-${index}`}><div className={`media-symbol ${item.type}`}>A</div><div><strong>{item.id}</strong><span>{kindLabel[item.type]} · verifiziertes Asset</span></div><button onClick={() => setAssets(current => current.filter((_, itemIndex) => itemIndex !== index))}><Icon name="trash" /></button></div>)}
           </div>}
           <div className="asset-adder"><input value={assetId} onChange={e => setAssetId(e.target.value)} placeholder="Real-Human Asset-ID (asset-…)"/><select value={assetType} onChange={e => setAssetType(e.target.value as MediaKind)}><option value="image">Bild</option><option value="video">Video</option><option value="audio">Audio</option></select><button onClick={addAsset}><Icon name="plus" /> Asset</button></div>
@@ -284,7 +290,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="results-header"><div><p className="eyebrow">OUTPUT</p><h2>Generierungen</h2></div><span>{jobs.length}</span></div>
         {selected ? <>
           <div className={`preview ${selected.provider.status}`}>
-            {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status)}</strong><span>{selected.provider.error?.message || "Seedance verarbeitet deine Szene."}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
+            {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           {selected.provider.status === "completed" && <div className="result-actions"><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> MP4 laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</div>}
@@ -307,7 +313,8 @@ function Status({ status }: { status: string }) {
   return <span className={`status ${status}`}><i />{labels[status] || status}</span>;
 }
 
-function statusTitle(status: string) {
+function statusTitle(status: string, providerStatus?: string) {
+  if (providerStatus === "asset_processing") return "Referenz wird verifiziert";
   if (status === "queued") return "In der Warteschlange";
   if (status === "failed") return "Generierung fehlgeschlagen";
   return "Video wird gerendert";

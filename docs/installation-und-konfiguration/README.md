@@ -15,11 +15,14 @@ liegt standardmäßig unter `http://localhost:8080/docs`.
 
 ## Lokaler Prozess
 
+Für die Entwicklung die eingecheckte VS-Code-Konfiguration **Local Full
+Stack** aus `.vscode/launch.json` verwenden. Die folgenden Befehle dienen nur
+der einmaligen Einrichtung der Python-Umgebung, nicht dem Serverstart:
+
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[test]'
-modelark-video-proxy
 ```
 
 ## Umgebungsvariablen
@@ -42,6 +45,21 @@ modelark-video-proxy
 | `MAX_UPSTREAM_CONNECTIONS` | `100` | maximale parallele ModelArk-Verbindungen |
 | `MAX_KEEPALIVE_CONNECTIONS` | `20` | wiederverwendete ModelArk-Verbindungen |
 | `ALLOWED_DOWNLOAD_HOST_SUFFIXES` | BytePlus/Volces | erlaubte Hosts für Ergebnisdownloads |
+| `BYTEPLUS_ACCESS_KEY_ID` | leer | AK des dedizierten IAM-Users für die Assets API |
+| `BYTEPLUS_SECRET_ACCESS_KEY` | leer | SK des IAM-Users; ausschließlich serverseitig |
+| `BYTEPLUS_ASSET_GROUP_ID` | leer | verifizierte `group-…`-ID der Person |
+| `BYTEPLUS_PROJECT_NAME` | `default` | gemeinsames Projekt von Gruppe und Inferenzendpunkt |
+| `BYTEPLUS_ASSET_REGION` | `ap-southeast-1` | Signaturregion der Assets API |
+| `BYTEPLUS_ASSET_ENDPOINT` | AP-Southeast Assets API | signierter ModelArk-OpenAPI-Endpunkt |
+| `ASSET_JOB_DB` | `./data/proxy-jobs.db` | persistenter Zustand temporärer Asset-Jobs |
+| `ASSET_POLL_INTERVAL_SECONDS` | `5` | Mindestabstand der `GetAsset`-Prüfungen |
+| `ASSET_MAINTENANCE_INTERVAL_SECONDS` | `2` | Takt des nicht blockierenden Job-Workers |
+| `ASSET_MAX_PROCESSING_SECONDS` | `3600` | maximale Asset-Aufbereitungszeit |
+| `ASSET_JOB_TTL_SECONDS` | `86400` | maximale Job- und Remote-Asset-Lebenszeit |
+| `ASSET_WORKER_CONCURRENCY` | `10` | parallele Asset-/Job-Worker |
+| `ASSET_CLEANUP_RETRIES` | `5` | begrenzt den Exponenten des Cleanup-Backoffs |
+| `ASSET_ORPHAN_CLEANUP_INTERVAL_SECONDS` | `900` | Abstand des Remote-Reconcilers |
+| `ASSET_ORPHAN_TTL_SECONDS` | `86400` | Mindestalter verwaister App-Assets vor Löschung |
 
 Beispiel für Alias-Mapping:
 
@@ -54,6 +72,10 @@ PUBLIC_BASE_URL=https://video-proxy.example.com
 
 `.env` ist von Git ausgeschlossen. API-Schlüssel dürfen weder committed noch
 in Logs, Fehlermeldungen oder Screenshots veröffentlicht werden.
+
+Die IAM-Einrichtung ist unter
+[Real-Human-Assets](../real-human-assets/README.md#dedizierten-iam-user-und-aksk-anlegen)
+Schritt für Schritt beschrieben.
 
 ## Web Studio
 

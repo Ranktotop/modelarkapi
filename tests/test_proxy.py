@@ -17,6 +17,10 @@ def settings(tmp_path: Path) -> Settings:
         ark_api_key="ark-test",
         public_base_url="https://seedance-proxy.example.com",
         media_dir=tmp_path / "media",
+        asset_job_db=tmp_path / "proxy-jobs.db",
+        byteplus_access_key_id="",
+        byteplus_secret_access_key="",
+        byteplus_asset_group_id="",
     )
 
 
@@ -350,17 +354,15 @@ async def test_multiple_reference_media_are_uploaded_and_deleted(settings: Setti
         assert response.status_code == 200
         references = response.json()["data"]
         assert [item["kind"] for item in references] == ["video", "audio"]
-        assert all(item["url"].startswith(settings.public_base_url) for item in references)
-
-        media_response = await client.get(
-            f"/media/reference/{references[1]['id']}"
+        assert all(
+            item["url"].startswith(settings.public_base_url) for item in references
         )
+
+        media_response = await client.get(f"/media/reference/{references[1]['id']}")
         assert media_response.content == fake_mp3
         assert media_response.headers["content-type"].startswith("audio/mpeg")
 
-        deleted = await client.delete(
-            f"/v1/media/references/{references[0]['id']}"
-        )
+        deleted = await client.delete(f"/v1/media/references/{references[0]['id']}")
         assert deleted.json()["deleted"] is True
 
 
@@ -432,3 +434,244 @@ async def test_many_video_tasks_are_submitted_concurrently(settings: Settings):
     assert all(response.status_code == 200 for response in responses)
     assert len({response.json()["id"] for response in responses}) == 32
     assert max_active >= 16
+
+
+@pytest.mark.asyncio
+async def test_real_human_reference_is_registered_used_and_deleted(settings: Settings):
+    settings.byteplus_access_key_id = "ak-test"
+    settings.byteplus_secret_access_key = "sk-test"
+    settings.byteplus_asset_group_id = "group-person"
+    settings.asset_job_db = settings.media_dir.parent / "asset-jobs.db"
+    settings.asset_maintenance_interval_seconds = 0.01
+    asset_requests: list[httpx.Request] = []
+
+    def assets_handler(request: httpx.Request) -> httpx.Response:
+        asset_requests.append(request)
+        action = request.url.params["Action"]
+        if action == "CreateAsset":
+            return httpx.Response(200, json={"Result": {"Id": "asset-temporary"}})
+        if action == "GetAsset":
+            return httpx.Response(
+                200, json={"Result": {"Id": "asset-temporary", "Status": "Active"}}
+            )
+        if action == "DeleteAsset":
+            return httpx.Response(200, json={"Result": {}})
+        if action == "ListAssets":
+            return httpx.Response(200, json={"Result": {"Items": [], "TotalCount": 0}})
+        raise AssertionError(action)
+
+    ark_requests: list[httpx.Request] = []
+
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        ark_requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "cgt-real-human"})
+        return httpx.Response(
+            200,
+            json={
+                "id": "cgt-real-human",
+                "status": "succeeded",
+                "model": settings.default_model,
+                "created_at": 100,
+                "updated_at": 200,
+                "content": {"video_url": "https://out.volces.com/generated.mp4"},
+            },
+        )
+
+    app = create_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(assets_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        upload = await client.post(
+            "/v1/media/references",
+            files={"files": ("portrait.mp4", b"1234ftypmp42", "video/mp4")},
+        )
+        reference = upload.json()["data"][0]
+        created = await client.post(
+            "/v1/videos",
+            json={
+                "prompt": "Use Video 1",
+                "reference_urls": [
+                    {
+                        "url": reference["url"],
+                        "media_type": "video",
+                        "role": "reference_video",
+                        "real_human": True,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 200
+        local_id = created.json()["id"]
+        assert local_id.startswith("video-rh-")
+
+        for _ in range(100):
+            status = await client.get(f"/v1/videos/{local_id}")
+            if status.json()["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert status.json()["status"] == "completed"
+
+    actions = [request.url.params["Action"] for request in asset_requests]
+    assert [action for action in actions if action != "ListAssets"] == [
+        "CreateAsset",
+        "GetAsset",
+        "DeleteAsset",
+    ]
+    create_request = next(
+        request
+        for request in asset_requests
+        if request.url.params["Action"] == "CreateAsset"
+    )
+    create_body = json.loads(create_request.content)
+    assert create_body["GroupId"] == "group-person"
+    assert create_body["AssetType"] == "Video"
+    assert "Credential=ak-test/" in create_request.headers["authorization"]
+    video_payload = json.loads(
+        next(r.content for r in ark_requests if r.method == "POST")
+    )
+    assert video_payload["content"][1] == {
+        "type": "video_url",
+        "video_url": {"url": "asset://asset-temporary"},
+        "role": "reference_video",
+    }
+    assert not list(settings.media_dir.glob("*.mp4"))
+
+
+@pytest.mark.asyncio
+async def test_real_human_reference_requires_asset_credentials(settings: Settings):
+    app = create_app(settings, ark_transport=ark_transport([]))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos",
+            json={
+                "prompt": "test",
+                "reference_urls": [
+                    {
+                        "url": "https://example.com/me.mp4",
+                        "media_type": "video",
+                        "real_human": True,
+                    }
+                ],
+            },
+        )
+    assert response.status_code == 400
+    assert "BYTEPLUS_ACCESS_KEY_ID" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_real_human_configuration_reports_missing_credentials(settings: Settings):
+    app = create_app(settings, ark_transport=ark_transport([]))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.get("/v1/real-human/configuration")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False, "verified": False}
+
+
+@pytest.mark.asyncio
+async def test_real_human_jobs_are_backgrounded_and_concurrency_is_bounded(
+    settings: Settings,
+):
+    settings.byteplus_access_key_id = "ak-test"
+    settings.byteplus_secret_access_key = "sk-test"
+    settings.byteplus_asset_group_id = "group-person"
+    settings.asset_worker_concurrency = 4
+    settings.asset_maintenance_interval_seconds = 0.005
+    settings.asset_poll_interval_seconds = 0.001
+    active_creates = 0
+    max_active_creates = 0
+    asset_counter = 0
+
+    async def asset_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active_creates, max_active_creates, asset_counter
+        action = request.url.params["Action"]
+        if action == "ListAssets":
+            return httpx.Response(200, json={"Result": {"Items": [], "TotalCount": 0}})
+        if action == "CreateAsset":
+            asset_counter += 1
+            asset_id = f"asset-parallel-{asset_counter}"
+            active_creates += 1
+            max_active_creates = max(max_active_creates, active_creates)
+            await asyncio.sleep(0.03)
+            active_creates -= 1
+            return httpx.Response(200, json={"Result": {"Id": asset_id}})
+        if action == "GetAsset":
+            body = json.loads(request.content)
+            return httpx.Response(
+                200, json={"Result": {"Id": body["Id"], "Status": "Active"}}
+            )
+        if action == "DeleteAsset":
+            return httpx.Response(200, json={"Result": {}})
+        raise AssertionError(action)
+
+    provider_counter = 0
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_counter
+        if request.method == "POST":
+            provider_counter += 1
+            return httpx.Response(200, json={"id": f"cgt-rh-{provider_counter}"})
+        task_id = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"id": task_id, "status": "succeeded"})
+
+    app = create_app(
+        settings,
+        ark_transport=httpx.MockTransport(provider_handler),
+        asset_transport=httpx.MockTransport(asset_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        created = await asyncio.gather(
+            *(
+                client.post(
+                    "/v1/videos",
+                    json={
+                        "prompt": f"Edit Video 1, request {index}",
+                        "reference_urls": [
+                            {
+                                "url": f"https://example.com/person-{index}.mp4",
+                                "media_type": "video",
+                                "real_human": True,
+                            }
+                        ],
+                    },
+                )
+                for index in range(8)
+            )
+        )
+        health = await client.get("/health")
+        ids = [response.json()["id"] for response in created]
+        assert all(response.status_code == 200 for response in created)
+        assert health.status_code == 200
+
+        for _ in range(200):
+            statuses = await asyncio.gather(
+                *(client.get(f"/v1/videos/{job_id}") for job_id in ids)
+            )
+            if all(response.json()["status"] == "completed" for response in statuses):
+                break
+            await asyncio.sleep(0.01)
+
+    assert all(response.json()["status"] == "completed" for response in statuses)
+    assert max_active_creates == 4

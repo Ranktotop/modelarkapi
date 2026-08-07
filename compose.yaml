@@ -3,10 +3,13 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      ASSET_JOB_DB: /app/state/proxy-jobs.db
     ports:
       - "8080:8080"
     volumes:
       - modelark-reference-media:/app/data/references
+      - modelark-proxy-state:/app/state
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 15s
@@ -48,4 +51,5 @@ services:
 
 volumes:
   modelark-reference-media:
+  modelark-proxy-state:
   seedance-studio-state:

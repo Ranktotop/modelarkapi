@@ -97,6 +97,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .asset-adder { display: grid; grid-template-columns: 1fr 90px auto; gap: 7px; margin-top: 9px; }
 .asset-adder input, .asset-adder select, .asset-adder button, .settings-grid select { height: 40px; border: 1px solid var(--line); border-radius: 10px; color: #dad9de; background: #0d0e12; outline: 0; }
 .asset-adder input { min-width: 0; padding: 0 12px; }
+.biometric-toggle { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: #b7b2c3; font-size: 12px; cursor: pointer; }
+.biometric-toggle input { accent-color: #9b7cff; }
 .asset-adder select, .settings-grid select { padding: 0 10px; }
 .asset-adder button { display: flex; align-items: center; gap: 5px; padding: 0 12px; cursor: pointer; }
 .asset-adder button svg { width: 14px; }

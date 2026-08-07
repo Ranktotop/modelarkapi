@@ -60,9 +60,7 @@ class ModelArkClient:
         response = await self.http.get(f"/contents/generations/tasks/{task_id}")
         return await self._json(response)
 
-    async def list_tasks(
-        self, params: list[tuple[str, str]]
-    ) -> dict[str, Any]:
+    async def list_tasks(self, params: list[tuple[str, str]]) -> dict[str, Any]:
         response = await self.http.get("/contents/generations/tasks", params=params)
         return await self._json(response)
 

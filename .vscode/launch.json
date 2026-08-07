@@ -1,0 +1,66 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Local: ModelArk Proxy",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "module": "uvicorn",
+      "args": [
+        "modelark_proxy.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8081",
+        "--reload"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "Local: Studio Backend",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "module": "uvicorn",
+      "args": [
+        "server:create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "3000",
+        "--reload"
+      ],
+      "cwd": "${workspaceFolder}/ui/backend",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "MODELARK_PROXY_URL": "http://127.0.0.1:8081/v1",
+        "UI_AUTH_DISABLED": "true",
+        "UI_COOKIE_SECURE": "false",
+        "UI_DB_PATH": "${workspaceFolder}/data/ui/ui.db"
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "Local: Studio Frontend",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev -- --host 127.0.0.1 --port 5173",
+      "cwd": "${workspaceFolder}/ui/frontend"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Local Full Stack",
+      "configurations": [
+        "Local: ModelArk Proxy",
+        "Local: Studio Backend",
+        "Local: Studio Frontend"
+      ],
+      "stopAll": true
+    }
+  ]
+}

@@ -1,5 +1,21 @@
 # Entwicklung und Tests
 
+## Entwicklungsserver über VS Code starten
+
+Entwicklungsserver werden ausschließlich lokal über
+`.vscode/launch.json` gestartet. In VS Code unter **Run and Debug** steht dafür
+die Compound-Konfiguration **Local Full Stack** bereit. Sie startet:
+
+- ModelArk-Proxy auf `http://127.0.0.1:8081`,
+- Studio-Backend auf `http://127.0.0.1:3000`,
+- Vite-Frontend auf `http://127.0.0.1:5173`.
+
+Die Einzelkonfigurationen können verwendet werden, wenn nur eine Komponente
+benötigt wird. Werte aus `.env` werden von den Python-Konfigurationen geladen;
+Secrets stehen nicht in der Launch-Datei. Docker ist ausschließlich für
+Build-/Deployment-Prüfungen vorgesehen und wird nicht zum Starten einer
+Entwicklungsinstanz verwendet.
+
 ## Testumgebung
 
 ```bash

@@ -21,6 +21,7 @@ Fehler werden im OpenAI-Stil zurückgegeben:
 | `GET` | `/health` | Readiness-Prüfung |
 | `POST` | `/v1/media/references` | temporäre Referenzdateien hochladen |
 | `DELETE` | `/v1/media/references/{id}` | temporäre Referenz entfernen |
+| `GET` | `/v1/real-human/configuration` | Assets-API und Gruppe read-only prüfen |
 | `POST` | `/v1/videos` | Generierungstask erstellen |
 | `GET` | `/v1/videos` | Tasks auflisten und filtern |
 | `GET` | `/v1/videos/{id}` | Taskstatus lesen |
@@ -30,6 +31,12 @@ Fehler werden im OpenAI-Stil zurückgegeben:
 
 Die gleichen Routen ohne `/v1` existieren für die Kompatibilität, werden aber
 nicht im OpenAPI-Schema angezeigt.
+
+## GET `/v1/real-human/configuration`
+
+Führt ohne Videogenerierung einen signierten, read-only `ListAssetGroups`-
+Aufruf aus und bestätigt, ob AK/SK, Projekt und konfigurierte Asset-Gruppe
+zusammenpassen. Geheimnisse werden nicht zurückgegeben.
 
 ## POST `/v1/videos`
 
@@ -49,9 +56,16 @@ Der Endpunkt akzeptiert JSON oder `multipart/form-data`.
 | `reference_asset_ids` | string[] | mehrere Bild-Assets |
 | `reference_assets` | object[] | Assets mit `id`, `type` und optional `role` |
 | `reference_urls` | string[]/object[] | URLs, optional mit `media_type` und `role` |
+| `real_human` | boolean | Multipart-Einzelreferenz temporär als Real-Human-Asset registrieren |
 | `content` | object[] | fortgeschrittenes ModelArk-Content-Array |
 | `user` | string | OpenAI-Nutzerkennung; wird zu `safety_identifier` |
 | `input_reference_task_id` | string | letztes Frame eines früheren Tasks als First-Frame |
+
+Ein Objekt in `reference_urls` kann zusätzlich `real_human: true` enthalten.
+Der Create-Endpunkt gibt dann sofort eine lokale `video-rh-…`-ID zurück,
+registriert die Referenz im Hintergrund und verwendet nach `Active` die
+temporäre Asset-ID. Status, Download und Löschen verwenden weiterhin dieselben
+`/v1/videos/{id}`-Routen.
 
 Direkt weitergereichte Optionen:
 

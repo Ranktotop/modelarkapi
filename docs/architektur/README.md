@@ -7,6 +7,8 @@ Client → LiteLLM Gateway → ModelArk OpenAI Video Proxy → BytePlus ModelArk
 Browser → Seedance Web Studio ────────────────┘
                                       ↓                         ↓
                          temporäre Referenz-URL        asynchroner Seedance-Task
+                                      ↓
+                  optional: CreateAsset → Active → DeleteAsset
 ```
 
 LiteLLM verwendet seinen OpenAI-Videoadapter. Dieser Proxy nimmt die
@@ -19,6 +21,8 @@ Task-ID in einem OpenAI-Videoobjekt zurück. Status und Ergebnis werden danach
 - `app.py`: HTTP-Routen, Authentifizierung, Validierung und Streaming.
 - `translation.py`: Feld-, Format- und Statusübersetzung.
 - `client.py`: authentifizierter asynchroner ModelArk-Client.
+- `assets.py`: HMAC-signierter asynchroner ModelArk-Assets-Client.
+- `asset_jobs.py`: persistente Real-Human-Orchestrierung und Remote-Cleanup.
 - `media.py`: Signaturprüfung und zeitlich begrenzte Ablage von Uploads.
 - `config.py`: Konfiguration aus `.env` beziehungsweise Prozessumgebung.
 - `schemas.py`: OpenAI-nahe Video- und Listenobjekte.
@@ -29,10 +33,11 @@ Task-ID in einem OpenAI-Videoobjekt zurück. Status und Ergebnis werden danach
 
 ## Übersetzungsgrenze
 
-Der Proxy ist absichtlich zustandsarm. ModelArk ist die maßgebliche Quelle für
-Taskstatus und Resultate. Lokaler Zustand wird nur für hochgeladene
-Referenzdateien gehalten. Daher bleibt ein Task auch nach einem Neustart des
-Proxys abrufbar, solange ModelArk seinen Datensatz noch aufbewahrt.
+Normale ModelArk-Jobs bleiben zustandsarm. Automatisch registrierte Real-Human-
+Referenzen benötigen dagegen eine lokale Zuordnung zwischen Referenz,
+temporärer Asset-ID und späterer Provider-Task-ID. Diese Zuordnung wird in
+SQLite im persistenten Proxy-Volume gespeichert und nach Ablauf der TTL
+entfernt.
 
 Standardfelder werden übersetzt; ModelArk-Funktionen ohne OpenAI-Entsprechung
 werden als klar benannte Erweiterungen angenommen. Für Sonderfälle steht das
@@ -53,15 +58,21 @@ begrenzten parallelen Gruppen, damit ein langsamer Statusaufruf nicht alle
 anderen Jobs verzögert und ModelArk trotzdem nicht mit unbegrenzten Abfragen
 überlastet wird.
 
+Bei Real-Human-Aufrufen gibt `POST /v1/videos` bereits vor Abschluss von
+`CreateAsset` eine lokale Job-ID zurück. Begrenzte Hintergrundworker pollen
+Assets und Provider-Jobs parallel. Dadurch blockiert eine langsame
+Gesichtsprüfung weder den HTTP-Worker noch andere Generierungen.
+
 Der UI-Container läuft absichtlich mit einem Uvicorn-Prozess: Die Arbeit ist
 I/O-lastig, und mehrere Prozesse würden das SQLite-Jobregister sowie Cleanup-
 Schleifen unnötig duplizieren. Horizontale UI-Replikation ist für diesen
 Single-User-Betrieb nicht vorgesehen.
 
-## Kein Bestandteil des Proxys
+## Grenzen
 
-- Er erstellt oder genehmigt keine BytePlus-Assets.
 - Er umgeht keine Gesichts-, Rechte- oder Inhaltsprüfung.
+- Er kann Assets nur in einer bereits verifizierten und konfigurierten Gruppe
+  erstellen; die Lebendprüfung selbst bleibt bei BytePlus.
 - Er speichert Ergebnisse nicht dauerhaft.
 - Er wartet bei `POST /v1/videos` nicht auf die fertige Generierung.
 - Er ersetzt keine öffentlich erreichbare Medienablage für Video-Uploads.

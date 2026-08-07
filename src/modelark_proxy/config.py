@@ -29,6 +29,21 @@ class Settings(BaseSettings):
     allowed_download_host_suffixes: list[str] = Field(
         default_factory=lambda: [".bytepluses.com", ".volces.com"]
     )
+    byteplus_access_key_id: str = ""
+    byteplus_secret_access_key: str = ""
+    byteplus_asset_group_id: str = ""
+    byteplus_project_name: str = "default"
+    byteplus_asset_region: str = "ap-southeast-1"
+    byteplus_asset_endpoint: str = "https://ark.ap-southeast-1.byteplusapi.com"
+    asset_job_db: Path = Path("./data/proxy-jobs.db")
+    asset_poll_interval_seconds: float = 5.0
+    asset_maintenance_interval_seconds: float = 2.0
+    asset_max_processing_seconds: int = 3600
+    asset_job_ttl_seconds: int = 86_400
+    asset_worker_concurrency: int = 10
+    asset_cleanup_retries: int = 5
+    asset_orphan_cleanup_interval_seconds: int = 900
+    asset_orphan_ttl_seconds: int = 86_400
 
     @field_validator("model_map", mode="before")
     @classmethod
@@ -49,3 +64,13 @@ class Settings(BaseSettings):
             return self.default_model
         bare = requested.removeprefix("openai/")
         return self.model_map.get(requested, self.model_map.get(bare, bare))
+
+    @property
+    def real_human_assets_configured(self) -> bool:
+        return all(
+            (
+                self.byteplus_access_key_id,
+                self.byteplus_secret_access_key,
+                self.byteplus_asset_group_id,
+            )
+        )

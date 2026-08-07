@@ -7,6 +7,7 @@ export type Reference = {
   kind: MediaKind;
   filename?: string;
   expires_at: number;
+  real_human?: boolean;
 };
 
 export type AssetReference = {

@@ -26,6 +26,8 @@ Unterstützt sind:
 - zusätzliche Referenzen als öffentliche URLs (`reference_urls`)
 - verifizierte Real-Human-Assets über `asset://...` (`asset_id`,
   `reference_asset_ids` oder `reference_assets`)
+- automatische temporäre Registrierung neuer Real-Human-Referenzen über
+  `real_human: true`, einschließlich Status-Polling und `DeleteAsset`-Cleanup
 - Übersetzung von `seconds` → `duration` und `size` → `resolution` + `ratio`
 
 ## Die wichtige Einschränkung bei Video-Uploads
