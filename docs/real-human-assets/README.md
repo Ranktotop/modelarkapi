@@ -10,7 +10,9 @@ Zeitraum. Der Proxy kann diese Prüfung weder durchführen noch umgehen.
 
 ## Freischaltung in der BytePlus-Konsole
 
-1. Konto- beziehungsweise Unternehmensverifizierung abschließen.
+1. Konto- beziehungsweise
+   [Unternehmensverifizierung](https://console.byteplus.com/user/authentication/enterprise/)
+   abschließen.
 2. Unter **Model activation → Advanced Creation Rights** die verfügbaren
    Rechte und die Real-Human-Funktion prüfen.
 3. **ModelArk Playground → My assets → Real-human → Add real-human assets**
