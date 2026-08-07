@@ -15,7 +15,7 @@ Seedance übersetzt. Der Proxy führt keine Videogenerierung selbst aus.
 - [Video-Generierung](video-generierung/README.md) – Text-to-Video,
   First-/Last-Frame, multimodale Bearbeitung, Verlängerung und Audio.
 - [Referenzmedien](referenzmedien/README.md) – Uploads, öffentliche URLs,
-  autorisierte Assets, Rollen und Eingabegrenzen.
+  automatische Real-Human-Verarbeitung, Rollen und Eingabegrenzen.
 - [Real-Human-Assets](real-human-assets/README.md) – Gesichtsverifizierung,
   Freischaltung und Nutzung der eigenen Person.
 - [LiteLLM-Integration](litellm-integration/README.md) – Gateway-Konfiguration
@@ -38,7 +38,7 @@ Alle wesentlichen Seedance-2.0-Workflows sind über die API erreichbar:
 - Text-, Bild-, Video- und Audioreferenzen
 - ein First-Frame sowie ein First-/Last-Frame-Paar
 - multimodale Generierung, Bearbeitung, Verlängerung und Clip-Stitching
-- öffentliche URLs, Multipart-Upload, `asset://`-Assets und rohes
+- öffentliche URLs, Multipart-Upload und rohes
   ModelArk-`content`
 - Audioausgabe und unterstützte Ausgabeparameter
 - Task-Erstellung, Liste, Status, Abbruch/Löschen, MP4 und letztes Frame

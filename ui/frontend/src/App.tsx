@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
-import type { AssetReference, Job, MediaKind, Reference, StudioConfig } from "./types";
+import type { Job, MediaKind, Reference, StudioConfig } from "./types";
 
 const MODES = [
   { id: "text", label: "Text", hint: "Nur aus einer Beschreibung" },
@@ -29,7 +29,7 @@ const SOCIAL_LINKS = [
   { label: "LinkedIn", href: "https://link.marcmeese.de/linkedin", short: "IN" },
 ] as const;
 
-function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "play" | "lock" | "logout" | "plus" }) {
+function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "play" | "lock" | "logout" }) {
   const paths: Record<string, JSX.Element> = {
     spark: <><path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></>,
     upload: <><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></>,
@@ -38,7 +38,6 @@ function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "pla
     play: <path d="m8 5 11 7-11 7V5Z"/>,
     lock: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,
     logout: <><path d="M10 5H5v14h5"/><path d="m14 8 4 4-4 4"/><path d="M18 12H9"/></>,
-    plus: <><path d="M12 5v14"/><path d="M5 12h14"/></>,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -122,9 +121,6 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [references, setReferences] = useState<Reference[]>([]);
-  const [assets, setAssets] = useState<AssetReference[]>([]);
-  const [assetId, setAssetId] = useState("");
-  const [assetType, setAssetType] = useState<MediaKind>("image");
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
   const [ratio, setRatio] = useState("adaptive");
@@ -146,9 +142,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const capabilities = selectedModel?.capabilities;
   const allKinds = useMemo(() => [
     ...references.map(item => item.kind),
-    ...assets.map(item => item.type),
     ...(continuationTaskId ? ["image" as MediaKind] : []),
-  ], [references, assets, continuationTaskId]);
+  ], [references, continuationTaskId]);
 
   const loadJobs = useCallback(async () => {
     const response = await api<{ data: Job[] }>("/api/videos");
@@ -189,14 +184,6 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     setReferences(current => current.map(item =>
       item.id === referenceId ? { ...item, real_human: !item.real_human } : item
     ));
-  }
-
-  function addAsset() {
-    const id = assetId.trim().replace(/^asset:\/\//, "");
-    if (!id.startsWith("asset-")) return setError("Asset-IDs müssen mit asset- beginnen.");
-    setAssets(current => [...current, { id, type: assetType }]);
-    setAssetId("");
-    if (mode === "text") setMode("multimodal");
   }
 
   function selectModel(modelId: string) {
@@ -244,7 +231,6 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       return_last_frame: returnLastFrame,
       priority,
       ...(includeReferences && references.length ? { reference_urls: references.map(item => ({ url: item.url, media_type: item.kind, role: roleFor(item.kind), real_human: Boolean(item.real_human) })) } : {}),
-      ...(includeReferences && assets.length ? { reference_assets: assets.map(item => ({ id: item.id, type: item.type, role: roleFor(item.type) })) } : {}),
       ...(includeReferences && continuationTaskId ? { input_reference_task_id: continuationTaskId } : {}),
     };
   }
@@ -281,7 +267,6 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   function continueFrom(job: Job) {
     setMode("first_frame");
     setReferences([]);
-    setAssets([]);
     setContinuationTaskId(job.id);
     setPrompt("Continue the scene seamlessly from the previous final frame. ");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -311,11 +296,9 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
             <div className="drop-icon"><Icon name="upload" /></div><div><strong>{uploading ? "Dateien werden vorbereitet …" : "Bilder, Videos oder Audio ablegen"}</strong><span>PNG, JPG, WEBP, GIF · MP4, MOV · MP3, WAV</span></div>
           </div>
           {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>Letztes Frame aus vorherigem Job</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
-          {(references.length > 0 || assets.length > 0) && <div className="reference-list">
+          {references.length > 0 && <div className="reference-list">
             {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label></div><button onClick={() => removeReference(item)}><Icon name="trash" /></button></div>)}
-            {assets.map((item, index) => <div className="reference-card asset" key={`${item.id}-${index}`}><div className={`media-symbol ${item.type}`}>A</div><div><strong>{item.id}</strong><span>{kindLabel[item.type]} · verifiziertes Asset</span></div><button onClick={() => setAssets(current => current.filter((_, itemIndex) => itemIndex !== index))}><Icon name="trash" /></button></div>)}
           </div>}
-          <div className="asset-adder"><input value={assetId} onChange={e => setAssetId(e.target.value)} placeholder="Real-Human Asset-ID (asset-…)"/><select value={assetType} onChange={e => setAssetType(e.target.value as MediaKind)}><option value="image">Bild</option><option value="video">Video</option><option value="audio">Audio</option></select><button onClick={addAsset}><Icon name="plus" /> Asset</button></div>
         </div>}
 
         <div className="field-group"><div className="label-row"><label htmlFor="prompt">Prompt</label><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>

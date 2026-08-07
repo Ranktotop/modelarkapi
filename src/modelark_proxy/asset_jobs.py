@@ -160,7 +160,9 @@ class AssetJobManager:
         settings: Settings,
         assets: AssetClient,
         ark: ModelArkClient,
-        payload_builder: Callable[[dict[str, Any]], dict[str, Any]],
+        payload_builder: Callable[
+            [dict[str, Any], list[dict[str, Any]]], dict[str, Any]
+        ],
         remove_media: Callable[[str], bool],
     ) -> None:
         self.settings = settings
@@ -260,7 +262,7 @@ class AssetJobManager:
             job = self.store.get(job_id) or job
             if not job.get("provider_id"):
                 request = dict(job["request"])
-                references = list(request.get("reference_assets") or [])
+                references: list[dict[str, Any]] = []
                 for source, record in zip(sources, asset_records, strict=True):
                     references.append(
                         {
@@ -269,8 +271,7 @@ class AssetJobManager:
                             "role": source.get("role"),
                         }
                     )
-                request["reference_assets"] = references
-                payload = self.payload_builder(request)
+                payload = self.payload_builder(request, references)
                 result = await self.ark.create_task(payload)
                 provider_id = str(result["id"])
                 self.store.update(

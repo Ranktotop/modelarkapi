@@ -23,7 +23,8 @@ Zeitraum. Der Proxy kann diese Prüfung weder durchführen noch umgehen.
 6. Frontalmaterial derselben Person hochladen. Eine Gruppe darf nur eine
    Person enthalten.
 7. Das Material im ModelArk-Konto annehmen und auf Status `Active` warten.
-8. Asset-ID kopieren und erst dann einen kostenpflichtigen Test starten.
+8. Die Gruppen-ID im Proxy konfigurieren und erst dann einen kostenpflichtigen
+   Test starten.
 
 Zusätzliche Looks derselben Person können ergänzt werden, werden aber erneut
 auf Konsistenz geprüft. Verfügbarkeit, Freikontingente, QPM und Zugriff auf die
@@ -87,7 +88,7 @@ Bei einer Referenz mit `real_human: true` führt der Proxy selbstständig aus:
 
 1. `CreateAsset` in der konfigurierten verifizierten Asset-Gruppe,
 2. asynchrones `GetAsset`-Polling bis `Active` oder `Failed`,
-3. Seedance-Aufruf mit `asset://<Asset-ID>`,
+3. interner Seedance-Aufruf mit der erzeugten `asset://<Asset-ID>`,
 4. `DeleteAsset`, sobald der Videoauftrag abgeschlossen, fehlgeschlagen oder
    abgebrochen ist.
 
@@ -126,31 +127,9 @@ Automatische Registrierung einer neuen URL:
 }
 ```
 
-```json
-{
-  "model": "dreamina-seedance-2-0-fast-260128",
-  "prompt": "The person in Image 1 walks into a modern studio.",
-  "asset_id": "asset-…",
-  "duration": 4,
-  "resolution": "480p",
-  "generate_audio": false
-}
-```
-
-Mehrere Assets:
-
-```json
-{
-  "reference_assets": [
-    {"id":"asset-image-…", "type":"image"},
-    {"id":"asset-video-…", "type":"video"},
-    {"id":"asset-audio-…", "type":"audio"}
-  ]
-}
-```
-
-Im Prompt heißen sie nach Medienart und Reihenfolge `Image 1`, `Video 1` und
-`Audio 1`; die Asset-ID gehört nicht in den Prompt.
+Ist `real_human` nicht gesetzt oder `false`, wird die Referenz ohne
+Asset-Registrierung normal an Seedance übergeben. Extern gelieferte Asset-IDs
+werden abgewiesen; die temporäre ID bleibt ausschließlich im Proxy.
 
 ## Alternativen für Gesichter
 

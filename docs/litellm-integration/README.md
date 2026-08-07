@@ -32,21 +32,29 @@ curl -X POST http://localhost:4000/v1/videos \
   }'
 ```
 
-Provider-Erweiterungen wie `asset_id`, `reference_assets`, `priority` oder
+Provider-Erweiterungen wie `reference_urls`, `priority` oder
 `return_last_frame` stehen im JSON-Body. Bei direkter Nutzung der LiteLLM-
-Python-Funktion werden sie über `extra_body` mitgegeben.
+Python-Funktion werden sie über `extra_body` mitgegeben. Asset-IDs werden nicht
+von LiteLLM oder anderen Clients entgegengenommen.
 
 ```python
 from litellm import video_generation
 
 video = video_generation(
     model="openai/dreamina-seedance-2-0-fast-260128",
-    prompt="The person in Image 1 turns toward the camera.",
+    prompt="The person in Video 1 turns toward the camera.",
     seconds="4",
     size="864x496",
     api_base="http://modelark-video-proxy:8080/v1",
     api_key="proxy-key",
-    extra_body={"asset_id": "asset-…", "generate_audio": False},
+    extra_body={
+        "reference_urls": [{
+            "url": "https://example.com/person.mp4",
+            "media_type": "video",
+            "real_human": True,
+        }],
+        "generate_audio": False,
+    },
 )
 ```
 

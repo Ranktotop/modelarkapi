@@ -25,9 +25,9 @@ Bild. Für ein festes Endbild wird zusätzlich ein zweites Bild mit
 ```json
 {
   "prompt": "A smooth camera transition between both scenes",
-  "reference_assets": [
-    {"id":"asset-first", "type":"image", "role":"first_frame"},
-    {"id":"asset-last", "type":"image", "role":"last_frame"}
+  "reference_urls": [
+    {"url":"https://media.example/first.png", "media_type":"image", "role":"first_frame"},
+    {"url":"https://media.example/last.png", "media_type":"image", "role":"last_frame"}
   ],
   "duration": 6
 }

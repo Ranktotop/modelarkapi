@@ -10,11 +10,6 @@ export type Reference = {
   real_human?: boolean;
 };
 
-export type AssetReference = {
-  id: string;
-  type: MediaKind;
-};
-
 export type ModelCapabilities = {
   resolutions: string[];
   ratios: string[];

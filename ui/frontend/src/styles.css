@@ -111,14 +111,10 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .reference-card button, .continuation-card button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; color: #676973; background: transparent; cursor: pointer; }
 .reference-card button:hover { color: #ff8b78; }
 .reference-card button svg, .continuation-card button svg { width: 14px; }
-.asset-adder { display: grid; grid-template-columns: 1fr 90px auto; gap: 7px; margin-top: 9px; }
-.asset-adder input, .asset-adder select, .asset-adder button, .settings-grid select { height: 40px; border: 1px solid var(--line); border-radius: 10px; color: #dad9de; background: #0d0e12; outline: 0; }
-.asset-adder input { min-width: 0; padding: 0 12px; }
+.settings-grid select { height: 40px; border: 1px solid var(--line); border-radius: 10px; color: #dad9de; background: #0d0e12; outline: 0; }
 .biometric-toggle { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: #b7b2c3; font-size: 12px; cursor: pointer; }
 .biometric-toggle input { accent-color: var(--lime); }
-.asset-adder select, .settings-grid select { padding: 0 10px; }
-.asset-adder button { display: flex; align-items: center; gap: 5px; padding: 0 12px; cursor: pointer; }
-.asset-adder button svg { width: 14px; }
+.settings-grid select { padding: 0 10px; }
 
 textarea { width: 100%; resize: vertical; min-height: 136px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; color: #f4f2ed; background: #0c0d11; outline: none; line-height: 1.65; font-size: 13px; }
 textarea:focus { border-color: rgba(76,175,80,.7); box-shadow: 0 0 0 2px rgba(76,175,80,.12); }
@@ -218,7 +214,6 @@ textarea::placeholder, input::placeholder { color: #555761; }
   .mode-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-grid { grid-template-columns: repeat(2, 1fr); }
   .reference-list { grid-template-columns: 1fr; }
-  .asset-adder { grid-template-columns: 1fr 90px; }.asset-adder button { grid-column: 1/-1; justify-content: center; }
   .generate-bar { align-items: stretch; flex-direction: column; }.generate-button { width: 100%; }
   .login-card { padding: 28px 24px; }
   .login-brand img { width: 80px; height: 80px; }

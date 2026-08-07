@@ -461,8 +461,7 @@ async def test_upload_requires_public_base_url(settings: Settings):
 
 
 @pytest.mark.asyncio
-async def test_authorized_asset_is_translated_without_public_url(settings: Settings):
-    settings.public_base_url = None
+async def test_public_asset_id_fields_are_rejected(settings: Settings):
     captured: list[httpx.Request] = []
     app = create_app(settings, ark_transport=ark_transport(captured))
     async with (
@@ -471,25 +470,24 @@ async def test_authorized_asset_is_translated_without_public_url(settings: Setti
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client,
     ):
-        response = await client.post(
-            "/v1/videos",
-            json={
-                "model": "seedance",
-                "prompt": "The person in Image 1 walks into the studio.",
-                "asset_id": "asset-20260807-portrait",
-            },
-        )
-    assert response.status_code == 200
-    upstream = json.loads(captured[0].content)
-    assert upstream["content"][1] == {
-        "type": "image_url",
-        "image_url": {"url": "asset://asset-20260807-portrait"},
-        "role": "reference_image",
-    }
+        for field, value in {
+            "asset_id": "asset-portrait",
+            "input_reference_asset": "asset-portrait",
+            "input_reference_asset_type": "image",
+            "reference_asset_ids": ["asset-portrait"],
+            "reference_assets": [{"id": "asset-portrait", "type": "image"}],
+        }.items():
+            response = await client.post(
+                "/v1/videos",
+                json={"model": "seedance", "prompt": "test", field: value},
+            )
+            assert response.status_code == 400
+            assert "managed internally" in response.json()["error"]["message"]
+    assert captured == []
 
 
 @pytest.mark.asyncio
-async def test_typed_authorized_assets_are_translated(settings: Settings):
+async def test_asset_uri_in_raw_content_is_rejected(settings: Settings):
     captured: list[httpx.Request] = []
     app = create_app(settings, ark_transport=ark_transport(captured))
     async with (
@@ -502,41 +500,13 @@ async def test_typed_authorized_assets_are_translated(settings: Settings):
             "/v1/videos",
             json={
                 "model": "seedance-test",
-                "prompt": "Use Image 1, Video 1, and Audio 1.",
-                "reference_assets": [
-                    {"id": "asset-image", "type": "image"},
-                    {"id": "asset://asset-video", "type": "video"},
-                    {"id": "asset-audio", "type": "audio"},
+                "content": [
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": "asset://asset-video"},
+                        "role": "reference_video",
+                    }
                 ],
-            },
-        )
-    assert response.status_code == 200
-    upstream = json.loads(captured[0].content)
-    assert [item["type"] for item in upstream["content"]] == [
-        "text",
-        "image_url",
-        "video_url",
-        "audio_url",
-    ]
-    assert upstream["content"][2]["video_url"]["url"] == "asset://asset-video"
-
-
-@pytest.mark.asyncio
-async def test_invalid_asset_id_is_rejected_before_modelark(settings: Settings):
-    captured: list[httpx.Request] = []
-    app = create_app(settings, ark_transport=ark_transport(captured))
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client,
-    ):
-        response = await client.post(
-            "/v1/videos",
-            json={
-                "model": "seedance-test",
-                "prompt": "test",
-                "asset_id": "https://attacker.example/file",
             },
         )
     assert response.status_code == 400
@@ -608,9 +578,17 @@ async def test_first_and_last_frame_roles_and_user_are_translated(settings: Sett
                 "model": "seedance-test",
                 "prompt": "Transition between the frames",
                 "user": "hashed-user-42",
-                "reference_assets": [
-                    {"id": "asset-first", "type": "image", "role": "first_frame"},
-                    {"id": "asset-last", "type": "image", "role": "last_frame"},
+                "reference_urls": [
+                    {
+                        "url": "https://example.com/first.png",
+                        "media_type": "image",
+                        "role": "first_frame",
+                    },
+                    {
+                        "url": "https://example.com/last.png",
+                        "media_type": "image",
+                        "role": "last_frame",
+                    },
                 ],
             },
         )

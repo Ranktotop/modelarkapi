@@ -60,9 +60,6 @@ Der Endpunkt akzeptiert JSON oder `multipart/form-data`.
 | `input_reference_url` | string | eine öffentliche Referenz-URL |
 | `input_reference_media_type` | string | `image`, `video`, `audio` oder MIME-Typ |
 | `input_reference_role` | string | `first_frame`, `last_frame` oder passende Referenzrolle |
-| `asset_id` | string | Kurzform für ein Bild-Asset |
-| `reference_asset_ids` | string[] | mehrere Bild-Assets |
-| `reference_assets` | object[] | Assets mit `id`, `type` und optional `role` |
 | `reference_urls` | string[]/object[] | URLs, optional mit `media_type` und `role` |
 | `real_human` | boolean | Multipart-Einzelreferenz temporär als Real-Human-Asset registrieren |
 | `content` | object[] | fortgeschrittenes ModelArk-Content-Array |
@@ -74,6 +71,10 @@ Der Create-Endpunkt gibt dann sofort eine lokale `video-rh-…`-ID zurück,
 registriert die Referenz im Hintergrund und verwendet nach `Active` die
 temporäre Asset-ID. Status, Download und Löschen verwenden weiterhin dieselben
 `/v1/videos/{id}`-Routen.
+
+Asset-IDs sind ein internes Implementierungsdetail. Die Felder `asset_id`,
+`input_reference_asset`, `reference_asset_ids` und `reference_assets` sowie
+`asset://`-URIs in `content` werden mit HTTP 400 abgewiesen.
 
 Direkt weitergereichte Optionen:
 

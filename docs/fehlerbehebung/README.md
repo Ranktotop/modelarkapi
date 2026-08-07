@@ -22,20 +22,20 @@ an LiteLLM und UI weiter.
 
 Ein lokales Referenzvideo wurde hochgeladen, aber der Proxy besitzt keine
 öffentliche HTTPS-URL. `PUBLIC_BASE_URL` setzen und sicherstellen, dass die
-erzeugte `/media/reference/...`-URL aus dem Internet erreichbar ist. Bei einem
-autorisierten `asset_id` ist diese URL nicht nötig.
+erzeugte `/media/reference/...`-URL aus dem Internet erreichbar ist. Auch der
+automatische Real-Human-Workflow benötigt diese URL für die Asset-Registrierung.
 
 ## `Reference URLs must be absolute HTTP(S) URLs`
 
 Relative Pfade, lokale Dateipfade und `file://` sind nicht erlaubt. Eine
-öffentliche URL, ein Asset oder für Bilder rohes Base64-`content` verwenden.
+öffentliche URL oder für Bilder rohes Base64-`content` verwenden.
 
 ## Real-person-/Face-Fehler von ModelArk
 
-Ein gewöhnlicher Upload mit realem Gesicht ist nicht freigegeben. Eine aktive
-Real-Human-Asset-ID, einen zugelassenen Digital Character oder einen weiterhin
-vertrauenswürdigen Originaloutput verwenden. Die Asset-Autorisierung muss zur
-Person, zum Account und zum Nutzungszeitraum passen.
+Ein gewöhnlicher Upload mit realem Gesicht ist nicht freigegeben. Die Referenz
+mit `real_human: true` markieren, damit der Proxy sie in der konfigurierten,
+autorisierten Asset-Gruppe registriert. Alternativ einen zugelassenen Digital
+Character oder einen weiterhin vertrauenswürdigen Originaloutput verwenden.
 
 ## `video_not_ready`
 

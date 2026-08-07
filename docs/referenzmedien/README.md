@@ -23,11 +23,12 @@ Eine Referenz nutzt `input_reference_url`; mehrere nutzen `reference_urls`.
 Objekte erlauben `media_type` und `role`. URLs müssen absolute HTTP(S)-URLs
 sein und während der Verarbeitung erreichbar bleiben.
 
-### Autorisierte Assets
+### Real-Human-Referenzen
 
-Assets werden als `asset-…` oder `asset://asset-…` angenommen und zu der von
-ModelArk erwarteten URI normalisiert. Für sie ist keine `PUBLIC_BASE_URL`
-nötig. Siehe [Real-Human-Assets](../real-human-assets/README.md).
+Eine hochgeladene oder öffentliche Referenz kann mit `real_human: true`
+markiert werden. Der Proxy registriert sie dann automatisch in der
+konfigurierten Asset-Gruppe. Asset-IDs werden nicht vom Client angenommen.
+Siehe [Real-Human-Assets](../real-human-assets/README.md).
 
 ### Rohes ModelArk-Content
 

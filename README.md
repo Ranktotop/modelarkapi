@@ -25,8 +25,6 @@ Unterstützt sind:
 - `DELETE /v1/videos/{id}` (Abbruch/Löschen bei ModelArk)
 - Text-to-video, Bildreferenz und eine hochgeladene MP4/MOV-Videoreferenz
 - zusätzliche Referenzen als öffentliche URLs (`reference_urls`)
-- verifizierte Real-Human-Assets über `asset://...` (`asset_id`,
-  `reference_asset_ids` oder `reference_assets`)
 - automatische temporäre Registrierung neuer Real-Human-Referenzen über
   `real_human: true`, einschließlich Status-Polling und `DeleteAsset`-Cleanup
 - Übersetzung von `seconds` → `duration` und `size` → `resolution` + `ratio`
@@ -181,10 +179,9 @@ Offizielle Dokumentation:
       nicht akzeptiert.
 - [ ] Das autorisierte Material im ModelArk-Konto annehmen und warten, bis der
       Asset-Status **Active** ist.
-- [ ] Die Asset-ID kopieren. Für die API wird daraus
-      `asset://<asset_id>`; eine öffentliche `PUBLIC_BASE_URL` ist dafür nicht
-      erforderlich.
-- [ ] Erst danach den unten beschriebenen lokalen Übersetzungstest ausführen.
+- [ ] Die ID der verifizierten Asset-Gruppe als
+      `BYTEPLUS_ASSET_GROUP_ID` im Proxy konfigurieren.
+- [ ] Erst danach den automatischen Workflow lokal testen.
 - [ ] Den kostenpflichtigen Live-Test ganz zuletzt mit 4 Sekunden, 480p und
       ohne Audio starten.
 
@@ -194,60 +191,33 @@ eine Konsistenzprüfung. Die kostenlose Basic-Stufe wird derzeit mit bis zu 50
 Assets und 50 Asset-Gruppen geführt; die vollständige Assets-API kann je nach
 Account eine Enterprise-/Entry-Freischaltung oder Einladung erfordern.
 
-### Verifiziertes Bild über LiteLLM verwenden
+### Neue Real-Human-Referenz verwenden
 
-Der Proxy akzeptiert eine einzelne Bild-Asset-ID über `asset_id`. LiteLLM
-reicht das Feld über `extra_body` an den Adapter weiter:
+LiteLLM beziehungsweise der REST-Client übergibt nur die Referenz und markiert
+sie mit `real_human: true`. Der Proxy registriert sie in der konfigurierten
+Asset-Gruppe, wartet auf `Active` und verwendet die Asset-ID ausschließlich
+intern:
 
 ```python
 from litellm import video_generation
 
 video = video_generation(
     model="openai/dreamina-seedance-2-0-fast-260128",
-    prompt="The person in Image 1 walks into a modern studio and looks at the camera.",
+    prompt="The person in Video 1 walks into a modern studio.",
     seconds="4",
     size="864x496",
     api_base="http://modelark-video-proxy:8080/v1",
     api_key="your-proxy-key",
     extra_body={
-        "asset_id": "asset-2026...",
+        "reference_urls": [{
+            "url": "https://example.com/person.mp4",
+            "media_type": "video",
+            "real_human": True,
+        }],
         "generate_audio": False,
     },
 )
 ```
-
-Über das LiteLLM Gateway kann dasselbe Feld im JSON-Body stehen:
-
-```bash
-curl -X POST http://localhost:4000/v1/videos \
-  -H "Authorization: Bearer $LITELLM_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dreamina-seedance-2-0-fast-260128",
-    "prompt": "The person in Image 1 walks into a modern studio.",
-    "seconds": "4",
-    "size": "864x496",
-    "asset_id": "asset-2026...",
-    "generate_audio": false
-  }'
-```
-
-Mehrere oder typisierte Assets werden mit `reference_assets` übergeben:
-
-```json
-{
-  "reference_assets": [
-    {"id": "asset-image-...", "type": "image"},
-    {"id": "asset-video-...", "type": "video"},
-    {"id": "asset-audio-...", "type": "audio"}
-  ]
-}
-```
-
-Erlaubte Typen sind `image`, `video` und `audio`. Im Prompt werden sie anhand
-ihrer Reihenfolge als `Image 1`, `Video 1` oder `Audio 1` bezeichnet – nicht
-mit der Asset-ID. Der Adapter normalisiert und validiert die IDs und erzeugt
-die von ModelArk erwarteten `asset://...`-URIs.
 
 ## Provider-spezifische Optionen
 
@@ -271,9 +241,9 @@ Referenzen sind über `reference_urls` möglich:
 ```
 
 Die standardisierte OpenAI/LiteLLM-Oberfläche besitzt nur ein
-`input_reference`-Feld. Der Adapter nutzt deshalb `reference_urls`,
-`reference_assets` oder `content` als Provider-Erweiterungen für mehrere
-Referenzen.
+`input_reference`-Feld. Der Adapter nutzt deshalb `reference_urls` oder
+`content` als Provider-Erweiterungen für mehrere Referenzen. Extern gelieferte
+Asset-IDs werden abgewiesen.
 
 ## Lokal entwickeln und testen
 

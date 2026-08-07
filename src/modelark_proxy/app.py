@@ -44,6 +44,14 @@ PASSTHROUGH_FIELDS = {
     "safety_identifier",
 }
 
+PUBLIC_ASSET_REFERENCE_FIELDS = {
+    "asset_id",
+    "input_reference_asset",
+    "input_reference_asset_type",
+    "reference_asset_ids",
+    "reference_assets",
+}
+
 ASSET_ID_PATTERN = re.compile(r"^asset-[A-Za-z0-9_-]+$")
 ASSET_KINDS = {
     "image": ("image_url", "reference_image"),
@@ -125,8 +133,6 @@ async def parse_create_request(
                 data[key] = str(value).lower() in {"1", "true", "yes", "on"}
             elif key in {
                 "reference_urls",
-                "reference_asset_ids",
-                "reference_assets",
                 "content",
             }:
                 try:
@@ -210,39 +216,40 @@ def _asset_content(
     }
 
 
-def _append_asset_references(
-    content: list[dict[str, Any]], data: dict[str, Any]
-) -> None:
-    single_asset = data.get("input_reference_asset") or data.get("asset_id")
-    if isinstance(single_asset, str):
-        content.append(
-            _asset_content(
-                single_asset,
-                str(data.get("input_reference_asset_type", "image")),
-                data.get("input_reference_role"),
-            )
+def _reject_public_asset_references(data: dict[str, Any]) -> None:
+    supplied_fields = sorted(PUBLIC_ASSET_REFERENCE_FIELDS.intersection(data))
+    if supplied_fields:
+        raise TranslationError(
+            "Asset IDs are managed internally; upload a reference and set "
+            "real_human=true instead (unsupported fields: "
+            f"{', '.join(supplied_fields)})"
         )
 
-    asset_ids = data.get("reference_asset_ids", [])
-    if isinstance(asset_ids, str):
-        asset_ids = [asset_ids]
-    if isinstance(asset_ids, list):
-        for asset_id in asset_ids:
-            if not isinstance(asset_id, str):
-                raise TranslationError("reference_asset_ids must contain only strings")
-            content.append(_asset_content(asset_id))
+    def contains_asset_uri(value: Any) -> bool:
+        if isinstance(value, str):
+            return value.startswith("asset://")
+        if isinstance(value, list):
+            return any(contains_asset_uri(item) for item in value)
+        if isinstance(value, dict):
+            return any(contains_asset_uri(item) for item in value.values())
+        return False
 
-    assets = data.get("reference_assets", [])
-    if isinstance(assets, dict):
-        assets = [assets]
-    if not isinstance(assets, list):
-        raise TranslationError("reference_assets must be an array")
+    if contains_asset_uri(data.get("content")):
+        raise TranslationError(
+            "asset:// references are managed internally; upload a reference and "
+            "set real_human=true instead"
+        )
+
+
+def _append_internal_asset_references(
+    content: list[dict[str, Any]], assets: list[dict[str, Any]]
+) -> None:
     for asset in assets:
         if not isinstance(asset, dict):
-            raise TranslationError("Each reference_assets entry must be an object")
-        asset_id = asset.get("id") or asset.get("asset_id")
+            raise TranslationError("Each internal asset reference must be an object")
+        asset_id = asset.get("id")
         if not isinstance(asset_id, str):
-            raise TranslationError("Each reference asset requires an id")
+            raise TranslationError("Each internal asset reference requires an id")
         kind = asset.get("type") or asset.get("kind") or "image"
         if not isinstance(kind, str):
             raise TranslationError("Reference asset type must be a string")
@@ -290,6 +297,8 @@ def build_task_payload(
     data: dict[str, Any],
     settings: Settings,
     hosted_reference: tuple[str, str, str | None] | None,
+    *,
+    internal_asset_references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     requested_model = data.get("model")
     if not isinstance(requested_model, str) or not requested_model.strip():
@@ -302,7 +311,7 @@ def build_task_payload(
     if hosted_reference:
         content.append(_reference_content(*hosted_reference))
 
-    _append_asset_references(content, data)
+    _append_internal_asset_references(content, internal_asset_references or [])
 
     input_url = data.get("input_reference_url")
     if isinstance(input_url, str):
@@ -454,7 +463,9 @@ def create_app(
         settings,
         assets,
         ark,
-        lambda data: build_task_payload(data, settings, None),
+        lambda data, references: build_task_payload(
+            data, settings, None, internal_asset_references=references
+        ),
         media.remove,
     )
 
@@ -742,6 +753,7 @@ def create_app(
 
     async def create_video(request: Request) -> VideoObject:
         data, upload = await parse_create_request(request)
+        _reject_public_asset_references(data)
         source_task_id = data.get("input_reference_task_id")
         if source_task_id is not None:
             if not isinstance(source_task_id, str) or not source_task_id.startswith(

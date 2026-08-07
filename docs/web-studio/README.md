@@ -12,7 +12,6 @@ Browser.
 - First-Frame und First-/Last-Frame
 - multimodale Bild-, Video- und Audioreferenzen
 - Video bearbeiten, verlängern und mehrere Clips verbinden
-- manuelle Real-Human- und Digital-Character-Asset-IDs
 - automatische temporäre Real-Human-Registrierung pro Referenz über den
   Schalter **Reale Person · automatisch verifizieren**
 - modellabhängige Dauer, Auflösung und Seitenverhältnisse sowie Audio,
