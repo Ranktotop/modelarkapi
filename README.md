@@ -148,6 +148,21 @@ LiteLLM kodiert die zurückgegebene Video-ID intern mit Routing-Informationen.
 Beim Status- und Download-Aufruf muss deshalb genau die von LiteLLM erhaltene
 ID verwendet werden.
 
+Videogenerierung ist auch am LiteLLM Gateway asynchron. LiteLLM gibt den
+Create-Aufruf mit Video-ID und Anfangsstatus zurück, pollt einen gestarteten
+Job aber nicht selbstständig bis zum Abschluss. Der aufrufende Client oder ein
+eigener Job-Worker muss `GET /v1/videos/VIDEO_ID` etwa alle 10 Sekunden
+wiederholen, bis `status` den Wert `completed` oder `failed` erreicht. Erst bei
+`completed` darf `/content` geladen werden. Dieses Verfahren entspricht dem
+von LiteLLM für Vertex AI Veo dokumentierten Ablauf.
+
+Bei Real-Human-Referenzen betrifft dieses externe Polling nur die
+Statusanzeige: Der ModelArk-Proxy verarbeitet Asset-Registrierung,
+Verifizierung und den anschließenden Seedance-Task unabhängig davon in
+persistenten Hintergrundjobs weiter. Das Seedance Web Studio pollt seine
+aktiven Jobs bereits selbst; es kommuniziert direkt mit diesem Proxy und nicht
+über LiteLLM.
+
 ## Eigene Gesichter: Freischaltung und Verifizierung
 
 Seedance 2.0 akzeptiert ein Foto oder Video mit einer realen Person nicht als

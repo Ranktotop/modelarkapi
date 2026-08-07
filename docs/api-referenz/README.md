@@ -72,6 +72,14 @@ registriert die Referenz im Hintergrund und verwendet nach `Active` die
 temporäre Asset-ID. Status, Download und Löschen verwenden weiterhin dieselben
 `/v1/videos/{id}`-Routen.
 
+Der Create-Endpunkt ist grundsätzlich asynchron: Seine Antwort bestätigt die
+Annahme des Jobs, nicht dessen Fertigstellung. Ein Client muss
+`GET /v1/videos/{id}` pollen, bis `status` gleich `completed` oder `failed`
+ist. Ein vorgeschaltetes LiteLLM Gateway routet diese Statusaufrufe anhand
+seiner ausgegebenen Video-ID, führt das Polling aber nicht selbstständig aus.
+Bei Real-Human-Jobs laufen Asset-Verifizierung und Provider-Task währenddessen
+in persistenten Hintergrundworkern dieses Proxys weiter.
+
 Asset-IDs sind ein internes Implementierungsdetail. Die Felder `asset_id`,
 `input_reference_asset`, `reference_asset_ids` und `reference_assets` sowie
 `asset://`-URIs in `content` werden mit HTTP 400 abgewiesen.

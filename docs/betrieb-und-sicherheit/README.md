@@ -79,8 +79,12 @@ gegen Replay beziehungsweise unerwartete Payloads selbst sicherstellen.
 ## Parallelität und Quoten
 
 Der lokale Stack blockiert nicht bis zum fertigen Video. Er nimmt asynchron
-Task-IDs entgegen und pollt Resultate separat. Lokale HTTP-Pools und das
-gebündelte Status-Polling sind konfigurierbar; höhere Werte erhöhen aber nicht
-die ModelArk-Rechenquote. RPM-, QPM- und Concurrency-Limits des aktivierten
-Modells beziehungsweise Endpoints bleiben maßgeblich. Ein `queued`-Status bei
-vielen Aufgaben ist normal und kein lokaler Timeout.
+Task-IDs entgegen. Das UI-Backend pollt seine aktiven Jobs separat; andere
+API-Clients müssen Statusabfragen selbst einplanen. Ein vorgeschaltetes LiteLLM
+Gateway routet diese Abfragen, startet aber kein automatisches Job-Polling.
+Real-Human-Asset- und Provider-Jobs werden dagegen unabhängig davon durch die
+persistenten Proxy-Worker weiterverarbeitet. Lokale HTTP-Pools und das
+gebündelte UI-/Worker-Polling sind konfigurierbar; höhere Werte erhöhen aber
+nicht die ModelArk-Rechenquote. RPM-, QPM- und Concurrency-Limits des
+aktivierten Modells beziehungsweise Endpoints bleiben maßgeblich. Ein
+`queued`-Status bei vielen Aufgaben ist normal und kein lokaler Timeout.

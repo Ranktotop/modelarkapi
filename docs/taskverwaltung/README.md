@@ -13,13 +13,30 @@ ModelArk-Zustand.
 
 ## Status pollen
 
+Ein Create-Aufruf liefert nur die Task-ID und den Anfangsstatus. Weder ein
+direkter Proxy-Aufruf noch das LiteLLM Gateway wartet bis zum fertigen Video.
+Bei Nutzung über LiteLLM pollt LiteLLM nicht selbstständig; der API-Client oder
+ein eigener Job-Worker ruft den Status-Endpunkt wiederholt auf. Dabei muss
+exakt die vom LiteLLM-POST ausgegebene, gegebenenfalls kodierte Video-ID
+verwendet werden.
+
 ```bash
+# Direkter Proxy-Aufruf mit der ModelArk- oder lokalen Real-Human-ID
 curl -H "Authorization: Bearer $PROXY_KEY" \
   http://localhost:8080/v1/videos/cgt-…
+
+# Aufruf über LiteLLM mit exakt der ID aus dessen Create-Antwort
+curl -H "Authorization: Bearer $LITELLM_KEY" \
+  http://localhost:4000/v1/videos/VIDEO_ID_AUS_LITELLM
 ```
 
-Ein sinnvolles Polling-Intervall sind etwa 5–10 Sekunden. Aggressives Polling
+Ein sinnvolles Polling-Intervall sind etwa 10 Sekunden. Aggressives Polling
 erhöht nur Last und kann Quoten verbrauchen.
+
+Real-Human-Jobs sind davon unabhängig: Persistente Proxy-Worker führen
+Asset-Verifizierung und Seedance-Generierung intern weiter, auch wenn gerade
+kein externer Statusaufruf stattfindet. Das externe Polling dient in diesem
+Fall nur dazu, den Fortschritt beziehungsweise Endstatus zu erfahren.
 
 ## Tasks auflisten
 

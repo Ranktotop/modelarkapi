@@ -16,6 +16,14 @@ OpenAI-ähnliche Anfrage entgegen, baut daraus einen ModelArk-Task und gibt die
 Task-ID in einem OpenAI-Videoobjekt zurück. Status und Ergebnis werden danach
 über eigene GET-Endpunkte abgefragt.
 
+LiteLLM hält dabei keine Create-Verbindung bis zum fertigen Video offen und
+pollt gestartete Videojobs nicht automatisch im Hintergrund. Es kodiert
+Provider- und Deployment-Informationen in die ausgegebene Video-ID, damit ein
+späterer `GET /v1/videos/{id}` wieder beim richtigen Upstream landet. Das
+regelmäßige Aufrufen dieses Status-Endpunkts ist Aufgabe des API-Clients oder
+eines anwendungseigenen Job-Workers. Das entspricht auch dem von LiteLLM für
+Vertex AI Veo dokumentierten Create-, Poll- und Downloadablauf.
+
 ## Komponenten
 
 - `app.py`: HTTP-Routen, Authentifizierung, Validierung und Streaming.
@@ -62,6 +70,13 @@ Bei Real-Human-Aufrufen gibt `POST /v1/videos` bereits vor Abschluss von
 `CreateAsset` eine lokale Job-ID zurück. Begrenzte Hintergrundworker pollen
 Assets und Provider-Jobs parallel. Dadurch blockiert eine langsame
 Gesichtsprüfung weder den HTTP-Worker noch andere Generierungen.
+
+Das interne Real-Human-Polling und das externe Client-Polling haben
+unterschiedliche Aufgaben: Die Proxy-Worker treiben Verifizierung und
+Generierung unabhängig von Statusanfragen weiter; Client beziehungsweise UI
+fragen lediglich den persistierten aktuellen Zustand ab. Das UI-Backend pollt
+aktive Jobs standardmäßig alle 10 Sekunden, während das Browser-Frontend die
+angezeigte Jobliste alle 5 Sekunden aktualisiert.
 
 Der UI-Container läuft absichtlich mit einem Uvicorn-Prozess: Die Arbeit ist
 I/O-lastig, und mehrere Prozesse würden das SQLite-Jobregister sowie Cleanup-
