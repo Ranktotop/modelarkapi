@@ -31,7 +31,8 @@ pip install -e '.[test]'
 |---|---:|---|
 | `ARK_API_KEY` | leer | BytePlus ModelArk API Key; für echte Requests Pflicht |
 | `ARK_BASE_URL` | AP-Southeast ModelArk `/api/v3` | Upstream-Basis-URL |
-| `PROXY_API_KEY` | leer | optionaler Bearer-Key für alle API-Routen außer Health/Referenzmedien |
+| `PROXY_API_KEY` | leer | Bearer-Key für alle API-Routen außer Health/Referenzmedien |
+| `REQUIRE_PROXY_API_KEY` | `false` | bei `true` Start nur mit mindestens 32 Zeichen langem Proxy-Key |
 | `PUBLIC_BASE_URL` | leer | öffentliche HTTPS-URL des Proxys; für hochgeladene Videos nötig |
 | `DEFAULT_MODEL` | Seedance 2.0 | Modell-ID, wenn kein Modell mitgesendet wird |
 | `MODEL_MAP` | `{}` | JSON-Abbildung stabiler Alias → freigeschaltete Modell-/Endpoint-ID |
@@ -66,12 +67,13 @@ Beispiel für Alias-Mapping:
 ```dotenv
 DEFAULT_MODEL=dreamina-seedance-2-0-fast-260128
 MODEL_MAP={"seedance":"dreamina-seedance-2-0-fast-260128"}
-PROXY_API_KEY=replace-with-a-long-random-value
+PROXY_API_KEY=replace-with-at-least-32-random-characters
 PUBLIC_BASE_URL=https://video-proxy.example.com
 ```
 
 `.env` ist von Git ausgeschlossen. API-Schlüssel dürfen weder committed noch
 in Logs, Fehlermeldungen oder Screenshots veröffentlicht werden.
+Unabhängige Schlüssel können mit `openssl rand -hex 32` erzeugt werden.
 
 Die IAM-Einrichtung ist unter
 [Real-Human-Assets](../real-human-assets/README.md#dedizierten-iam-user-und-aksk-anlegen)
@@ -79,8 +81,9 @@ Schritt für Schritt beschrieben.
 
 ## Web Studio
 
-Für den zweiten Compose-Service werden `UI_PASSWORD` und ein zufälliger
-`UI_SESSION_SECRET` mit mindestens 32 Zeichen benötigt. Das Studio läuft auf
-Port 3000 und verwendet intern `PROXY_API_KEY`. Alle UI-Variablen und der
-temporäre Lebenszyklus sind unter
+Für den zweiten Compose-Service werden `UI_USERNAME`, ein mindestens 16 Zeichen
+langes `UI_PASSWORD` und ein zufälliger `UI_SESSION_SECRET` mit mindestens 32
+Zeichen benötigt. Das Studio läuft auf Port 3000 und verwendet intern
+`PROXY_API_KEY`. Der Compose-Stack erzwingt API-Key und HTTPS-Cookie als
+Production-Defaults. Alle UI-Variablen und der temporäre Lebenszyklus sind unter
 [Seedance Web Studio](../web-studio/README.md) dokumentiert.

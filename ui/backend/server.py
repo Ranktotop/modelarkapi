@@ -9,6 +9,7 @@ import os
 import secrets
 import sqlite3
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -34,6 +35,7 @@ class UISettings:
             "MODELARK_PROXY_API_KEY", os.getenv("PROXY_API_KEY", "")
         )
         self.password = os.getenv("UI_PASSWORD", "")
+        self.username = os.getenv("UI_USERNAME", "")
         self.auth_disabled = os.getenv("UI_AUTH_DISABLED", "false").lower() in {
             "1",
             "true",
@@ -55,17 +57,68 @@ class UISettings:
         self.poll_concurrency = int(os.getenv("UI_POLL_CONCURRENCY", "20"))
         self.max_proxy_connections = int(os.getenv("UI_MAX_PROXY_CONNECTIONS", "100"))
         self.session_ttl_seconds = int(os.getenv("UI_SESSION_TTL_SECONDS", "43200"))
+        self.login_max_attempts = int(os.getenv("UI_LOGIN_MAX_ATTEMPTS", "5"))
+        self.login_window_seconds = int(os.getenv("UI_LOGIN_WINDOW_SECONDS", "900"))
         self.db_path = Path(os.getenv("UI_DB_PATH", "./data/ui/ui.db"))
         self.model_name = os.getenv("UI_MODEL_NAME", "seedance")
 
-        if not self.password and not self.auth_disabled:
+        if (not self.username or not self.password) and not self.auth_disabled:
             raise RuntimeError(
-                "UI_PASSWORD is required unless UI_AUTH_DISABLED=true is explicitly set"
+                "UI_USERNAME and UI_PASSWORD are required unless "
+                "UI_AUTH_DISABLED=true is explicitly set"
             )
+        if self.password and len(self.password) < 16:
+            raise RuntimeError("UI_PASSWORD must contain at least 16 characters")
         if self.password and len(self.session_secret) < 32:
             raise RuntimeError(
                 "UI_SESSION_SECRET must contain at least 32 characters when UI_PASSWORD is set"
             )
+        if self.login_max_attempts < 1 or self.login_window_seconds < 1:
+            raise RuntimeError("UI login rate-limit values must be positive")
+
+    @property
+    def session_cookie_name(self) -> str:
+        return "__Host-seedance_session" if self.cookie_secure else "seedance_session"
+
+
+class LoginRateLimiter:
+    def __init__(self, max_attempts: int, window_seconds: int) -> None:
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.failures: dict[str, deque[float]] = {}
+        self.global_failures: deque[float] = deque()
+        self.lock = RLock()
+
+    def _prune(self, values: deque[float], now: float) -> None:
+        cutoff = now - self.window_seconds
+        while values and values[0] <= cutoff:
+            values.popleft()
+
+    def retry_after(self, client: str) -> int | None:
+        now = time.monotonic()
+        with self.lock:
+            values = self.failures.setdefault(client, deque())
+            self._prune(values, now)
+            self._prune(self.global_failures, now)
+            blocked = len(values) >= self.max_attempts
+            globally_blocked = len(self.global_failures) >= self.max_attempts * 20
+            relevant = self.global_failures if globally_blocked else values
+            if not blocked and not globally_blocked:
+                return None
+            return max(1, int(self.window_seconds - (now - relevant[0])))
+
+    def failure(self, client: str) -> None:
+        now = time.monotonic()
+        with self.lock:
+            values = self.failures.setdefault(client, deque())
+            self._prune(values, now)
+            self._prune(self.global_failures, now)
+            values.append(now)
+            self.global_failures.append(now)
+
+    def success(self, client: str) -> None:
+        with self.lock:
+            self.failures.pop(client, None)
 
 
 class JobStore:
@@ -193,7 +246,8 @@ class JobStore:
 def _session_token(settings: UISettings) -> str:
     expires = int(time.time()) + settings.session_ttl_seconds
     nonce = secrets.token_urlsafe(12)
-    payload = f"{expires}.{nonce}"
+    identity = hashlib.sha256(settings.username.encode()).hexdigest()[:16]
+    payload = f"{expires}.{nonce}.{identity}"
     signature = hmac.new(
         settings.session_secret.encode(), payload.encode(), hashlib.sha256
     ).digest()
@@ -202,15 +256,18 @@ def _session_token(settings: UISettings) -> str:
 
 
 def _valid_session(token: str | None, settings: UISettings) -> bool:
-    if not settings.password:
+    if settings.auth_disabled:
         return True
     if not token:
         return False
     try:
-        expires_text, nonce, supplied = token.split(".", 2)
+        expires_text, nonce, identity, supplied = token.split(".", 3)
         if int(expires_text) <= int(time.time()):
             return False
-        payload = f"{expires_text}.{nonce}"
+        expected_identity = hashlib.sha256(settings.username.encode()).hexdigest()[:16]
+        if not hmac.compare_digest(identity, expected_identity):
+            return False
+        payload = f"{expires_text}.{nonce}.{identity}"
         signature = hmac.new(
             settings.session_secret.encode(), payload.encode(), hashlib.sha256
         ).digest()
@@ -228,6 +285,9 @@ def create_app(
 ) -> FastAPI:
     settings = settings or UISettings()
     store = JobStore(settings.db_path)
+    login_limiter = LoginRateLimiter(
+        settings.login_max_attempts, settings.login_window_seconds
+    )
     headers = {"Authorization": f"Bearer {settings.proxy_key}"}
     proxy = httpx.AsyncClient(
         base_url=settings.proxy_url,
@@ -307,6 +367,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.proxy = proxy
+    app.state.login_limiter = login_limiter
 
     @app.exception_handler(httpx.HTTPError)
     async def upstream_unavailable(_: Request, exc: httpx.HTTPError) -> JSONResponse:
@@ -320,7 +381,9 @@ def create_app(
         path = request.url.path
         public_api = path in {"/api/login", "/api/session", "/health"}
         if path.startswith("/api/") and not public_api:
-            if not _valid_session(request.cookies.get("seedance_session"), settings):
+            if not _valid_session(
+                request.cookies.get(settings.session_cookie_name), settings
+            ):
                 return JSONResponse(
                     {"error": "authentication_required"}, status_code=401
                 )
@@ -330,6 +393,29 @@ def create_app(
                 return JSONResponse({"error": "csrf_check_failed"}, status_code=403)
         return await call_next(request)
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; object-src 'none'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "media-src 'self' blob:; connect-src 'self'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        if settings.cookie_secure:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        return response
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -338,21 +424,44 @@ def create_app(
     async def session(request: Request) -> dict[str, bool]:
         return {
             "authenticated": _valid_session(
-                request.cookies.get("seedance_session"), settings
+                request.cookies.get(settings.session_cookie_name), settings
             ),
-            "required": bool(settings.password),
+            "required": not settings.auth_disabled,
         }
 
     @app.post("/api/login")
     async def login(request: Request) -> JSONResponse:
-        data = await request.json()
-        supplied = str(data.get("password", "")) if isinstance(data, dict) else ""
-        if settings.password and not hmac.compare_digest(supplied, settings.password):
-            return JSONResponse({"error": "invalid_password"}, status_code=401)
+        client = request.client.host if request.client else "unknown"
+        retry_after = login_limiter.retry_after(client)
+        if retry_after is not None:
+            return JSONResponse(
+                {"error": "too_many_login_attempts"},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        try:
+            content_length = int(request.headers.get("content-length", "0") or 0)
+        except ValueError:
+            return JSONResponse({"error": "invalid_content_length"}, status_code=400)
+        if content_length > 4096:
+            return JSONResponse({"error": "request_too_large"}, status_code=413)
+        try:
+            data = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            login_limiter.failure(client)
+            return JSONResponse({"error": "invalid_credentials"}, status_code=401)
+        username = str(data.get("username", "")) if isinstance(data, dict) else ""
+        password = str(data.get("password", "")) if isinstance(data, dict) else ""
+        username_valid = hmac.compare_digest(username, settings.username)
+        password_valid = hmac.compare_digest(password, settings.password)
+        if not settings.auth_disabled and not (username_valid and password_valid):
+            login_limiter.failure(client)
+            return JSONResponse({"error": "invalid_credentials"}, status_code=401)
+        login_limiter.success(client)
         response = JSONResponse({"authenticated": True})
-        if settings.password:
+        if not settings.auth_disabled:
             response.set_cookie(
-                "seedance_session",
+                settings.session_cookie_name,
                 _session_token(settings),
                 max_age=settings.session_ttl_seconds,
                 httponly=True,
@@ -365,7 +474,13 @@ def create_app(
     @app.delete("/api/session")
     async def logout() -> JSONResponse:
         response = JSONResponse({"authenticated": False})
-        response.delete_cookie("seedance_session", path="/")
+        response.delete_cookie(
+            settings.session_cookie_name,
+            path="/",
+            secure=settings.cookie_secure,
+            httponly=True,
+            samesite="strict",
+        )
         return response
 
     @app.get("/api/config")

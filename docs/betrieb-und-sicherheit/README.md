@@ -5,14 +5,44 @@
 `PUBLIC_BASE_URL` muss bei Video-Uploads öffentlich per HTTPS erreichbar sein.
 Vor dem FastAPI-Dienst sollte ein Reverse Proxy TLS terminieren. Die Route für
 temporäre Referenzen ist absichtlich ohne Bearer-Key erreichbar, weil ModelArk
-keinen Proxy-Key mitsendet; zufällige Dateinamen dienen als Capability-URL.
+keinen Proxy-Key mitsendet. Die Dateinamen enthalten 256 Bit Zufall und dienen
+als nicht erratbare Capability-URL. Sie haben keine Verzeichnisansicht, werden
+nicht gecacht und verschwinden nach der konfigurierten TTL.
+
+Empfohlene öffentliche Reverse-Proxy-Regeln:
+
+- UI-Hostname → Studio-Container; Login mit Username und Passwort,
+- API-Hostname beziehungsweise LiteLLM-Netz → Proxy; Bearer-Key erforderlich,
+- ausschließlich `/media/reference/<zufälliger Token>` ohne Bearer-Key zum
+  Proxy durchreichen, damit BytePlus Referenzen laden kann,
+- TLS, Request-Größenlimit und zusätzliche Edge-Rate-Limits aktivieren.
+
+Der Docker-Stack setzt `REQUIRE_PROXY_API_KEY=true` und startet ohne mindestens
+32 Zeichen langen `PROXY_API_KEY` nicht. Direkte Client-IP-Header werden nicht
+pauschal von beliebigen Absendern vertraut; ein vorgeschalteter Proxy muss als
+vertrauenswürdiger Forwarder gezielt konfiguriert werden.
 
 ## Schlüssel
 
+Kryptografisch zufällige Werte lassen sich beispielsweise mit
+`openssl rand -hex 32` erzeugen. Für `PROXY_API_KEY`, `UI_PASSWORD` und
+`UI_SESSION_SECRET` müssen jeweils unabhängige Werte verwendet werden. In einer
+Produktionsumgebung sollten sie als Container-Secrets oder über den Secret Store
+der Deployment-Plattform injiziert werden; eine lokale `.env` ist nur die
+einfachste Betriebsvariante.
+
 - `ARK_API_KEY` nur im Proxy hinterlegen, nie in LiteLLM-Clients.
 - Zwischen LiteLLM und Proxy `PROXY_API_KEY` setzen.
+- Für die UI `UI_USERNAME`, ein mindestens 16 Zeichen langes `UI_PASSWORD` und
+  einen unabhängigen `UI_SESSION_SECRET` mit mindestens 32 Zeichen setzen.
 - Zwischen externen Clients und LiteLLM einen separaten Gateway-Key nutzen.
 - Schlüssel regelmäßig rotieren und niemals committen.
+
+Das UI verwendet eine signierte, `HttpOnly`-, `SameSite=Strict`-Session. Unter
+HTTPS wird ein `Secure`-Cookie mit `__Host-`-Präfix gesetzt. Fehlanmeldungen
+werden pro Client sowie global gedrosselt. Antworten tragen CSP-, Frame-,
+MIME-, Referrer- und Permissions-Sicherheitsheader. Login und API-Schlüssel
+werden nur serverseitig verglichen und nicht an den Browser ausgeliefert.
 
 ## Temporäre und dauerhafte Daten
 

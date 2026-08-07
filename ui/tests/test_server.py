@@ -105,6 +105,8 @@ async def test_ui_rejects_unauthenticated_api_calls(
     ui_settings: UISettings, tmp_path: Path
 ):
     ui_settings.password = "correct horse battery staple"
+    ui_settings.username = "studio-owner"
+    ui_settings.auth_disabled = False
     ui_settings.session_secret = "x" * 32
     ui_settings.db_path = tmp_path / "authenticated.db"
     app = create_app(
@@ -121,17 +123,61 @@ async def test_ui_rejects_unauthenticated_api_calls(
         denied = await client.get("/api/videos")
         assert denied.status_code == 401
 
-        bad_login = await client.post("/api/login", json={"password": "wrong"})
+        bad_login = await client.post(
+            "/api/login", json={"username": "studio-owner", "password": "wrong"}
+        )
         assert bad_login.status_code == 401
 
         login = await client.post(
-            "/api/login", json={"password": "correct horse battery staple"}
+            "/api/login",
+            json={
+                "username": "studio-owner",
+                "password": "correct horse battery staple",
+            },
         )
         assert login.status_code == 200
         assert "httponly" in login.headers["set-cookie"].lower()
 
         allowed = await client.get("/api/videos")
         assert allowed.status_code == 200
+        assert allowed.headers["x-frame-options"] == "DENY"
+        assert allowed.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_ui_rate_limits_failed_logins(ui_settings: UISettings, tmp_path: Path):
+    ui_settings.username = "studio-owner"
+    ui_settings.password = "correct horse battery staple"
+    ui_settings.auth_disabled = False
+    ui_settings.session_secret = "x" * 32
+    ui_settings.login_max_attempts = 3
+    ui_settings.login_window_seconds = 900
+    ui_settings.db_path = tmp_path / "rate-limited.db"
+    app = create_app(
+        ui_settings,
+        proxy_transport=proxy_transport([]),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        for _ in range(3):
+            denied = await client.post(
+                "/api/login", json={"username": "studio-owner", "password": "wrong"}
+            )
+            assert denied.status_code == 401
+        limited = await client.post(
+            "/api/login",
+            json={
+                "username": "studio-owner",
+                "password": "correct horse battery staple",
+            },
+        )
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0
 
 
 @pytest.mark.asyncio

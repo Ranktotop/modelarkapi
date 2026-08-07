@@ -249,6 +249,48 @@ async def test_invalid_asset_id_is_rejected_before_modelark(settings: Settings):
 
 
 @pytest.mark.asyncio
+async def test_proxy_api_key_protects_rest_routes(settings: Settings):
+    settings.proxy_api_key = "p" * 32
+    app = create_app(settings, ark_transport=ark_transport([]))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        health = await client.get("/health")
+        denied = await client.post("/v1/videos", json={"prompt": "test"})
+        allowed = await client.post(
+            "/v1/videos",
+            headers={"Authorization": f"Bearer {settings.proxy_api_key}"},
+            json={"prompt": "test"},
+        )
+    assert health.status_code == 200
+    assert denied.status_code == 401
+    assert denied.headers["www-authenticate"] == "Bearer"
+    assert allowed.status_code == 200
+
+
+def test_protected_mode_requires_long_proxy_key(tmp_path: Path):
+    with pytest.raises(ValueError, match="PROXY_API_KEY"):
+        Settings(
+            _env_file=None,
+            ark_api_key="ark-test",
+            require_proxy_api_key=True,
+            proxy_api_key=None,
+            media_dir=tmp_path / "media",
+        )
+    with pytest.raises(ValueError, match="32 characters"):
+        Settings(
+            _env_file=None,
+            ark_api_key="ark-test",
+            require_proxy_api_key=True,
+            proxy_api_key="too-short",
+            media_dir=tmp_path / "media",
+        )
+
+
+@pytest.mark.asyncio
 async def test_first_and_last_frame_roles_and_user_are_translated(settings: Settings):
     captured: list[httpx.Request] = []
     app = create_app(settings, ark_transport=ark_transport(captured))
@@ -361,6 +403,8 @@ async def test_multiple_reference_media_are_uploaded_and_deleted(settings: Setti
         media_response = await client.get(f"/media/reference/{references[1]['id']}")
         assert media_response.content == fake_mp3
         assert media_response.headers["content-type"].startswith("audio/mpeg")
+        assert media_response.headers["cache-control"] == "private, no-store, max-age=0"
+        assert media_response.headers["x-content-type-options"] == "nosniff"
 
         deleted = await client.delete(f"/v1/media/references/{references[0]['id']}")
         assert deleted.json()["deleted"] is True

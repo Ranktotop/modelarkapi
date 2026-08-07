@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     ark_api_key: str = ""
     ark_base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
     proxy_api_key: str | None = None
+    require_proxy_api_key: bool = False
     public_base_url: str | None = None
     default_model: str = "dreamina-seedance-2-0-260128"
     model_map: dict[str, str] = Field(default_factory=dict)
@@ -64,6 +65,18 @@ class Settings(BaseSettings):
             return self.default_model
         bare = requested.removeprefix("openai/")
         return self.model_map.get(requested, self.model_map.get(bare, bare))
+
+    @model_validator(mode="after")
+    def validate_proxy_authentication(self) -> Settings:
+        if self.require_proxy_api_key and not self.proxy_api_key:
+            raise ValueError(
+                "PROXY_API_KEY is required when REQUIRE_PROXY_API_KEY=true"
+            )
+        if self.require_proxy_api_key and len(self.proxy_api_key or "") < 32:
+            raise ValueError(
+                "PROXY_API_KEY must contain at least 32 characters in protected mode"
+            )
+        return self
 
     @property
     def real_human_assets_configured(self) -> bool:

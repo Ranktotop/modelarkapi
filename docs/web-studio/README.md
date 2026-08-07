@@ -25,9 +25,12 @@ Browser.
 In `.env` müssen zusätzlich gesetzt sein:
 
 ```dotenv
+UI_USERNAME=seedance-admin
 UI_PASSWORD=ein-langes-privates-passwort
 UI_SESSION_SECRET=ein-zufaelliger-wert-mit-mindestens-32-zeichen
-UI_COOKIE_SECURE=false
+UI_COOKIE_SECURE=true
+UI_LOGIN_MAX_ATTEMPTS=5
+UI_LOGIN_WINDOW_SECONDS=900
 ```
 
 Danach:
@@ -36,8 +39,15 @@ Danach:
 docker compose up --build -d
 ```
 
-Das Studio ist standardmäßig unter `http://localhost:3000` erreichbar. Sobald
-TLS vorgeschaltet ist, muss `UI_COOKIE_SECURE=true` gesetzt werden.
+Der Container lauscht intern auf `http://localhost:3000`; im öffentlichen
+Betrieb wird er ausschließlich über den vorgeschalteten HTTPS-Endpunkt genutzt.
+`UI_COOKIE_SECURE=true` bleibt dabei gesetzt. Nur für einen vertrauenswürdigen
+lokalen HTTP-Test darf der Wert vorübergehend auf `false` gesetzt werden.
+
+Das Passwort muss mindestens 16 Zeichen enthalten. Nach standardmäßig fünf
+Fehlversuchen innerhalb von 15 Minuten wird der anmeldende Client vorübergehend
+gesperrt. Benutzername, Passwort und Session-Secret gehören ausschließlich in
+die Deployment-Umgebung beziehungsweise einen Secret Store.
 
 Eine Anmeldung kann nur in einem ausdrücklich vertrauenswürdigen lokalen Netz
 mit `UI_AUTH_DISABLED=true` abgeschaltet werden. Ohne Passwort und ohne diesen
@@ -63,6 +73,12 @@ davon durch den Proxy nach `MEDIA_TTL_SECONDS` gelöscht.
 | `UI_POLL_CONCURRENCY` | `20` | maximal parallele Statusabfragen |
 | `UI_MAX_PROXY_CONNECTIONS` | `100` | HTTP-Pool zum ModelArk-Proxy |
 | `UI_SESSION_TTL_SECONDS` | `43200` | Lebensdauer einer Anmeldung |
+| `UI_USERNAME` | leer | verpflichtender Single-User-Loginname |
+| `UI_PASSWORD` | leer | verpflichtendes Passwort, mindestens 16 Zeichen |
+| `UI_SESSION_SECRET` | leer | unabhängiger Signaturschlüssel, mindestens 32 Zeichen |
+| `UI_COOKIE_SECURE` | `true` | Cookie ausschließlich über HTTPS senden |
+| `UI_LOGIN_MAX_ATTEMPTS` | `5` | Fehlversuche pro Zeitfenster und Client |
+| `UI_LOGIN_WINDOW_SECONDS` | `900` | Rate-Limit-Zeitfenster |
 | `UI_DB_PATH` | `/app/data/ui.db` | temporäres Jobregister im Container |
 
 Ein manueller Löschvorgang entfernt den Job sofort. Nach dem Ablauf gibt es

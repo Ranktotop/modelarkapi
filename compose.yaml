@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       ASSET_JOB_DB: /app/state/proxy-jobs.db
+      REQUIRE_PROXY_API_KEY: "true"
     ports:
       - "8080:8080"
     volumes:
@@ -24,10 +25,13 @@ services:
     environment:
       MODELARK_PROXY_URL: http://modelark-video-proxy:8080/v1
       MODELARK_PROXY_API_KEY: ${PROXY_API_KEY}
+      UI_USERNAME: ${UI_USERNAME}
       UI_PASSWORD: ${UI_PASSWORD}
       UI_AUTH_DISABLED: ${UI_AUTH_DISABLED:-false}
       UI_SESSION_SECRET: ${UI_SESSION_SECRET}
-      UI_COOKIE_SECURE: ${UI_COOKIE_SECURE:-false}
+      UI_COOKIE_SECURE: ${UI_COOKIE_SECURE:-true}
+      UI_LOGIN_MAX_ATTEMPTS: ${UI_LOGIN_MAX_ATTEMPTS:-5}
+      UI_LOGIN_WINDOW_SECONDS: ${UI_LOGIN_WINDOW_SECONDS:-900}
       UI_MODEL_NAME: seedance
       UI_JOB_TTL_SECONDS: ${UI_JOB_TTL_SECONDS:-86400}
       UI_CLEANUP_INTERVAL_SECONDS: ${UI_CLEANUP_INTERVAL_SECONDS:-900}

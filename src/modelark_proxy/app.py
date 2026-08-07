@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import re
@@ -475,8 +476,11 @@ def create_app(
             ("/health", "/media/reference/")
         ):
             authorization = request.headers.get("authorization", "")
-            if authorization != f"Bearer {settings.proxy_api_key}":
-                return openai_error("Invalid API key", 401, "invalid_api_key")
+            expected = f"Bearer {settings.proxy_api_key}"
+            if not hmac.compare_digest(authorization, expected):
+                response = openai_error("Invalid API key", 401, "invalid_api_key")
+                response.headers["WWW-Authenticate"] = "Bearer"
+                return response
         try:
             return await call_next(request)
         except ModelArkError as exc:
@@ -522,7 +526,15 @@ def create_app(
         if not path:
             raise HTTPException(status_code=404, detail="Reference not found")
         media_type = mimetypes.guess_type(path.name)[0]
-        return FileResponse(path, media_type=media_type)
+        return FileResponse(
+            path,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, no-store, max-age=0",
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
 
     @app.post("/v1/media/references", response_model=MediaReferenceList)
     async def upload_references(request: Request) -> MediaReferenceList:

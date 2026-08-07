@@ -60,7 +60,8 @@ Dateisignatur und erkennt MP4/MOV unabhängig vom von LiteLLM gesetzten MIME-Typ
 
 ```bash
 cp .env.example .env
-# .env ausfüllen, einschließlich UI_PASSWORD und UI_SESSION_SECRET
+# .env ausfüllen, einschließlich UI_USERNAME, UI_PASSWORD und UI_SESSION_SECRET
+# Zufallswerte zum Beispiel mit: openssl rand -hex 32
 docker compose up --build -d
 curl http://localhost:8080/health
 curl http://localhost:3000/health
@@ -75,7 +76,7 @@ Wesentliche Variablen:
 |---|---|
 | `ARK_API_KEY` | ModelArk API Key |
 | `PUBLIC_BASE_URL` | Öffentliche HTTPS-Basis-URL dieses Proxys; für Uploads Pflicht |
-| `PROXY_API_KEY` | Optionaler Schlüssel zwischen LiteLLM und diesem Proxy |
+| `PROXY_API_KEY` | verpflichtender Schlüssel im Docker-Deployment zwischen LiteLLM und Proxy |
 | `DEFAULT_MODEL` | ModelArk-Modell-ID |
 | `MODEL_MAP` | Optionales JSON mit Modell-Aliasen |
 
@@ -85,7 +86,7 @@ Den Eintrag aus `litellm-config.example.yaml` in die LiteLLM-Konfiguration
 übernehmen und beim LiteLLM-Container setzen:
 
 ```bash
-MODELARK_PROXY_API_KEY=choose-a-private-key-for-litellm
+MODELARK_PROXY_API_KEY=<derselbe mindestens 32 Zeichen lange PROXY_API_KEY>
 ```
 
 `api_base` muss auf `/v1` dieses Dienstes zeigen. Weil LiteLLM Seedance noch

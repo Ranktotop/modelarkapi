@@ -20,4 +20,4 @@ RUN useradd --create-home --uid 10002 studio \
 USER studio
 
 EXPOSE 3000
-CMD ["uvicorn", "server:create_app", "--factory", "--host", "0.0.0.0", "--port", "3000", "--proxy-headers", "--forwarded-allow-ips=*"]
+CMD ["uvicorn", "server:create_app", "--factory", "--host", "0.0.0.0", "--port", "3000", "--proxy-headers"]

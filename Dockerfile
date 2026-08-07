@@ -11,4 +11,4 @@ RUN useradd --create-home --uid 10001 appuser \
 USER appuser
 
 EXPOSE 8080
-CMD ["uvicorn", "modelark_proxy.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*"]
+CMD ["uvicorn", "modelark_proxy.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]
