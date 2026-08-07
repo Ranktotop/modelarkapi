@@ -1,18 +1,34 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
 import type { Job, MediaKind, Reference, StudioConfig } from "./types";
 
 const MODES = [
-  { id: "text", label: "Text", hint: "Nur aus einer Beschreibung" },
-  { id: "first_frame", label: "Startbild", hint: "Ein Bild als exakter Anfang" },
-  { id: "first_last", label: "Start + Ende", hint: "Zwei feste Schlüsselbilder" },
-  { id: "multimodal", label: "Referenzen", hint: "Bilder, Videos und Audio kombinieren" },
-  { id: "edit", label: "Bearbeiten", hint: "Inhalt oder Stil eines Videos ändern" },
-  { id: "extend", label: "Verlängern", hint: "Eine Szene weiterführen" },
-  { id: "stitch", label: "Verbinden", hint: "Mehrere Clips zusammenführen" },
+  { id: "text", label: "Text", hint: "Nur aus einer Beschreibung", tooltip: "Erzeugt ein Video ausschließlich aus deinem Prompt. Es werden keine Referenzdateien an Seedance gesendet." },
+  { id: "first_frame", label: "Startbild", hint: "Ein Bild als exakter Anfang", tooltip: "Verwendet genau ein Bild als erstes Frame. Seedance animiert die Szene von diesem festen Ausgangspunkt aus." },
+  { id: "first_last", label: "Start + Ende", hint: "Zwei feste Schlüsselbilder", tooltip: "Verwendet das erste Bild als Start- und das zweite als Endframe. Seedance erzeugt den Übergang zwischen beiden Bildern." },
+  { id: "multimodal", label: "Referenzen", hint: "Bilder, Videos und Audio kombinieren", tooltip: "Kombiniert Bild-, Video- und Audioreferenzen. Nenne sie im Prompt möglichst eindeutig, zum Beispiel „Bild 1“ oder „Video 1“." },
+  { id: "edit", label: "Bearbeiten", hint: "Inhalt oder Stil eines Videos ändern", tooltip: "Bearbeitet ein hochgeladenes Referenzvideo anhand deines Prompts. Mindestens ein Video ist erforderlich." },
+  { id: "extend", label: "Verlängern", hint: "Eine Szene weiterführen", tooltip: "Führt ein Referenzvideo zeitlich weiter. Beschreibe im Prompt, wie Handlung und Kamerabewegung fortgesetzt werden sollen." },
+  { id: "stitch", label: "Verbinden", hint: "Mehrere Clips zusammenführen", tooltip: "Verbindet mindestens zwei Referenzvideos zu einer neuen Sequenz. Der Prompt beschreibt Reihenfolge und Übergänge." },
 ] as const;
+
+const TOOLTIPS = {
+  model: "Bestimmt die Seedance-Modellvariante. Mit dem Modell ändern sich die verfügbaren Auflösungen, Seitenverhältnisse und Videolängen.",
+  workflow: "Legt fest, wie Seedance deinen Prompt und die hochgeladenen Medien interpretiert. Der gewählte Workflow bestimmt außerdem, welche Referenzen erforderlich sind.",
+  references: "Referenzen geben Seedance Motive, Stil, Bewegung oder Ton vor. Je nach Workflow gelten unterschiedliche Anzahlen und Medientypen.",
+  upload: "Lade Bilder, Videos oder Audio hoch, die Seedance als Eingabe verwenden soll. Die Dateien werden temporär bereitgestellt und später automatisch gelöscht.",
+  realHuman: "Aktivieren, wenn auf dieser Referenz eine reale Person erkennbar ist. Die Datei wird dann vor der Generierung automatisch als Real-Human-Asset registriert und verifiziert.",
+  prompt: "Beschreibe Motiv, Handlung, Kameraführung, Licht, Stil und Ton möglichst konkret. Verweise bei mehreren Medien auf „Bild 1“, „Video 1“ oder „Audio 1“.",
+  duration: "Legt die Länge des erzeugten Videos fest. „Automatisch“ überlässt Seedance die Wahl innerhalb der Grenzen des ausgewählten Modells.",
+  resolution: "Bestimmt die Bildauflösung des fertigen Videos. Höhere Auflösungen können mehr Verarbeitungszeit und Kosten verursachen.",
+  ratio: "Bestimmt das Seitenverhältnis. 16:9 eignet sich meist für Querformat, 9:16 für Hochformat und „adaptive“ orientiert sich an Prompt oder Referenz.",
+  priority: "Steuert die Reihenfolge innerhalb deiner ModelArk-Warteschlange. Höhere Werte werden gegenüber niedrigeren priorisiert; 0 ist der Standard.",
+  audio: "Lässt Seedance synchrones Mono-Audio passend zur Szene erzeugen, einschließlich Geräuschen, Sprache oder Musik, wenn der Prompt dies beschreibt.",
+  watermark: "Kennzeichnet die Ausgabe mit dem vom Anbieter vorgesehenen AI-Wasserzeichen.",
+  lastFrame: "Fordert zusätzlich das letzte Videoframe als PNG an. Damit kannst du das Ergebnis später nahtlos über „Fortsetzen“ weiterführen.",
+} as const;
 
 const kindLabel: Record<MediaKind, string> = {
   image: "Bild",
@@ -40,6 +56,24 @@ function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "pla
     logout: <><path d="M10 5H5v14h5"/><path d="m14 8 4 4-4 4"/><path d="M18 12H9"/></>,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
+}
+
+function Tooltip({ text }: { text: string }) {
+  const id = useId();
+  return <span
+    className="tooltip"
+    tabIndex={0}
+    aria-label="Erklärung anzeigen"
+    aria-describedby={id}
+    onClick={event => event.preventDefault()}
+  >
+    <span className="tooltip-icon" aria-hidden="true">?</span>
+    <span className="tooltip-bubble" id={id} role="tooltip">{text}</span>
+  </span>;
+}
+
+function SettingLabel({ children, tooltip, htmlFor }: { children: string; tooltip: string; htmlFor?: string }) {
+  return <label className="setting-label" htmlFor={htmlFor}>{children}<Tooltip text={tooltip} /></label>;
 }
 
 function Login({ onSuccess }: { onSuccess: () => Promise<void> }) {
@@ -285,31 +319,31 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
     <main className="studio-grid">
       <section className="composer panel">
-        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span>Modell</span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{config.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label></div>
+        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{config.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label></div>
 
-        <div className="field-group"><label>Workflow</label><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}</strong><span>{item.hint}</span></button>)}</div></div>
+        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} data-tooltip={item.tooltip} aria-label={`${item.label}: ${item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
         {mode !== "text" && <div className="field-group">
-          <div className="label-row"><label>Referenzen</label><span>{allKinds.length} hinzugefügt</span></div>
-          <div className="dropzone" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); }} onClick={() => fileInput.current?.click()}>
+          <div className="label-row"><SettingLabel tooltip={TOOLTIPS.references}>Referenzen</SettingLabel><span>{allKinds.length} hinzugefügt</span></div>
+          <div className="dropzone" title={TOOLTIPS.upload} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.current?.click(); } }} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); }} onClick={() => fileInput.current?.click()}>
             <input ref={fileInput} hidden multiple type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,audio/mpeg,audio/wav" onChange={e => e.target.files && uploadFiles(e.target.files)} />
             <div className="drop-icon"><Icon name="upload" /></div><div><strong>{uploading ? "Dateien werden vorbereitet …" : "Bilder, Videos oder Audio ablegen"}</strong><span>PNG, JPG, WEBP, GIF · MP4, MOV · MP3, WAV</span></div>
           </div>
           {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>Letztes Frame aus vorherigem Job</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
           {references.length > 0 && <div className="reference-list">
-            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label></div><button onClick={() => removeReference(item)}><Icon name="trash" /></button></div>)}
+            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span><div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div></div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
           </div>}
         </div>}
 
-        <div className="field-group"><div className="label-row"><label htmlFor="prompt">Prompt</label><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
+        <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
         <div className="settings-grid">
-          <label><span>Dauer</span><select value={duration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
-          <label><span>Auflösung</span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{(capabilities?.resolutions || []).map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span>Format</span><select value={ratio} onChange={e => setRatio(e.target.value)} disabled={!capabilities}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span>Priorität</span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>
+          <label><span className="setting-label">Dauer<Tooltip text={TOOLTIPS.duration} /></span><select value={duration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
+          <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{(capabilities?.resolutions || []).map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span className="setting-label">Format<Tooltip text={TOOLTIPS.ratio} /></span><select value={ratio} onChange={e => setRatio(e.target.value)} disabled={!capabilities}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>
         </div>
-        <div className="toggle-row"><Toggle label="Synchrones Audio" checked={generateAudio} onChange={setGenerateAudio}/><Toggle label="AI-Wasserzeichen" checked={watermark} onChange={setWatermark}/><Toggle label="Letztes Frame behalten" checked={returnLastFrame} onChange={setReturnLastFrame}/></div>
+        <div className="toggle-row"><Toggle label="Synchrones Audio" tooltip={TOOLTIPS.audio} checked={generateAudio} onChange={setGenerateAudio}/><Toggle label="AI-Wasserzeichen" tooltip={TOOLTIPS.watermark} checked={watermark} onChange={setWatermark}/><Toggle label="Letztes Frame behalten" tooltip={TOOLTIPS.lastFrame} checked={returnLastFrame} onChange={setReturnLastFrame}/></div>
         {error && <div className="error-message wide">{error}</div>}
         <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{duration === -1 ? "Automatische Dauer" : `${duration}s`} · {resolution} · {ratio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
       </section>
@@ -344,8 +378,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   </div>;
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <button className={`toggle ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}><i><b /></i><span>{label}</span></button>;
+function Toggle({ label, tooltip, checked, onChange }: { label: string; tooltip: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return <div className="toggle-with-tooltip"><button className={`toggle ${checked ? "on" : ""}`} onClick={() => onChange(!checked)} aria-pressed={checked}><i><b /></i><span>{label}</span></button><Tooltip text={tooltip} /></div>;
 }
 
 function Status({ status }: { status: string }) {
