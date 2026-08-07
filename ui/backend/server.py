@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -24,6 +25,24 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import UploadFile
 
 TERMINAL_STATUSES = {"completed", "failed"}
+
+
+class _SuccessfulHealthCheckFilter(logging.Filter):
+    """Hide successful health probes while preserving failed requests."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        path = str(args[2]).split("?", 1)[0]
+        try:
+            status_code = int(args[4])
+        except (TypeError, ValueError):
+            return True
+        return path != "/health" or status_code >= 400
+
+
+logging.getLogger("uvicorn.access").addFilter(_SuccessfulHealthCheckFilter())
 
 
 class UISettings:

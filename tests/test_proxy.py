@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,26 @@ import pytest
 
 from modelark_proxy.app import create_app as create_proxy_app
 from modelark_proxy.config import Settings
+from modelark_proxy.main import _SuccessfulHealthCheckFilter
+
+
+def test_access_log_filter_hides_only_successful_health_checks():
+    access_filter = _SuccessfulHealthCheckFilter()
+
+    def record(path: str, status_code: int) -> logging.LogRecord:
+        return logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            __file__,
+            1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("127.0.0.1:1234", "GET", path, "1.1", status_code),
+            None,
+        )
+
+    assert access_filter.filter(record("/health", 200)) is False
+    assert access_filter.filter(record("/health", 503)) is True
+    assert access_filter.filter(record("/v1/models", 200)) is True
 
 
 def create_app(*args, **kwargs):

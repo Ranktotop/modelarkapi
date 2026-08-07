@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import httpx
 import pytest
-from server import UISettings, create_app
+from server import UISettings, _SuccessfulHealthCheckFilter, create_app
+
+
+def _access_record(path: str, status_code: int) -> logging.LogRecord:
+    return logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1234", "GET", path, "1.1", status_code),
+        None,
+    )
+
+
+def test_access_log_filter_hides_only_successful_health_checks():
+    access_filter = _SuccessfulHealthCheckFilter()
+
+    assert access_filter.filter(_access_record("/health", 200)) is False
+    assert access_filter.filter(_access_record("/health?full=true", 204)) is False
+    assert access_filter.filter(_access_record("/health", 500)) is True
+    assert access_filter.filter(_access_record("/api/session", 200)) is True
 
 
 @pytest.fixture

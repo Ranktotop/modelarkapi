@@ -76,7 +76,7 @@ function SettingLabel({ children, tooltip, htmlFor }: { children: string; toolti
   return <label className="setting-label" htmlFor={htmlFor}>{children}<Tooltip text={tooltip} /></label>;
 }
 
-function Login({ onSuccess }: { onSuccess: () => Promise<void> }) {
+function Login({ onSuccess }: { onSuccess: () => Promise<boolean> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -88,7 +88,10 @@ function Login({ onSuccess }: { onSuccess: () => Promise<void> }) {
     setError("");
     try {
       await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
-      await onSuccess();
+      const authenticated = await onSuccess();
+      if (!authenticated) {
+        setError("Der Login wurde akzeptiert, aber das Session-Cookie fehlt. Bei einer HTTP-Adresse muss UI_COOKIE_SECURE=false gesetzt sein; unter HTTPS muss der Wert true bleiben.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Anmeldung fehlgeschlagen");
     } finally {
@@ -120,7 +123,7 @@ function App() {
   const [config, setConfig] = useState<StudioConfig | null>(null);
   const [initializationError, setInitializationError] = useState("");
 
-  const initialize = useCallback(async () => {
+  const initialize = useCallback(async (): Promise<boolean> => {
     setInitializationError("");
     try {
       const current = await api<{ authenticated: boolean; required: boolean }>("/api/session");
@@ -130,8 +133,10 @@ function App() {
       } else {
         setConfig(null);
       }
+      return current.authenticated;
     } catch (error) {
       setInitializationError(error instanceof Error ? error.message : "Initialisierung fehlgeschlagen");
+      return false;
     }
   }, []);
 
