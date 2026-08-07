@@ -1,5 +1,23 @@
 # Fehlerbehebung
 
+## `upstream_credentials_invalid`
+
+Der Proxy läuft, hat aber beim letzten Read-only-Check einen ungültigen oder
+nicht erreichbaren `ARK_API_KEY` beziehungsweise IAM-Zugang festgestellt.
+`GET /health` zeigt unter `credentials` den betroffenen Zugang und den
+Prüfzeitpunkt. Nach einer serverseitigen Freischaltung wird der Zugriff beim
+nächsten Intervall automatisch aktiviert. Nach einer Änderung der
+Container-Umgebungsvariablen ist ein Neustart nötig.
+
+## Seedance-Resource-Package
+
+`QueryBalanceAcct` zeigt nur den allgemeinen BytePlus-Kontosaldo und sagt nichts
+Verlässliches über ein gekauftes Seedance-Resource-Package aus. Der Proxy nutzt
+diesen Wert deshalb nicht. Die Restmenge steht im Billing Center unter
+**Resource package**. Einen von ModelArk bei einer Generierung gelieferten
+Package- oder Billing-Fehler reicht der Proxy mit seinem originalen Fehlercode
+an LiteLLM und UI weiter.
+
 ## `PUBLIC_BASE_URL is required`
 
 Ein lokales Referenzvideo wurde hochgeladen, aber der Proxy besitzt keine
@@ -39,7 +57,8 @@ Ende beschrieben werden, ohne eine Frame-Rolle zu verwenden.
 
 ## Modell oder Parameter nicht unterstützt
 
-`MODEL_MAP` und die aktivierte Modell-ID prüfen. Seedance 2.0 Fast unterstützt
+`GET /v1/models`, den IAM-Zugriff und die aktivierte Modell-ID prüfen.
+Seedance 2.0 Fast unterstützt
 nicht automatisch sämtliche Optionen anderer Seedance-Versionen. Insbesondere
 Auflösung, Dauer, Offline-Tier, Seed, Frames und Kamerafixierung sind
 modellabhängig.

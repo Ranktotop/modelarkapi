@@ -43,7 +43,7 @@ function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "pla
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function Login({ onSuccess }: { onSuccess: () => void }) {
+function Login({ onSuccess }: { onSuccess: () => Promise<void> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -55,7 +55,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     setError("");
     try {
       await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
-      onSuccess();
+      await onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Anmeldung fehlgeschlagen");
     } finally {
@@ -85,14 +85,32 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
 function App() {
   const [session, setSession] = useState<{ authenticated: boolean; required: boolean } | null>(null);
   const [config, setConfig] = useState<StudioConfig | null>(null);
+  const [initializationError, setInitializationError] = useState("");
 
   const initialize = useCallback(async () => {
-    const current = await api<{ authenticated: boolean; required: boolean }>("/api/session");
-    setSession(current);
-    if (current.authenticated) setConfig(await api<StudioConfig>("/api/config"));
+    setInitializationError("");
+    try {
+      const current = await api<{ authenticated: boolean; required: boolean }>("/api/session");
+      setSession(current);
+      if (current.authenticated) {
+        setConfig(await api<StudioConfig>("/api/config"));
+      } else {
+        setConfig(null);
+      }
+    } catch (error) {
+      setInitializationError(error instanceof Error ? error.message : "Initialisierung fehlgeschlagen");
+    }
   }, []);
 
-  useEffect(() => { initialize().catch(() => setSession({ authenticated: false, required: true })); }, [initialize]);
+  useEffect(() => { void initialize(); }, [initialize]);
+  useEffect(() => {
+    if (!session?.authenticated || config || !initializationError) return;
+    const timer = window.setInterval(() => { void initialize(); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [config, initializationError, initialize, session?.authenticated]);
+  if (initializationError && (!session || session.authenticated)) {
+    return <main className="boot"><div className="boot-error"><h1>ModelArk ist nicht bereit</h1><p>{initializationError}</p><button className="primary-button" onClick={() => void initialize()}>Status neu laden</button></div></main>;
+  }
   if (!session) return <div className="boot"><div className="spinner" /></div>;
   if (!session.authenticated) return <Login onSuccess={initialize} />;
   if (!config) return <div className="boot"><div className="spinner" /></div>;
@@ -101,6 +119,7 @@ function App() {
 
 function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => void }) {
   const [mode, setMode] = useState("text");
+  const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [references, setReferences] = useState<Reference[]>([]);
   const [assets, setAssets] = useState<AssetReference[]>([]);
@@ -123,6 +142,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
+  const selectedModel = config.models.find(option => option.id === model);
+  const capabilities = selectedModel?.capabilities;
   const allKinds = useMemo(() => [
     ...references.map(item => item.kind),
     ...assets.map(item => item.type),
@@ -178,7 +199,17 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     if (mode === "text") setMode("multimodal");
   }
 
+  function selectModel(modelId: string) {
+    setModel(modelId);
+    const next = config.models.find(option => option.id === modelId);
+    if (!next) return;
+    setDuration(next.capabilities.defaults.duration);
+    setResolution(next.capabilities.defaults.resolution);
+    setRatio(next.capabilities.defaults.ratio);
+  }
+
   function validationError(): string | null {
+    if (!model) return "Bitte wähle ein Modell aus.";
     if (!prompt.trim()) return "Bitte beschreibe das gewünschte Video.";
     const count = (kind: MediaKind) => allKinds.filter(value => value === kind).length;
     for (const kind of ["image", "video", "audio"] as MediaKind[]) {
@@ -202,7 +233,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     };
     const includeReferences = mode !== "text";
     return {
-      model: config.model,
+      model,
       ui_mode: mode,
       prompt: prompt.trim(),
       duration,
@@ -269,7 +300,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
     <main className="studio-grid">
       <section className="composer panel">
-        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><span className="model-chip">{config.model}</span></div>
+        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span>Modell</span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{config.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label></div>
 
         <div className="field-group"><label>Workflow</label><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}</strong><span>{item.hint}</span></button>)}</div></div>
 
@@ -290,14 +321,14 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="field-group"><div className="label-row"><label htmlFor="prompt">Prompt</label><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
         <div className="settings-grid">
-          <label><span>Dauer</span><select value={duration} onChange={e => setDuration(Number(e.target.value))}>{config.durations.map(value => <option key={value} value={value}>{value} Sekunden</option>)}</select></label>
-          <label><span>Auflösung</span><select value={resolution} onChange={e => setResolution(e.target.value)}>{config.resolutions.map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span>Format</span><select value={ratio} onChange={e => setRatio(e.target.value)}>{config.ratios.map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span>Dauer</span><select value={duration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
+          <label><span>Auflösung</span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{(capabilities?.resolutions || []).map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span>Format</span><select value={ratio} onChange={e => setRatio(e.target.value)} disabled={!capabilities}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
           <label><span>Priorität</span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>
         </div>
         <div className="toggle-row"><Toggle label="Synchrones Audio" checked={generateAudio} onChange={setGenerateAudio}/><Toggle label="AI-Wasserzeichen" checked={watermark} onChange={setWatermark}/><Toggle label="Letztes Frame behalten" checked={returnLastFrame} onChange={setReturnLastFrame}/></div>
         {error && <div className="error-message wide">{error}</div>}
-        <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{duration}s · {resolution} · {ratio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
+        <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{duration === -1 ? "Automatische Dauer" : `${duration}s`} · {resolution} · {ratio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
       </section>
 
       <aside className="results panel">
@@ -326,7 +357,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       </div>
     </footer>
 
-    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{duration} Sekunden</span><span>{resolution}</span><span>{ratio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
+    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{duration === -1 ? "Automatische Dauer" : `${duration} Sekunden`}</span><span>{resolution}</span><span>{ratio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
   </div>;
 }
 

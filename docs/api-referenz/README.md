@@ -1,5 +1,13 @@
 # API-Referenz
 
+## Modelle
+
+`GET /v1/models` liefert ausschließlich die im BytePlus-Konto als verfügbar
+gemeldeten Seedance-Modelle einschließlich veröffentlichter Versions-ID,
+Anzeigename und modellabhängiger `capabilities` für Auflösung,
+Seitenverhältnis und Dauer. Der Abruf ist read-only und wird serverseitig
+kurzzeitig zwischengespeichert.
+
 ## Authentifizierung
 
 Ist `PROXY_API_KEY` gesetzt, erwarten alle `/v1`-Routen:
@@ -18,7 +26,7 @@ Fehler werden im OpenAI-Stil zurückgegeben:
 
 | Methode | Pfad | Funktion |
 |---|---|---|
-| `GET` | `/health` | Readiness-Prüfung |
+| `GET` | `/health` | Prozesszustand und letzter Credential-Check; bleibt auch bei ungültigen Upstream-Zugängen HTTP 200 |
 | `POST` | `/v1/media/references` | temporäre Referenzdateien hochladen |
 | `DELETE` | `/v1/media/references/{id}` | temporäre Referenz entfernen |
 | `GET` | `/v1/real-human/configuration` | Assets-API und Gruppe read-only prüfen |

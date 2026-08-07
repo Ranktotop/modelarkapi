@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -9,15 +8,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", validate_default=True
+    )
 
     ark_api_key: str = ""
     ark_base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
+    credential_validation_interval_seconds: float = Field(default=10_800, gt=0)
+    credential_validation_timeout_seconds: float = Field(default=10.0, gt=0)
     proxy_api_key: str | None = None
     require_proxy_api_key: bool = False
     public_base_url: str | None = None
-    default_model: str = "dreamina-seedance-2-0-260128"
-    model_map: dict[str, str] = Field(default_factory=dict)
+    model_cache_ttl_seconds: int = 300
     default_generate_audio: bool = True
     media_dir: Path = Path("./data/references")
     media_ttl_seconds: int = 86_400
@@ -46,13 +48,6 @@ class Settings(BaseSettings):
     asset_orphan_cleanup_interval_seconds: int = 900
     asset_orphan_ttl_seconds: int = 86_400
 
-    @field_validator("model_map", mode="before")
-    @classmethod
-    def parse_model_map(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
-
     @field_validator("allowed_download_host_suffixes", mode="before")
     @classmethod
     def parse_host_suffixes(cls, value: Any) -> Any:
@@ -60,14 +55,11 @@ class Settings(BaseSettings):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
-    def resolve_model(self, requested: str | None) -> str:
-        if not requested:
-            return self.default_model
-        bare = requested.removeprefix("openai/")
-        return self.model_map.get(requested, self.model_map.get(bare, bare))
+    def resolve_model(self, requested: str) -> str:
+        return requested.removeprefix("openai/")
 
     @model_validator(mode="after")
-    def validate_proxy_authentication(self) -> Settings:
+    def validate_required_credentials(self) -> Settings:
         if self.require_proxy_api_key and not self.proxy_api_key:
             raise ValueError(
                 "PROXY_API_KEY is required when REQUIRE_PROXY_API_KEY=true"
@@ -87,3 +79,7 @@ class Settings(BaseSettings):
                 self.byteplus_asset_group_id,
             )
         )
+
+    @property
+    def model_management_configured(self) -> bool:
+        return bool(self.byteplus_access_key_id and self.byteplus_secret_access_key)

@@ -7,19 +7,27 @@ from pathlib import Path
 import httpx
 import pytest
 
-from modelark_proxy.app import create_app
+from modelark_proxy.app import create_app as create_proxy_app
 from modelark_proxy.config import Settings
+
+
+def create_app(*args, **kwargs):
+    """Keep endpoint tests focused; startup validation has dedicated tests."""
+    kwargs.setdefault("validate_startup_credentials", False)
+    return create_proxy_app(*args, **kwargs)
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         ark_api_key="ark-test",
+        proxy_api_key=None,
+        require_proxy_api_key=False,
         public_base_url="https://seedance-proxy.example.com",
         media_dir=tmp_path / "media",
         asset_job_db=tmp_path / "proxy-jobs.db",
-        byteplus_access_key_id="",
-        byteplus_secret_access_key="",
+        byteplus_access_key_id="ak-test",
+        byteplus_secret_access_key="sk-test",
         byteplus_asset_group_id="",
     )
 
@@ -49,6 +57,243 @@ def ark_transport(captured: list[httpx.Request]) -> httpx.MockTransport:
         )
 
     return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_models_are_discovered_from_available_activations(settings: Settings):
+    settings.byteplus_access_key_id = "ak-test"
+    settings.byteplus_secret_access_key = "sk-test"
+    management_requests: list[httpx.Request] = []
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        management_requests.append(request)
+        action = request.url.params["Action"]
+        if action == "ListModelActivations":
+            return httpx.Response(
+                200,
+                json={
+                    "Result": {
+                        "Items": [
+                            {
+                                "FoundationModelName": "dreamina-seedance-2-0-fast",
+                                "DisplayName": "Dreamina-Seedance-2.0-fast",
+                                "State": "Available",
+                            },
+                            {
+                                "FoundationModelName": "dreamina-seedance-2-0",
+                                "DisplayName": "Dreamina-Seedance-2.0",
+                                "State": "Unavailable",
+                            },
+                            {
+                                "FoundationModelName": "seed-2-0-pro",
+                                "DisplayName": "Dola-Seed-2.0-pro",
+                                "State": "Available",
+                            },
+                        ]
+                    }
+                },
+            )
+        assert action == "ListFoundationModelVersions"
+        return httpx.Response(
+            200,
+            json={
+                "Result": {
+                    "Items": [
+                        {
+                            "FoundationModelName": "dreamina-seedance-2-0-fast",
+                            "ModelVersion": "260128",
+                            "Status": "Published",
+                        }
+                    ]
+                }
+            },
+        )
+
+    app = create_app(
+        settings,
+        ark_transport=ark_transport([]),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.get("/v1/models")
+        cached = await client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "object": "list",
+        "data": [
+            {
+                "id": "dreamina-seedance-2-0-fast-260128",
+                "object": "model",
+                "owned_by": "modelark",
+                "name": "Seedance 2.0 Fast",
+                "capabilities": {
+                    "resolutions": ["480p", "720p"],
+                    "ratios": [
+                        "adaptive",
+                        "16:9",
+                        "9:16",
+                        "1:1",
+                        "4:3",
+                        "3:4",
+                        "21:9",
+                    ],
+                    "durations": [-1, *range(4, 16)],
+                    "defaults": {
+                        "resolution": "720p",
+                        "ratio": "adaptive",
+                        "duration": 5,
+                    },
+                },
+            },
+        ],
+    }
+    assert cached.json() == response.json()
+    assert len(management_requests) == 2
+
+
+def test_settings_allow_missing_upstream_credentials(tmp_path: Path):
+    configured = Settings(
+        _env_file=None,
+        ark_api_key="",
+        byteplus_access_key_id="",
+        byteplus_secret_access_key="",
+        media_dir=tmp_path / "media",
+    )
+    assert configured.ark_api_key == ""
+    assert not configured.model_management_configured
+
+
+@pytest.mark.asyncio
+async def test_startup_validates_ark_and_iam_credentials(settings: Settings):
+    ark_requests: list[httpx.Request] = []
+    management_requests: list[httpx.Request] = []
+
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        ark_requests.append(request)
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        management_requests.append(request)
+        return httpx.Response(
+            200, json={"Result": {"Items": [], "TotalCount": 0}}
+        )
+
+    app = create_proxy_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        health = await client.get("/health")
+
+    assert health.json()["credentials"]["status"] == "valid"
+    assert len(ark_requests) == 1
+    assert ark_requests[0].method == "GET"
+    assert ark_requests[0].url.path.endswith("/contents/generations/tasks")
+    assert ark_requests[0].url.params["page_size"] == "1"
+    assert len(management_requests) == 1
+    assert management_requests[0].url.params["Action"] == "ListModelActivations"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_credential", ["ark", "iam"])
+async def test_invalid_upstream_credentials_keep_proxy_alive_but_block_routes(
+    settings: Settings, invalid_credential: str
+):
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        if invalid_credential == "ark":
+            return httpx.Response(401, json={"error": {"message": "invalid key"}})
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        if invalid_credential == "iam":
+            return httpx.Response(
+                403,
+                json={
+                    "ResponseMetadata": {
+                        "Error": {"Message": "invalid access key"}
+                    }
+                },
+            )
+        return httpx.Response(
+            200, json={"Result": {"Items": [], "TotalCount": 0}}
+        )
+
+    app = create_proxy_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    expected = "ARK_API_KEY" if invalid_credential == "ark" else "BYTEPLUS"
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        health = await client.get("/health")
+        blocked = await client.get("/v1/models")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["credentials"]["status"] == "invalid"
+    assert expected in health.json()["credentials"]["message"]
+    assert blocked.status_code == 503
+    assert blocked.json()["error"]["code"] == "upstream_credentials_invalid"
+    assert expected in blocked.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_credentials_are_rechecked_and_routes_recover(settings: Settings):
+    settings.credential_validation_interval_seconds = 0.01
+    ark_checks = 0
+
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal ark_checks
+        ark_checks += 1
+        if ark_checks == 1:
+            return httpx.Response(401, json={"error": {"message": "invalid key"}})
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"Result": {"Items": [], "TotalCount": 0}}
+        )
+
+    app = create_proxy_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        blocked = await client.get("/v1/real-human/configuration")
+        for _ in range(50):
+            health = await client.get("/health")
+            if health.json()["credentials"]["status"] == "valid":
+                break
+            await asyncio.sleep(0.01)
+        recovered = await client.get("/v1/real-human/configuration")
+
+    assert blocked.status_code == 503
+    assert health.json()["credentials"]["status"] == "valid"
+    assert recovered.status_code == 200
+    assert ark_checks >= 2
 
 
 @pytest.mark.asyncio
@@ -82,6 +327,52 @@ async def test_text_to_video_translation(settings: Settings):
         "ratio": "16:9",
     }
     assert captured[0].headers["authorization"] == "Bearer ark-test"
+
+
+@pytest.mark.asyncio
+async def test_modelark_billing_error_code_is_preserved(settings: Settings):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": "ResourcePackageExhausted",
+                    "message": "The applicable resource package is exhausted",
+                }
+            },
+        )
+
+    app = create_app(settings, ark_transport=httpx.MockTransport(handler))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos", json={"model": "seedance-test", "prompt": "test"}
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "ResourcePackageExhausted"
+    assert "resource package is exhausted" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_video_creation_requires_model(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post("/v1/videos", json={"prompt": "test"})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "model is required"
+    assert captured == []
 
 
 @pytest.mark.asyncio
@@ -162,7 +453,7 @@ async def test_upload_requires_public_base_url(settings: Settings):
     ):
         response = await client.post(
             "/v1/videos",
-            data={"prompt": "test"},
+            data={"model": "seedance-test", "prompt": "test"},
             files={"input_reference": ("clip.mp4", b"1234ftypmp42", "video/mp4")},
         )
     assert response.status_code == 400
@@ -210,6 +501,7 @@ async def test_typed_authorized_assets_are_translated(settings: Settings):
         response = await client.post(
             "/v1/videos",
             json={
+                "model": "seedance-test",
                 "prompt": "Use Image 1, Video 1, and Audio 1.",
                 "reference_assets": [
                     {"id": "asset-image", "type": "image"},
@@ -241,7 +533,11 @@ async def test_invalid_asset_id_is_rejected_before_modelark(settings: Settings):
     ):
         response = await client.post(
             "/v1/videos",
-            json={"prompt": "test", "asset_id": "https://attacker.example/file"},
+            json={
+                "model": "seedance-test",
+                "prompt": "test",
+                "asset_id": "https://attacker.example/file",
+            },
         )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
@@ -259,11 +555,13 @@ async def test_proxy_api_key_protects_rest_routes(settings: Settings):
         ) as client,
     ):
         health = await client.get("/health")
-        denied = await client.post("/v1/videos", json={"prompt": "test"})
+        denied = await client.post(
+            "/v1/videos", json={"model": "seedance-test", "prompt": "test"}
+        )
         allowed = await client.post(
             "/v1/videos",
             headers={"Authorization": f"Bearer {settings.proxy_api_key}"},
-            json={"prompt": "test"},
+            json={"model": "seedance-test", "prompt": "test"},
         )
     assert health.status_code == 200
     assert denied.status_code == 401
@@ -276,6 +574,8 @@ def test_protected_mode_requires_long_proxy_key(tmp_path: Path):
         Settings(
             _env_file=None,
             ark_api_key="ark-test",
+            byteplus_access_key_id="ak-test",
+            byteplus_secret_access_key="sk-test",
             require_proxy_api_key=True,
             proxy_api_key=None,
             media_dir=tmp_path / "media",
@@ -284,6 +584,8 @@ def test_protected_mode_requires_long_proxy_key(tmp_path: Path):
         Settings(
             _env_file=None,
             ark_api_key="ark-test",
+            byteplus_access_key_id="ak-test",
+            byteplus_secret_access_key="sk-test",
             require_proxy_api_key=True,
             proxy_api_key="too-short",
             media_dir=tmp_path / "media",
@@ -303,6 +605,7 @@ async def test_first_and_last_frame_roles_and_user_are_translated(settings: Sett
         response = await client.post(
             "/v1/videos",
             json={
+                "model": "seedance-test",
                 "prompt": "Transition between the frames",
                 "user": "hashed-user-42",
                 "reference_assets": [
@@ -423,6 +726,7 @@ async def test_previous_task_last_frame_can_continue_a_video(settings: Settings)
         response = await client.post(
             "/v1/videos",
             json={
+                "model": "seedance-test",
                 "prompt": "Continue seamlessly",
                 "input_reference_task_id": "cgt-previous",
             },
@@ -465,7 +769,11 @@ async def test_many_video_tasks_are_submitted_concurrently(settings: Settings):
             asyncio.create_task(
                 client.post(
                     "/v1/videos",
-                    json={"prompt": f"Parallel scene {index}", "duration": 4},
+                    json={
+                        "model": "seedance-test",
+                        "prompt": f"Parallel scene {index}",
+                        "duration": 4,
+                    },
                 )
             )
             for index in range(32)
@@ -515,7 +823,7 @@ async def test_real_human_reference_is_registered_used_and_deleted(settings: Set
             json={
                 "id": "cgt-real-human",
                 "status": "succeeded",
-                "model": settings.default_model,
+                "model": "seedance-test",
                 "created_at": 100,
                 "updated_at": 200,
                 "content": {"video_url": "https://out.volces.com/generated.mp4"},
@@ -541,6 +849,7 @@ async def test_real_human_reference_is_registered_used_and_deleted(settings: Set
         created = await client.post(
             "/v1/videos",
             json={
+                "model": "seedance-test",
                 "prompt": "Use Video 1",
                 "reference_urls": [
                     {
@@ -601,6 +910,7 @@ async def test_real_human_reference_requires_asset_credentials(settings: Setting
         response = await client.post(
             "/v1/videos",
             json={
+                "model": "seedance-test",
                 "prompt": "test",
                 "reference_urls": [
                     {
@@ -691,6 +1001,7 @@ async def test_real_human_jobs_are_backgrounded_and_concurrency_is_bounded(
                 client.post(
                     "/v1/videos",
                     json={
+                        "model": "seedance-test",
                         "prompt": f"Edit Video 1, request {index}",
                         "reference_urls": [
                             {

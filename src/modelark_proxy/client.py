@@ -64,6 +64,10 @@ class ModelArkClient:
         response = await self.http.get("/contents/generations/tasks", params=params)
         return await self._json(response)
 
+    async def validate_api_key(self) -> None:
+        """Validate inference API access without creating a paid task."""
+        await self.list_tasks([("page_size", "1")])
+
     async def delete_task(self, task_id: str) -> dict[str, Any]:
         response = await self.http.delete(f"/contents/generations/tasks/{task_id}")
         return await self._json(response)

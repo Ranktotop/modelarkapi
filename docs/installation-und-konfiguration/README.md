@@ -29,13 +29,14 @@ pip install -e '.[test]'
 
 | Variable | Standard | Zweck |
 |---|---:|---|
-| `ARK_API_KEY` | leer | BytePlus ModelArk API Key; für echte Requests Pflicht |
+| `ARK_API_KEY` | leer | BytePlus ModelArk API Key; wird beim Serverstart read-only geprüft |
 | `ARK_BASE_URL` | AP-Southeast ModelArk `/api/v3` | Upstream-Basis-URL |
+| `CREDENTIAL_VALIDATION_INTERVAL_SECONDS` | `10800` | Abstand der erneuten API-Key-/IAM-Prüfung in Sekunden |
+| `CREDENTIAL_VALIDATION_TIMEOUT_SECONDS` | `10` | Timeout je einzelner Credential-Prüfung |
 | `PROXY_API_KEY` | leer | Bearer-Key für alle API-Routen außer Health/Referenzmedien |
 | `REQUIRE_PROXY_API_KEY` | `false` | bei `true` Start nur mit mindestens 32 Zeichen langem Proxy-Key |
 | `PUBLIC_BASE_URL` | leer | öffentliche HTTPS-URL des Proxys; für hochgeladene Videos nötig |
-| `DEFAULT_MODEL` | Seedance 2.0 | Modell-ID, wenn kein Modell mitgesendet wird |
-| `MODEL_MAP` | `{}` | JSON-Abbildung stabiler Alias → freigeschaltete Modell-/Endpoint-ID |
+| `MODEL_CACHE_TTL_SECONDS` | `300` | Cache-Dauer der live abgerufenen verfügbaren Seedance-Modelle |
 | `DEFAULT_GENERATE_AUDIO` | `true` | Standard für synchron erzeugtes Audio |
 | `MEDIA_DIR` | `./data/references` | temporäre Referenzablage |
 | `MEDIA_TTL_SECONDS` | `86400` | lokale Aufbewahrungsdauer |
@@ -46,12 +47,12 @@ pip install -e '.[test]'
 | `MAX_UPSTREAM_CONNECTIONS` | `100` | maximale parallele ModelArk-Verbindungen |
 | `MAX_KEEPALIVE_CONNECTIONS` | `20` | wiederverwendete ModelArk-Verbindungen |
 | `ALLOWED_DOWNLOAD_HOST_SUFFIXES` | BytePlus/Volces | erlaubte Hosts für Ergebnisdownloads |
-| `BYTEPLUS_ACCESS_KEY_ID` | leer | AK des dedizierten IAM-Users für die Assets API |
+| `BYTEPLUS_ACCESS_KEY_ID` | leer | AK des dedizierten IAM-Users für Management- und Assets-API |
 | `BYTEPLUS_SECRET_ACCESS_KEY` | leer | SK des IAM-Users; ausschließlich serverseitig |
 | `BYTEPLUS_ASSET_GROUP_ID` | leer | verifizierte `group-…`-ID der Person |
 | `BYTEPLUS_PROJECT_NAME` | `default` | gemeinsames Projekt von Gruppe und Inferenzendpunkt |
 | `BYTEPLUS_ASSET_REGION` | `ap-southeast-1` | Signaturregion der Assets API |
-| `BYTEPLUS_ASSET_ENDPOINT` | AP-Southeast Assets API | signierter ModelArk-OpenAPI-Endpunkt |
+| `BYTEPLUS_ASSET_ENDPOINT` | AP-Southeast Management API | signierter ModelArk-OpenAPI-Endpunkt |
 | `ASSET_JOB_DB` | `./data/proxy-jobs.db` | persistenter Zustand temporärer Asset-Jobs |
 | `ASSET_POLL_INTERVAL_SECONDS` | `5` | Mindestabstand der `GetAsset`-Prüfungen |
 | `ASSET_MAINTENANCE_INTERVAL_SECONDS` | `2` | Takt des nicht blockierenden Job-Workers |
@@ -62,14 +63,31 @@ pip install -e '.[test]'
 | `ASSET_ORPHAN_CLEANUP_INTERVAL_SECONDS` | `900` | Abstand des Remote-Reconcilers |
 | `ASSET_ORPHAN_TTL_SECONDS` | `86400` | Mindestalter verwaister App-Assets vor Löschung |
 
-Beispiel für Alias-Mapping:
+Beispiel für Modell-Discovery:
 
 ```dotenv
-DEFAULT_MODEL=dreamina-seedance-2-0-fast-260128
-MODEL_MAP={"seedance":"dreamina-seedance-2-0-fast-260128"}
+MODEL_CACHE_TTL_SECONDS=300
+BYTEPLUS_ACCESS_KEY_ID=AKLT...
+BYTEPLUS_SECRET_ACCESS_KEY=...
 PROXY_API_KEY=replace-with-at-least-32-random-characters
 PUBLIC_BASE_URL=https://video-proxy.example.com
 ```
+
+`GET /v1/models` kombiniert die im Konto als `Available` gemeldeten
+Seedance-Modellfamilien aus `ListModelActivations` mit deren veröffentlichten
+Versionen aus `ListFoundationModelVersions`. Das Ergebnis wird kurzzeitig
+zwischengespeichert. Da BytePlus in diesen Management-Antworten keine
+Auflösungen oder Dauern ausliefert, ergänzt der Proxy pro Modellfamilie die in
+der offiziellen Video-API dokumentierte Capability-Matrix. Die UI verlangt
+eine explizite Auswahl und übernimmt danach nur die für dieses Modell
+unterstützten Werte; auch direkte Video-Requests ohne `model` werden abgelehnt.
+Fehlende oder ungültige Zugangsdaten beenden den Proxy nicht. `/health` meldet
+den Zustand unter `credentials`; Fachrouten liefern bis zur nächsten
+erfolgreichen Prüfung HTTP `503` mit dem Code
+`upstream_credentials_invalid`. Standardmäßig wird alle drei Stunden erneut
+geprüft. Eine serverseitige Freischaltung oder Berechtigungsänderung wird damit
+ohne Neustart erkannt; geänderte Docker-Umgebungsvariablen erfordern weiterhin
+einen Containerneustart.
 
 `.env` ist von Git ausgeschlossen. API-Schlüssel dürfen weder committed noch
 in Logs, Fehlermeldungen oder Screenshots veröffentlicht werden.

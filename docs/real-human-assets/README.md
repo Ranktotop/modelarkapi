@@ -41,7 +41,8 @@ Hauptkontos verwendet werden:
    `seedance-asset-proxy`, mit programmatischem Zugriff anlegen.
 3. Im Benutzer unter **Policy** die Berechtigung `ArkFullAccess` für das
    Projekt vergeben, in dem sowohl Asset-Gruppe als auch Seedance-Endpunkt
-   liegen. Neue IAM-User besitzen zunächst keine Rechte.
+   liegen. Sie deckt außerdem die read-only Modell-Discovery des Studios ab.
+   Neue IAM-User besitzen zunächst keine Rechte.
 4. Im Reiter **Access key** auf **Create access key** klicken. Alternativ steht
    [IAM → Key Management](https://console.byteplus.com/iam/keymanage/) zur
    Verfügung. BytePlus erlaubt höchstens zwei Access Keys pro Benutzer.
@@ -127,7 +128,7 @@ Automatische Registrierung einer neuen URL:
 
 ```json
 {
-  "model": "seedance",
+  "model": "dreamina-seedance-2-0-fast-260128",
   "prompt": "The person in Image 1 walks into a modern studio.",
   "asset_id": "asset-…",
   "duration": 4,

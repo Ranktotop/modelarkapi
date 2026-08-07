@@ -60,8 +60,6 @@ class UISettings:
         self.login_max_attempts = int(os.getenv("UI_LOGIN_MAX_ATTEMPTS", "5"))
         self.login_window_seconds = int(os.getenv("UI_LOGIN_WINDOW_SECONDS", "900"))
         self.db_path = Path(os.getenv("UI_DB_PATH", "./data/ui/ui.db"))
-        self.model_name = os.getenv("UI_MODEL_NAME", "seedance")
-
         if (not self.username or not self.password) and not self.auth_disabled:
             raise RuntimeError(
                 "UI_USERNAME and UI_PASSWORD are required unless "
@@ -485,12 +483,31 @@ def create_app(
 
     @app.get("/api/config")
     async def config() -> dict[str, Any]:
+        status, model_response = await proxy_json("GET", "/models")
+        if status >= 400:
+            error = model_response.get("error", model_response)
+            message = error.get("message") if isinstance(error, dict) else error
+            raise HTTPException(
+                status_code=status,
+                detail=f"Model discovery failed: {message or 'unknown proxy error'}",
+            )
+        models = model_response.get("data", [])
+        if not isinstance(models, list):
+            raise HTTPException(
+                status_code=502, detail="Model discovery returned no model list"
+            )
+        selectable_models = [
+            {
+                "id": str(model["id"]),
+                "label": str(model.get("name") or model["id"]),
+                "capabilities": model.get("capabilities", {}),
+            }
+            for model in models
+            if isinstance(model, dict) and model.get("id")
+        ]
         return {
-            "model": settings.model_name,
+            "models": selectable_models,
             "job_ttl_seconds": settings.job_ttl_seconds,
-            "resolutions": ["480p", "720p"],
-            "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-            "durations": list(range(4, 16)),
             "reference_limits": {"image": 9, "video": 3, "audio": 3},
         }
 

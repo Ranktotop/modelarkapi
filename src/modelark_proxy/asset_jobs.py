@@ -439,6 +439,9 @@ class AssetJobManager:
                 video.error = job["error"]
             return video
         request = job.get("request") or {}
+        requested_model = request.get("model")
+        if not isinstance(requested_model, str) or not requested_model.strip():
+            raise ValueError("Stored asset job has no model")
         return VideoObject(
             id=job["id"],
             status=job["status"]
@@ -450,7 +453,7 @@ class AssetJobManager:
             if request.get("duration") is not None
             else None,
             size=request.get("size"),
-            model=self.settings.resolve_model(request.get("model")),
+            model=self.settings.resolve_model(requested_model.strip()),
             error=job.get("error"),
             provider_status="asset_processing"
             if job["status"] != "failed"

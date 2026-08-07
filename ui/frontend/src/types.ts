@@ -15,12 +15,16 @@ export type AssetReference = {
   type: MediaKind;
 };
 
-export type StudioConfig = {
-  model: string;
-  job_ttl_seconds: number;
+export type ModelCapabilities = {
   resolutions: string[];
   ratios: string[];
   durations: number[];
+  defaults: { resolution: string; ratio: string; duration: number };
+};
+
+export type StudioConfig = {
+  models: { id: string; label: string; capabilities: ModelCapabilities }[];
+  job_ttl_seconds: number;
   reference_limits: Record<MediaKind, number>;
 };
 

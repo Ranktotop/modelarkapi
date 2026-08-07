@@ -7,16 +7,16 @@ Den Inhalt von `litellm-config.example.yaml` in die LiteLLM-Konfiguration
 
 ```yaml
 model_list:
-  - model_name: seedance
+  - model_name: dreamina-seedance-2-0-fast-260128
     litellm_params:
-      model: openai/seedance
+      model: openai/dreamina-seedance-2-0-fast-260128
       api_base: http://modelark-video-proxy:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
 ```
 
-LiteLLM verwendet damit seinen OpenAI-Videoadapter. Der Modellalias bleibt
-stabil; der Proxy löst ihn über `MODEL_MAP` zur im Account freigeschalteten
-ModelArk-ID auf.
+LiteLLM verwendet damit seinen OpenAI-Videoadapter und sendet die konkrete
+ModelArk-ID. Die aktuell im Account verfügbaren Seedance-IDs können vorher über
+`GET /v1/models` am Proxy abgerufen werden.
 
 ## Gateway-Aufruf
 
@@ -25,7 +25,7 @@ curl -X POST http://localhost:4000/v1/videos \
   -H "Authorization: Bearer $LITELLM_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
-    "model":"seedance",
+    "model":"dreamina-seedance-2-0-fast-260128",
     "prompt":"A fox running through fresh snow",
     "seconds":"5",
     "size":"1280x720"
@@ -40,7 +40,7 @@ Python-Funktion werden sie über `extra_body` mitgegeben.
 from litellm import video_generation
 
 video = video_generation(
-    model="openai/seedance",
+    model="openai/dreamina-seedance-2-0-fast-260128",
     prompt="The person in Image 1 turns toward the camera.",
     seconds="4",
     size="864x496",

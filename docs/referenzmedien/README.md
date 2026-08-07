@@ -12,7 +12,7 @@ Darum muss `PUBLIC_BASE_URL` von ModelArk über HTTPS erreichbar sein.
 ```bash
 curl -X POST http://localhost:8080/v1/videos \
   -H "Authorization: Bearer $PROXY_KEY" \
-  -F 'model=seedance' \
+  -F 'model=dreamina-seedance-2-0-fast-260128' \
   -F 'prompt=Extend this scene forward' \
   -F 'input_reference=@clip.mp4;type=video/mp4'
 ```

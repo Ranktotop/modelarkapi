@@ -8,14 +8,15 @@ Browser.
 ## Funktionsumfang
 
 - Text-to-Video
+- Live-Modellauswahl aus den im BytePlus-Konto verfügbaren Seedance-Modellen
 - First-Frame und First-/Last-Frame
 - multimodale Bild-, Video- und Audioreferenzen
 - Video bearbeiten, verlängern und mehrere Clips verbinden
 - manuelle Real-Human- und Digital-Character-Asset-IDs
 - automatische temporäre Real-Human-Registrierung pro Referenz über den
   Schalter **Reale Person · automatisch verifizieren**
-- Dauer, Auflösung, Seitenverhältnis, Audio, Wasserzeichen, letztes Frame und
-  Priorität
+- modellabhängige Dauer, Auflösung und Seitenverhältnisse sowie Audio,
+  Wasserzeichen, letztes Frame und Priorität
 - kostenpflichtige Bestätigung vor dem Start
 - automatische Statusaktualisierung, Video-Player und Downloads
 - Abbrechen/Löschen und Fortsetzung über das letzte Frame

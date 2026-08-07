@@ -16,6 +16,7 @@ fertige Videos nicht dauerhaft auf dem Server.
 Unterstützt sind:
 
 - `POST /v1/videos` (JSON oder Multipart, inklusive `input_reference`)
+- `GET /v1/models` (live verfügbare Seedance-Modelle des BytePlus-Kontos)
 - `POST /v1/media/references` (mehrere temporäre Bild-/Video-/Audio-Uploads)
 - `GET /v1/videos` (Taskliste und Filter)
 - `GET /v1/videos/{id}` (Status)
@@ -75,10 +76,23 @@ Wesentliche Variablen:
 | Variable | Bedeutung |
 |---|---|
 | `ARK_API_KEY` | ModelArk API Key |
+| `CREDENTIAL_VALIDATION_INTERVAL_SECONDS` | Abstand der erneuten API-Key-/IAM-Prüfung (Standard: drei Stunden) |
 | `PUBLIC_BASE_URL` | Öffentliche HTTPS-Basis-URL dieses Proxys; für Uploads Pflicht |
 | `PROXY_API_KEY` | verpflichtender Schlüssel im Docker-Deployment zwischen LiteLLM und Proxy |
-| `DEFAULT_MODEL` | ModelArk-Modell-ID |
-| `MODEL_MAP` | Optionales JSON mit Modell-Aliasen |
+| `BYTEPLUS_ACCESS_KEY_ID` / `BYTEPLUS_SECRET_ACCESS_KEY` | verpflichtender IAM-Zugang für die Live-Modellliste |
+| `MODEL_CACHE_TTL_SECONDS` | Cache-Dauer der live abgerufenen Modellauswahl |
+
+Der Proxy prüft beim Start mit kostenfreien Read-only-Aufrufen sowohl den
+`ARK_API_KEY` als auch den IAM-Zugang und wiederholt dies standardmäßig alle drei
+Stunden. Bei ungültigen Zugangsdaten bleibt der Prozess samt `/health` erreichbar,
+antwortet auf Fachrouten aber mit `503 upstream_credentials_invalid`. Sobald eine
+spätere Prüfung erfolgreich ist, werden die Routen automatisch wieder freigegeben.
+
+Der allgemeine BytePlus-Kontosaldo ist kein verlässlicher Indikator für
+Seedance-Resource-Packages und wird daher weder angezeigt noch als Sperre
+verwendet. BytePlus dokumentiert die Package-Restmenge derzeit nur im Billing
+Center. Meldet ModelArk bei einem echten Generierungsaufruf ein erschöpftes
+Package, reicht der Proxy dessen Fehlercode und Meldung an LiteLLM und UI weiter.
 
 ## LiteLLM anbinden
 
@@ -91,9 +105,8 @@ MODELARK_PROXY_API_KEY=<derselbe mindestens 32 Zeichen lange PROXY_API_KEY>
 
 `api_base` muss auf `/v1` dieses Dienstes zeigen. Weil LiteLLM Seedance noch
 nicht nativ kennt, wird bewusst sein vorhandener `openai`-Video-Adapter benutzt.
-LiteLLM sendet dabei den stabilen Alias `seedance`; über `MODEL_MAP` in `.env`
-kann dieser ohne Änderung an LiteLLM auf die für den Account freigeschaltete
-ModelArk-ID zeigen. Das Beispiel verwendet aktuell
+LiteLLM sendet die konkrete, versionierte ModelArk-ID. Die aktuell verfügbaren
+Seedance-IDs liefert dieser Proxy über `GET /v1/models`; das Beispiel verwendet
 `dreamina-seedance-2-0-fast-260128`.
 
 Text-to-video über das LiteLLM Gateway:
@@ -103,7 +116,7 @@ curl -X POST http://localhost:4000/v1/videos \
   -H "Authorization: Bearer $LITELLM_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "seedance",
+    "model": "dreamina-seedance-2-0-fast-260128",
     "prompt": "A fox running through fresh snow",
     "seconds": "5",
     "size": "1280x720"
@@ -115,7 +128,7 @@ Videoreferenz hochladen:
 ```bash
 curl -X POST http://localhost:4000/v1/videos \
   -H "Authorization: Bearer $LITELLM_KEY" \
-  -F 'model=seedance' \
+  -F 'model=dreamina-seedance-2-0-fast-260128' \
   -F 'prompt=Continue this scene with a slow camera pullback' \
   -F 'seconds=6' \
   -F 'size=1280x720' \
@@ -190,7 +203,7 @@ reicht das Feld über `extra_body` an den Adapter weiter:
 from litellm import video_generation
 
 video = video_generation(
-    model="openai/seedance",
+    model="openai/dreamina-seedance-2-0-fast-260128",
     prompt="The person in Image 1 walks into a modern studio and looks at the camera.",
     seconds="4",
     size="864x496",
@@ -210,7 +223,7 @@ curl -X POST http://localhost:4000/v1/videos \
   -H "Authorization: Bearer $LITELLM_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "seedance",
+    "model": "dreamina-seedance-2-0-fast-260128",
     "prompt": "The person in Image 1 walks into a modern studio.",
     "seconds": "4",
     "size": "864x496",

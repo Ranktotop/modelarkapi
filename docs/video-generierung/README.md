@@ -7,7 +7,7 @@ wird gepollt und das Ergebnis heruntergeladen.
 
 ```json
 {
-  "model": "seedance",
+  "model": "dreamina-seedance-2-0-fast-260128",
   "prompt": "Cinematic macro shot of rain on a red leaf",
   "duration": 5,
   "resolution": "720p",

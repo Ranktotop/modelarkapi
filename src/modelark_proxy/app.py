@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import mimetypes
 import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -53,6 +55,8 @@ VALID_REFERENCE_ROLES = {
     "video": {"reference_video"},
     "audio": {"reference_audio"},
 }
+
+logger = logging.getLogger(__name__)
 REFERENCE_SIZE_LIMITS = {
     "image": 30 * 1024 * 1024,
     "video": 200 * 1024 * 1024,
@@ -72,6 +76,13 @@ def openai_error(message: str, status: int, code: str | None = None) -> JSONResp
             }
         },
     )
+
+
+def modelark_error_code(error: ModelArkError) -> str:
+    body = error.body if isinstance(error.body, dict) else {}
+    upstream_error = body.get("error", body)
+    code = upstream_error.get("code") if isinstance(upstream_error, dict) else None
+    return str(code) if code else "modelark_error"
 
 
 async def _upload_chunks(upload: UploadFile) -> AsyncIterator[bytes]:
@@ -280,6 +291,9 @@ def build_task_payload(
     settings: Settings,
     hosted_reference: tuple[str, str, str | None] | None,
 ) -> dict[str, Any]:
+    requested_model = data.get("model")
+    if not isinstance(requested_model, str) or not requested_model.strip():
+        raise TranslationError("model is required")
     prompt = str(data.get("prompt", "")).strip()
     content: list[dict[str, Any]] = []
     if prompt:
@@ -324,7 +338,7 @@ def build_task_payload(
         raise TranslationError("A prompt or at least one reference is required")
 
     payload: dict[str, Any] = {
-        "model": settings.resolve_model(data.get("model")),
+        "model": settings.resolve_model(requested_model.strip()),
         "content": content,
     }
     for field in PASSTHROUGH_FIELDS:
@@ -418,6 +432,7 @@ def create_app(
     ark_transport: httpx.AsyncBaseTransport | None = None,
     asset_transport: httpx.AsyncBaseTransport | None = None,
     download_transport: httpx.AsyncBaseTransport | None = None,
+    validate_startup_credentials: bool = True,
 ) -> FastAPI:
     settings = settings or Settings()
     media = MediaStore(
@@ -425,6 +440,16 @@ def create_app(
     )
     ark = ModelArkClient(settings, ark_transport)
     assets = AssetClient(settings, asset_transport)
+    model_cache: list[dict[str, Any]] | None = None
+    model_cache_expires_at = 0.0
+    model_cache_lock = asyncio.Lock()
+    credential_state: dict[str, Any] = {
+        "status": "checking" if validate_startup_credentials else "valid",
+        "message": None,
+        "last_checked_at": None,
+        "ark_api_key": "checking" if validate_startup_credentials else "valid",
+        "iam": "checking" if validate_startup_credentials else "valid",
+    }
     asset_jobs = AssetJobManager(
         settings,
         assets,
@@ -435,8 +460,6 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        media.cleanup()
-
         async def cleanup_media() -> None:
             while True:
                 await asyncio.sleep(settings.media_cleanup_interval_seconds)
@@ -444,20 +467,103 @@ def create_app(
 
         async def maintain_asset_jobs() -> None:
             while True:
-                await asset_jobs.maintenance()
+                if credential_state["status"] == "valid":
+                    await asset_jobs.maintenance()
                 await asyncio.sleep(settings.asset_maintenance_interval_seconds)
 
-        cleanup_task = asyncio.create_task(cleanup_media())
-        asset_task = asyncio.create_task(maintain_asset_jobs())
+        async def refresh_credential_state() -> None:
+            async def validate_ark_api_key() -> str | None:
+                if not settings.ark_api_key:
+                    return "ARK_API_KEY is not configured"
+                try:
+                    async with asyncio.timeout(
+                        settings.credential_validation_timeout_seconds
+                    ):
+                        await ark.validate_api_key()
+                except ModelArkError as exc:
+                    return f"ARK_API_KEY was rejected with HTTP {exc.status_code}"
+                except TimeoutError:
+                    return "ARK_API_KEY validation timed out"
+                except httpx.HTTPError:
+                    return "ARK_API_KEY validation could not reach ModelArk"
+                except Exception:
+                    logger.exception("Unexpected ARK_API_KEY validation failure")
+                    return "ARK_API_KEY validation failed unexpectedly"
+                return None
+
+            async def validate_iam_credentials() -> str | None:
+                if not settings.byteplus_access_key_id:
+                    return "BYTEPLUS_ACCESS_KEY_ID is not configured"
+                if not settings.byteplus_secret_access_key:
+                    return "BYTEPLUS_SECRET_ACCESS_KEY is not configured"
+                try:
+                    async with asyncio.timeout(
+                        settings.credential_validation_timeout_seconds
+                    ):
+                        await assets.validate_management_access()
+                except AssetAPIError:
+                    return (
+                        "BYTEPLUS_ACCESS_KEY_ID/BYTEPLUS_SECRET_ACCESS_KEY were "
+                        "rejected by the ModelArk management API"
+                    )
+                except TimeoutError:
+                    return "IAM credential validation timed out"
+                except httpx.HTTPError:
+                    return (
+                        "IAM credential validation could not reach the ModelArk "
+                        "management API"
+                    )
+                except Exception:
+                    logger.exception("Unexpected IAM credential validation failure")
+                    return "IAM credential validation failed unexpectedly"
+                return None
+
+            ark_error, iam_error = await asyncio.gather(
+                validate_ark_api_key(), validate_iam_credentials()
+            )
+            errors = [error for error in (ark_error, iam_error) if error]
+            credential_state.update(
+                status="invalid" if errors else "valid",
+                message="; ".join(errors) if errors else None,
+                last_checked_at=datetime.now(UTC).isoformat(),
+                ark_api_key="invalid" if ark_error else "valid",
+                iam="invalid" if iam_error else "valid",
+            )
+            if errors:
+                logger.warning("ModelArk credentials are invalid: %s", "; ".join(errors))
+
+        async def maintain_credential_state() -> None:
+            while True:
+                await asyncio.sleep(
+                    settings.credential_validation_interval_seconds
+                )
+                await refresh_credential_state()
+
+        cleanup_task: asyncio.Task[None] | None = None
+        asset_task: asyncio.Task[None] | None = None
+        credential_task: asyncio.Task[None] | None = None
         try:
+            if validate_startup_credentials:
+                await refresh_credential_state()
+            media.cleanup()
+            cleanup_task = asyncio.create_task(cleanup_media())
+            asset_task = asyncio.create_task(maintain_asset_jobs())
+            if validate_startup_credentials:
+                credential_task = asyncio.create_task(maintain_credential_state())
             yield
         finally:
-            cleanup_task.cancel()
-            asset_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await cleanup_task
-            with suppress(asyncio.CancelledError):
-                await asset_task
+            if cleanup_task is not None:
+                cleanup_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cleanup_task
+            if asset_task is not None:
+                asset_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await asset_task
+            if credential_task is not None:
+                credential_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await credential_task
             await asset_jobs.close()
             await assets.close()
             await ark.close()
@@ -469,6 +575,7 @@ def create_app(
     app.state.ark = ark
     app.state.assets = assets
     app.state.asset_jobs = asset_jobs
+    app.state.credential_state = credential_state
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
@@ -481,10 +588,20 @@ def create_app(
                 response = openai_error("Invalid API key", 401, "invalid_api_key")
                 response.headers["WWW-Authenticate"] = "Bearer"
                 return response
+        if (
+            not request.url.path.startswith(("/health", "/media/reference/"))
+            and credential_state["status"] != "valid"
+        ):
+            message = credential_state["message"] or "validation is still pending"
+            return openai_error(
+                f"ModelArk credentials are currently invalid: {message}",
+                503,
+                "upstream_credentials_invalid",
+            )
         try:
             return await call_next(request)
         except ModelArkError as exc:
-            return openai_error(str(exc), exc.status_code, "modelark_error")
+            return openai_error(str(exc), exc.status_code, modelark_error_code(exc))
         except AssetAPIError as exc:
             return openai_error(str(exc), 502, "modelark_asset_error")
         except TranslationError as exc:
@@ -493,8 +610,38 @@ def create_app(
             return openai_error(str(exc), 413, "upload_too_large")
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, Any]:
+        return {"status": "ok", "credentials": deepcopy(credential_state)}
+
+    @app.get("/v1/models")
+    @app.get("/models", include_in_schema=False)
+    async def list_models() -> dict[str, Any]:
+        nonlocal model_cache, model_cache_expires_at
+        if not settings.model_management_configured:
+            raise HTTPException(
+                status_code=503,
+                detail="Model discovery requires BytePlus access-key credentials",
+            )
+        now = time.monotonic()
+        if model_cache is None or now >= model_cache_expires_at:
+            async with model_cache_lock:
+                now = time.monotonic()
+                if model_cache is None or now >= model_cache_expires_at:
+                    model_cache = await assets.list_available_seedance_models()
+                    model_cache_expires_at = now + settings.model_cache_ttl_seconds
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": model["id"],
+                    "object": "model",
+                    "owned_by": "modelark",
+                    "name": model["label"],
+                    "capabilities": model["capabilities"],
+                }
+                for model in model_cache
+            ],
+        }
 
     @app.get("/v1/real-human/configuration")
     @app.get("/real-human/configuration", include_in_schema=False)

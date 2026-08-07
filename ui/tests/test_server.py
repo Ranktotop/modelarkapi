@@ -29,6 +29,45 @@ def proxy_transport(captured: list[httpx.Request]) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
         path = request.url.path
+        if request.method == "GET" and path.endswith("/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "dreamina-seedance-2-0-260128",
+                            "object": "model",
+                            "name": "Seedance 2.0",
+                            "capabilities": {
+                                "resolutions": ["480p", "720p", "1080p", "4k"],
+                                "ratios": ["adaptive", "16:9"],
+                                "durations": [-1, 4, 5],
+                                "defaults": {
+                                    "resolution": "720p",
+                                    "ratio": "adaptive",
+                                    "duration": 5,
+                                },
+                            },
+                        },
+                        {
+                            "id": "dreamina-seedance-2-0-fast-260128",
+                            "object": "model",
+                            "name": "Seedance 2.0 Fast",
+                            "capabilities": {
+                                "resolutions": ["480p", "720p"],
+                                "ratios": ["adaptive", "16:9"],
+                                "durations": [-1, 4, 5],
+                                "defaults": {
+                                    "resolution": "720p",
+                                    "ratio": "adaptive",
+                                    "duration": 5,
+                                },
+                            },
+                        },
+                    ],
+                },
+            )
         if request.method == "POST" and path.endswith("/videos"):
             return httpx.Response(
                 200,
@@ -58,6 +97,66 @@ def proxy_transport(captured: list[httpx.Request]) -> httpx.MockTransport:
         return httpx.Response(404, json={"error": "not_found"})
 
     return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_ui_config_exposes_proxy_model_options(ui_settings: UISettings):
+    app = create_app(
+        ui_settings,
+        proxy_transport=proxy_transport([]),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        response = await client.get("/api/config")
+
+    assert response.status_code == 200
+    config = response.json()
+    assert [model["label"] for model in config["models"]] == [
+        "Seedance 2.0",
+        "Seedance 2.0 Fast",
+    ]
+    assert config["models"][0]["capabilities"]["resolutions"] == [
+        "480p",
+        "720p",
+        "1080p",
+        "4k",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ui_config_preserves_proxy_credential_error(ui_settings: UISettings):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "message": "ModelArk credentials are currently invalid: "
+                    "ARK_API_KEY was rejected with HTTP 401",
+                    "code": "upstream_credentials_invalid",
+                }
+            },
+        )
+
+    app = create_app(
+        ui_settings,
+        proxy_transport=httpx.MockTransport(handler),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        response = await client.get("/api/config")
+
+    assert response.status_code == 503
+    assert "ARK_API_KEY" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
