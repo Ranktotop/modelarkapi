@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { api } from "./api";
+import { loginBackground, logoWhite } from "./assets";
 import type { AssetReference, Job, MediaKind, Reference, StudioConfig } from "./types";
 
 const MODES = [
@@ -19,6 +20,15 @@ const kindLabel: Record<MediaKind, string> = {
   audio: "Audio",
 };
 
+const SOCIAL_LINKS = [
+  { label: "Website", href: "https://marcmeese.de", short: "WWW" },
+  { label: "TikTok", href: "https://link.marcmeese.de/tiktok", short: "TT" },
+  { label: "Instagram", href: "https://link.marcmeese.de/instagram", short: "IG" },
+  { label: "YouTube", href: "https://link.marcmeese.de/youtube", short: "YT" },
+  { label: "Facebook", href: "https://link.marcmeese.de/facebook", short: "FB" },
+  { label: "LinkedIn", href: "https://link.marcmeese.de/linkedin", short: "IN" },
+] as const;
+
 function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "play" | "lock" | "logout" | "plus" }) {
   const paths: Record<string, JSX.Element> = {
     spark: <><path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></>,
@@ -34,6 +44,7 @@ function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "pla
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,7 +54,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
+      await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Anmeldung fehlgeschlagen");
@@ -53,17 +64,20 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return <main className="login-shell">
-    <div className="ambient ambient-one" />
-    <div className="ambient ambient-two" />
+    <img className="login-background" src={loginBackground} alt="" />
+    <div className="login-overlay" />
     <form className="login-card" onSubmit={submit}>
-      <div className="brand-mark"><Icon name="spark" /></div>
-      <p className="eyebrow">PRIVATE CREATION SPACE</p>
-      <h1>Seedance Studio</h1>
-      <p className="muted">Dein direkter, temporärer Workspace für ModelArk.</p>
-      <label className="field-label" htmlFor="password">Studio-Passwort</label>
-      <div className="password-field"><Icon name="lock" /><input id="password" autoFocus type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Passwort eingeben" /></div>
+      <div className="login-accent" />
+      <div className="login-brand">
+        <img src={logoWhite} alt="Marc Meese" />
+        <span />
+        <h1>Seedance Studio</h1>
+        <p>Melde dich an, um fortzufahren</p>
+      </div>
+      <div className="login-field"><label htmlFor="username">Benutzername</label><input id="username" autoFocus autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /></div>
+      <div className="login-field"><label htmlFor="password">Passwort</label><input id="password" autoComplete="current-password" required type="password" value={password} onChange={e => setPassword(e.target.value)} /></div>
       {error && <div className="error-message">{error}</div>}
-      <button className="primary-button" disabled={busy}>{busy ? "Öffne Studio …" : "Studio öffnen"}</button>
+      <button className="primary-button" disabled={busy}>{busy ? "Anmeldung …" : "Anmelden"}</button>
     </form>
   </main>;
 }
@@ -249,7 +263,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
   return <div className="studio-shell">
     <header className="topbar">
-      <div className="brand"><div className="brand-mark small"><Icon name="spark" /></div><div><strong>Seedance Studio</strong><span>ModelArk · Private workspace</span></div></div>
+      <div className="brand"><a className="brand-logo" href="https://marcmeese.de" target="_blank" rel="noreferrer" aria-label="Marc Meese Website"><img src={logoWhite} alt="Marc Meese" /></a><div><strong>Seedance Studio</strong><span>ModelArk · Private workspace</span></div></div>
       <div className="topbar-actions"><span className="retention-pill"><i /> Alles wird nach 24 h gelöscht</span><button className="icon-button" onClick={logout} title="Abmelden"><Icon name="logout" /></button></div>
     </header>
 
@@ -299,6 +313,18 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="job-list"><div className="list-title"><span>Letzte 24 Stunden</span><small>automatisch bereinigt</small></div>{jobs.map(job => <button className={`job-row ${selected?.id === job.id ? "active" : ""}`} key={job.id} onClick={() => setSelectedId(job.id)}><div className="job-thumb"><Icon name="play" /></div><div className="job-copy"><strong>{job.prompt || "Ohne Prompt"}</strong><span>{MODES.find(item => item.id === job.mode)?.label || job.mode} · {new Date(job.created_at * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span></div><Status status={job.provider.status}/><span className="delete-job" onClick={event => { event.stopPropagation(); deleteJob(job); }}><Icon name="trash" /></span></button>)}</div>
       </aside>
     </main>
+
+    <footer className="site-footer">
+      <div className="footer-inner">
+        <div className="footer-brand">
+          <a className="footer-logo" href="https://marcmeese.de" target="_blank" rel="noreferrer"><img src={logoWhite} alt="Marc Meese" /></a>
+          <div><strong>Folge mir</strong><span>Für weitere Tools &amp; Automationen rund um KI.</span></div>
+        </div>
+        <nav className="social-links" aria-label="Social Media">
+          {SOCIAL_LINKS.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer"><b>{link.short}</b>{link.label}</a>)}
+        </nav>
+      </div>
+    </footer>
 
     {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{duration} Sekunden</span><span>{resolution}</span><span>{ratio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
   </div>;
