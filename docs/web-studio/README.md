@@ -36,7 +36,7 @@ UI_LOGIN_WINDOW_SECONDS=900
 Danach:
 
 ```bash
-docker compose up --build -d
+docker compose up -d
 ```
 
 Der Container lauscht intern auf `http://localhost:3000`; im öffentlichen

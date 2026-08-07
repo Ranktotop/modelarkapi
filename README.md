@@ -61,7 +61,7 @@ Dateisignatur und erkennt MP4/MOV unabhängig vom von LiteLLM gesetzten MIME-Typ
 cp .env.example .env
 # .env ausfüllen, einschließlich UI_USERNAME, UI_PASSWORD und UI_SESSION_SECRET
 # Zufallswerte zum Beispiel mit: openssl rand -hex 32
-docker compose up --build -d
+docker compose up -d
 curl http://localhost:8080/health
 curl http://localhost:3000/health
 ```
@@ -221,7 +221,7 @@ video = video_generation(
     prompt="The person in Video 1 walks into a modern studio.",
     seconds="4",
     size="864x496",
-    api_base="http://modelark-video-proxy:8080/v1",
+    api_base="http://modelarkapi_server:8080/v1",
     api_key="your-proxy-key",
     extra_body={
         "reference_urls": [{

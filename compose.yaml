@@ -1,6 +1,8 @@
+name: modelarkapi
+
 services:
-  modelark-video-proxy:
-    build: .
+  server:
+    image: ranktotop/modelarkapi:backend-${IMG_VERSION:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -9,21 +11,24 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - modelark-reference-media:/app/data/references
-      - modelark-proxy-state:/app/state
+      - reference_media:/app/data/references
+      - server_state:/app/state
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      default:
+        aliases:
+          - modelarkapi_server
 
-  seedance-studio:
-    build:
-      context: .
-      dockerfile: ui/Dockerfile
+  ui:
+    image: ranktotop/modelarkapi:frontend-${IMG_VERSION:-latest}
     restart: unless-stopped
     environment:
-      MODELARK_PROXY_URL: http://modelark-video-proxy:8080/v1
+      MODELARK_PROXY_URL: http://modelarkapi_server:8080/v1
       MODELARK_PROXY_API_KEY: ${PROXY_API_KEY}
       UI_USERNAME: ${UI_USERNAME}
       UI_PASSWORD: ${UI_PASSWORD}
@@ -42,17 +47,26 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - seedance-studio-state:/app/data
+      - ui_state:/app/data
     depends_on:
-      modelark-video-proxy:
+      server:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      default:
+        aliases:
+          - modelarkapi_ui
 
 volumes:
-  modelark-reference-media:
-  modelark-proxy-state:
-  seedance-studio-state:
+  reference_media:
+  server_state:
+  ui_state:
+
+networks:
+  default:
+    driver: bridge

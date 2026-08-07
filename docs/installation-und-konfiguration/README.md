@@ -5,7 +5,7 @@
 ```bash
 cp .env.example .env
 # ARK_API_KEY und gewünschte Werte in .env eintragen
-docker compose up --build -d
+docker compose up -d
 curl http://localhost:8080/health
 curl http://localhost:3000/health
 ```

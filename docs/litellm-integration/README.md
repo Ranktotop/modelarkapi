@@ -10,7 +10,7 @@ model_list:
   - model_name: dreamina-seedance-2-0-fast-260128
     litellm_params:
       model: openai/dreamina-seedance-2-0-fast-260128
-      api_base: http://modelark-video-proxy:8080/v1
+      api_base: http://modelarkapi_server:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
 ```
 
@@ -45,7 +45,7 @@ video = video_generation(
     prompt="The person in Video 1 turns toward the camera.",
     seconds="4",
     size="864x496",
-    api_base="http://modelark-video-proxy:8080/v1",
+    api_base="http://modelarkapi_server:8080/v1",
     api_key="proxy-key",
     extra_body={
         "reference_urls": [{
