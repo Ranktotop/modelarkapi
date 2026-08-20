@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
@@ -178,6 +178,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [creating, setCreating] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [previewRatio, setPreviewRatio] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
@@ -209,6 +210,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     const timer = window.setInterval(() => loadJobs().catch(() => undefined), 5000);
     return () => window.clearInterval(timer);
   }, [loadJobs]);
+
+  useEffect(() => { setPreviewRatio(null); }, [selected?.id]);
 
   async function uploadFiles(files: FileList | File[]) {
     if (!files.length) return;
@@ -403,8 +406,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       <aside className="results panel">
         <div className="results-header"><div><p className="eyebrow">OUTPUT</p><h2>Generierungen</h2></div><span>{jobs.length}</span></div>
         {selected ? <>
-          <div className={`preview ${selected.provider.status}`}>
-            {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
+          <div className={`preview ${selected.provider.status}`} style={previewRatio ? { "--preview-ratio": previewRatio } as CSSProperties : undefined}>
+            {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           {selected.provider.status === "completed" && <div className="result-actions"><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</div>}
