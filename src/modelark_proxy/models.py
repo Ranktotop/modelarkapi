@@ -8,12 +8,19 @@ the proxy what a model accepts instead of guessing.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 VIDEO_RATIOS = ("adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
-VERSION_SUFFIX = re.compile(r"-\d{6}$")
+# ModelArk appends a release date to every model ID: `-260628`, `-251215`,
+# and in older listings the four-digit or full-date spellings. Capabilities
+# belong to the family, so a new revision of a known model keeps working.
+VERSION_SUFFIX = re.compile(r"-\d{4,10}$")
+_unknown_families: set[str] = set()
 
 # Task hints accepted by `omni_reference_task_type` (Seedance 2.5 only).
 TASK_TYPES = ("auto", "reference", "edit", "extend")
@@ -154,12 +161,28 @@ FALLBACK_SPEC = ModelSpec(
 
 
 def family_name(model: str) -> str:
-    """Strip the ``-260628`` style version suffix from a model ID."""
+    """Reduce a model ID to its family, dropping the release-date suffix.
+
+    ``dreamina-seedance-2-5-260628`` and any later revision of it both resolve
+    to ``dreamina-seedance-2-5``; variants such as ``…-2-5-fast`` stay separate
+    families because their limits differ.
+    """
     return VERSION_SUFFIX.sub("", model.removeprefix("openai/").strip())
 
 
 def spec_for(model: str) -> ModelSpec:
-    return MODEL_SPECS.get(family_name(model), FALLBACK_SPEC)
+    family = family_name(model)
+    spec = MODEL_SPECS.get(family)
+    if spec:
+        return spec
+    if family and family not in _unknown_families:
+        _unknown_families.add(family)
+        logger.warning(
+            "No capability profile for model family %r; leaving its parameter "
+            "validation to ModelArk",
+            family,
+        )
+    return FALLBACK_SPEC
 
 
 def capabilities_for(model: str) -> dict[str, Any]:
