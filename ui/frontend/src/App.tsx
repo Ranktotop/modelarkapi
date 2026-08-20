@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } f
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
-import type { Job, MediaKind, Reference, StudioConfig } from "./types";
+import type { Job, MediaKind, ModelCapabilities, Reference, StudioConfig } from "./types";
 
 const MODES = [
   { id: "text", label: "Text", hint: "Nur aus einer Beschreibung", tooltip: "Erzeugt ein Video ausschließlich aus deinem Prompt. Es werden keine Referenzdateien an Seedance gesendet." },
@@ -24,6 +24,9 @@ const TOOLTIPS = {
   duration: "Legt die Länge des erzeugten Videos fest. „Automatisch“ überlässt Seedance die Wahl innerhalb der Grenzen des ausgewählten Modells.",
   resolution: "Bestimmt die Bildauflösung des fertigen Videos. Höhere Auflösungen können mehr Verarbeitungszeit und Kosten verursachen.",
   ratio: "Bestimmt das Seitenverhältnis. 16:9 eignet sich meist für Querformat, 9:16 für Hochformat und „adaptive“ orientiert sich an Prompt oder Referenz.",
+  ratioLocked: "In diesem Workflow übernimmt das Modell das Seitenverhältnis der Vorlage. Deshalb ist nur „adaptive“ möglich.",
+  durationLocked: "Beim Bearbeiten behält das Ergebnis die Länge des Originalvideos. Deshalb ist nur „Automatisch“ möglich.",
+  outputFormat: "MP4 ist überall abspielbar. MOV liefert höhere Farbpräzision für die Postproduktion und wird nur von neueren Modellen unterstützt.",
   priority: "Steuert die Reihenfolge innerhalb deiner ModelArk-Warteschlange. Höhere Werte werden gegenüber niedrigeren priorisiert; 0 ist der Standard.",
   audio: "Lässt Seedance synchrones Mono-Audio passend zur Szene erzeugen, einschließlich Geräuschen, Sprache oder Musik, wenn der Prompt dies beschreibt.",
   watermark: "Kennzeichnet die Ausgabe mit dem vom Anbieter vorgesehenen AI-Wasserzeichen.",
@@ -163,6 +166,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
   const [ratio, setRatio] = useState("adaptive");
+  const [outputFormat, setOutputFormat] = useState("mp4");
   const [generateAudio, setGenerateAudio] = useState(true);
   const [watermark, setWatermark] = useState(false);
   const [returnLastFrame, setReturnLastFrame] = useState(true);
@@ -179,6 +183,16 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
   const selectedModel = config.models.find(option => option.id === model);
   const capabilities = selectedModel?.capabilities;
+  const limits = capabilities?.reference_limits;
+  const taskTypes = capabilities?.task_types || [];
+  const frameMode = mode === "first_frame" || mode === "first_last";
+  const ratioLocked = Boolean(capabilities && (
+    (frameMode && capabilities.adaptive_ratio_for_frames)
+    || ((mode === "edit" || mode === "extend") && taskTypes.includes(mode))
+  ));
+  const durationLocked = Boolean(mode === "edit" && taskTypes.includes("edit"));
+  const effectiveRatio = ratioLocked ? "adaptive" : ratio;
+  const effectiveDuration = durationLocked ? -1 : duration;
   const allKinds = useMemo(() => [
     ...references.map(item => item.kind),
     ...(continuationTaskId ? ["image" as MediaKind] : []),
@@ -225,6 +239,25 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     ));
   }
 
+  function modeUnavailableFor(caps: ModelCapabilities | undefined, id: string): string | null {
+    if (!caps) return null;
+    const allowed = caps.reference_limits;
+    if (id === "first_last" && !caps.supports_last_frame_role) {
+      return "Dieses Modell unterstützt kein Endframe.";
+    }
+    if (id === "multimodal" && !allowed.image && !allowed.video && !allowed.audio) {
+      return "Dieses Modell unterstützt keine Referenzen.";
+    }
+    if ((id === "edit" || id === "extend" || id === "stitch") && !allowed.video) {
+      return "Dieses Modell unterstützt keine Videoreferenzen.";
+    }
+    return null;
+  }
+
+  function modeUnavailable(id: string): string | null {
+    return modeUnavailableFor(capabilities, id);
+  }
+
   function selectModel(modelId: string) {
     setModel(modelId);
     const next = config.models.find(option => option.id === modelId);
@@ -232,21 +265,32 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     setDuration(next.capabilities.defaults.duration);
     setResolution(next.capabilities.defaults.resolution);
     setRatio(next.capabilities.defaults.ratio);
+    setOutputFormat(next.capabilities.output_formats[0] || "mp4");
+    if (modeUnavailableFor(next.capabilities, mode)) setMode("text");
   }
 
   function validationError(): string | null {
     if (!model) return "Bitte wähle ein Modell aus.";
     if (!prompt.trim()) return "Bitte beschreibe das gewünschte Video.";
+    const unavailable = modeUnavailable(mode);
+    if (unavailable) return unavailable;
     const count = (kind: MediaKind) => allKinds.filter(value => value === kind).length;
     for (const kind of ["image", "video", "audio"] as MediaKind[]) {
-      if (count(kind) > config.reference_limits[kind]) return `Zu viele ${kindLabel[kind]}-Referenzen.`;
+      const limit = limits?.[kind] ?? 0;
+      if (count(kind) > limit) {
+        return limit === 0
+          ? `Dieses Modell unterstützt keine ${kindLabel[kind]}-Referenzen.`
+          : `Zu viele ${kindLabel[kind]}-Referenzen (maximal ${limit}).`;
+      }
     }
     if (mode === "first_frame" && (count("image") !== 1 || allKinds.length !== 1)) return "Der Startbild-Modus benötigt genau ein Bild.";
     if (mode === "first_last" && (count("image") !== 2 || allKinds.length !== 2)) return "Start + Ende benötigt genau zwei Bilder.";
     if (mode === "multimodal" && allKinds.length === 0) return "Füge mindestens eine Referenz hinzu.";
     if ((mode === "edit" || mode === "extend") && count("video") < 1) return "Dieser Modus benötigt mindestens ein Referenzvideo.";
     if (mode === "stitch" && count("video") < 2) return "Zum Verbinden werden mindestens zwei Videos benötigt.";
-    if (count("audio") && !count("image") && !count("video")) return "Audio benötigt mindestens ein Bild oder Video.";
+    if (capabilities?.reference_audio_requires_visual && count("audio") && !count("image") && !count("video")) {
+      return "Dieses Modell benötigt zu Audio mindestens ein Bild oder Video.";
+    }
     return null;
   }
 
@@ -262,9 +306,11 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       model,
       ui_mode: mode,
       prompt: prompt.trim(),
-      duration,
+      duration: effectiveDuration,
       resolution,
-      ratio,
+      ratio: effectiveRatio,
+      ...(capabilities && capabilities.output_formats.length > 1 ? { output_format: outputFormat } : {}),
+      ...((mode === "edit" || mode === "extend") && taskTypes.includes(mode) ? { omni_reference_task_type: mode } : {}),
       generate_audio: generateAudio,
       watermark,
       return_last_frame: returnLastFrame,
@@ -326,7 +372,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       <section className="composer panel">
         <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{config.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label></div>
 
-        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} data-tooltip={item.tooltip} aria-label={`${item.label}: ${item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
+        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(modeUnavailable(item.id))} data-tooltip={modeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${modeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
         {mode !== "text" && <div className="field-group">
           <div className="label-row"><SettingLabel tooltip={TOOLTIPS.references}>Referenzen</SettingLabel><span>{allKinds.length} hinzugefügt</span></div>
@@ -343,14 +389,15 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
         <div className="settings-grid">
-          <label><span className="setting-label">Dauer<Tooltip text={TOOLTIPS.duration} /></span><select value={duration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
+          <label><span className="setting-label">Dauer<Tooltip text={durationLocked ? TOOLTIPS.durationLocked : TOOLTIPS.duration} /></span><select value={effectiveDuration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities || durationLocked}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
           <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{(capabilities?.resolutions || []).map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span className="setting-label">Format<Tooltip text={TOOLTIPS.ratio} /></span><select value={ratio} onChange={e => setRatio(e.target.value)} disabled={!capabilities}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span className="setting-label">Format<Tooltip text={ratioLocked ? TOOLTIPS.ratioLocked : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
+          {capabilities && capabilities.output_formats.length > 1 && <label><span className="setting-label">Datei<Tooltip text={TOOLTIPS.outputFormat} /></span><select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>{capabilities.output_formats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>}
           <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>
         </div>
         <div className="toggle-row"><Toggle label="Synchrones Audio" tooltip={TOOLTIPS.audio} checked={generateAudio} onChange={setGenerateAudio}/><Toggle label="AI-Wasserzeichen" tooltip={TOOLTIPS.watermark} checked={watermark} onChange={setWatermark}/><Toggle label="Letztes Frame behalten" tooltip={TOOLTIPS.lastFrame} checked={returnLastFrame} onChange={setReturnLastFrame}/></div>
         {error && <div className="error-message wide">{error}</div>}
-        <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{duration === -1 ? "Automatische Dauer" : `${duration}s`} · {resolution} · {ratio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
+        <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration}s`} · {resolution} · {effectiveRatio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
       </section>
 
       <aside className="results panel">
@@ -360,7 +407,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
             {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
-          {selected.provider.status === "completed" && <div className="result-actions"><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> MP4 laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</div>}
+          {selected.provider.status === "completed" && <div className="result-actions"><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</div>}
         </> : <div className="empty-state"><div className="empty-visual"><Icon name="play" /></div><strong>Noch kein Video</strong><span>Deine aktuelle Generierung erscheint hier.</span></div>}
 
         <div className="job-list"><div className="list-title"><span>Letzte 24 Stunden</span><small>automatisch bereinigt</small></div>{jobs.map(job => <button className={`job-row ${selected?.id === job.id ? "active" : ""}`} key={job.id} onClick={() => setSelectedId(job.id)}><div className="job-thumb"><Icon name="play" /></div><div className="job-copy"><strong>{job.prompt || "Ohne Prompt"}</strong><span>{MODES.find(item => item.id === job.mode)?.label || job.mode} · {new Date(job.created_at * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span></div><Status status={job.provider.status}/><span className="delete-job" onClick={event => { event.stopPropagation(); deleteJob(job); }}><Icon name="trash" /></span></button>)}</div>
@@ -379,7 +426,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       </div>
     </footer>
 
-    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{duration === -1 ? "Automatische Dauer" : `${duration} Sekunden`}</span><span>{resolution}</span><span>{ratio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
+    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
   </div>;
 }
 

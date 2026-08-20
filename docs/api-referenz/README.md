@@ -4,9 +4,25 @@
 
 `GET /v1/models` liefert ausschließlich die im BytePlus-Konto als verfügbar
 gemeldeten Seedance-Modelle einschließlich veröffentlichter Versions-ID,
-Anzeigename und modellabhängiger `capabilities` für Auflösung,
-Seitenverhältnis und Dauer. Der Abruf ist read-only und wird serverseitig
-kurzzeitig zwischengespeichert.
+Anzeigename und modellabhängiger `capabilities`. Der Abruf ist read-only und
+wird serverseitig kurzzeitig zwischengespeichert.
+
+`capabilities` beschreibt genau das, was das jeweilige Modell akzeptiert, und
+ist damit die Grundlage für jede clientseitige Auswahl:
+
+| Feld | Bedeutung |
+|---|---|
+| `resolutions`, `ratios`, `durations` | erlaubte Werte für `resolution`, `ratio` und `duration` (`-1` = automatische Dauer) |
+| `defaults` | sinnvolle Vorbelegung für Auflösung, Seitenverhältnis und Dauer |
+| `reference_limits` | maximale Anzahl Referenzen je `image`, `video`, `audio` (`0` = nicht unterstützt) |
+| `reference_audio_requires_visual` | ob Audioreferenzen zwingend ein Bild oder Video benötigen |
+| `reference_media_seconds` | erlaubte Einzel- und Gesamtlänge von Video- und Audioreferenzen |
+| `output_formats` | mögliche Werte für `output_format` |
+| `task_types` | mögliche Werte für `omni_reference_task_type` (leer = nicht unterstützt) |
+| `supports_frames`, `supports_last_frame_role`, `adaptive_ratio_for_frames` | Unterstützung für `frames`, `role: "last_frame"` und den erzwungenen `ratio: "adaptive"` bei First-/Last-Frame-Tasks |
+
+Modelle, die dieser Proxy noch nicht kennt, werden weiterhin aufgelistet und
+nicht lokal eingeschränkt; ihre Validierung übernimmt dann allein ModelArk.
 
 ## Authentifizierung
 
@@ -34,7 +50,7 @@ Fehler werden im OpenAI-Stil zurückgegeben:
 | `GET` | `/v1/videos` | Tasks auflisten und filtern |
 | `GET` | `/v1/videos/{id}` | Taskstatus lesen |
 | `DELETE` | `/v1/videos/{id}` | Task abbrechen oder Datensatz löschen |
-| `GET` | `/v1/videos/{id}/content` | fertiges MP4 streamen |
+| `GET` | `/v1/videos/{id}/content` | fertiges Video streamen (MP4 oder MOV) |
 | `GET` | `/v1/videos/{id}/last_frame` | optionales letztes PNG-Frame streamen |
 
 Die gleichen Routen ohne `/v1` existieren für die Kompatibilität, werden aber
@@ -86,10 +102,25 @@ Asset-IDs sind ein internes Implementierungsdetail. Die Felder `asset_id`,
 
 Direkt weitergereichte Optionen:
 
-`resolution`, `ratio`, `duration`, `frames`, `generate_audio`, `watermark`,
-`camera_fixed`, `return_last_frame`, `seed`, `service_tier`,
-`execution_expires_after`, `priority`, `callback_url`, `safety_identifier`.
-ModelArk prüft, ob das gewählte Modell die jeweilige Option unterstützt.
+`resolution`, `ratio`, `duration`, `frames`, `output_format`,
+`omni_reference_task_type`, `generate_audio`, `watermark`, `camera_fixed`,
+`return_last_frame`, `seed`, `service_tier`, `execution_expires_after`,
+`priority`, `callback_url`, `safety_identifier`.
+
+Für bekannte Modelle prüft der Proxy diese Werte bereits vor dem Upstream-Aufruf
+gegen die `capabilities` des gewählten Modells und antwortet bei einem
+unpassenden Wert mit HTTP 400 statt einer Task-ID. Zusätzlich setzt er die vom
+Modell erzwungenen Werte selbst:
+
+- First-/Last-Frame-Tasks und `omni_reference_task_type` `edit`/`extend`
+  erhalten `ratio: "adaptive"`, weil das Ergebnis das Seitenverhältnis der
+  Vorlage übernimmt. Ein davon abweichender, ausdrücklich gesetzter `ratio`
+  wird abgelehnt.
+- `omni_reference_task_type: "edit"` erhält `duration: -1` und benötigt
+  mindestens eine Videoreferenz.
+
+Ohne diese Vorprüfung akzeptiert ModelArk den Task und lässt ihn erst später
+asynchron mit `InvalidParameter.TaskTypeConstraint` scheitern.
 
 Beispielantwort:
 

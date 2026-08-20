@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import secrets
 import sqlite3
@@ -527,7 +528,6 @@ def create_app(
         return {
             "models": selectable_models,
             "job_ttl_seconds": settings.job_ttl_seconds,
-            "reference_limits": {"image": 9, "video": 3, "audio": 3},
         }
 
     @app.post("/api/references")
@@ -594,7 +594,7 @@ def create_app(
         return JSONResponse(body, status_code=status)
 
     async def stream_proxy_file(
-        task_id: str, suffix: str, filename: str
+        task_id: str, suffix: str, stem: str, default_extension: str
     ) -> StreamingResponse | JSONResponse:
         url = f"/videos/{quote(task_id, safe='')}/{suffix}"
         request = proxy.build_request("GET", url)
@@ -615,20 +615,28 @@ def create_app(
             finally:
                 await response.aclose()
 
-        headers = {"Content-Disposition": f'inline; filename="{filename}"'}
+        content_type = response.headers.get("content-type")
+        extension = (
+            mimetypes.guess_extension(content_type.split(";", 1)[0].strip())
+            if content_type
+            else None
+        )
+        headers = {
+            "Content-Disposition": f'inline; filename="{stem}{extension or default_extension}"'
+        }
         return StreamingResponse(
             stream(),
-            media_type=response.headers.get("content-type"),
+            media_type=content_type,
             headers=headers,
         )
 
     @app.get("/api/videos/{task_id}/content")
     async def video_content(task_id: str):
-        return await stream_proxy_file(task_id, "content", f"{task_id}.mp4")
+        return await stream_proxy_file(task_id, "content", task_id, ".mp4")
 
     @app.get("/api/videos/{task_id}/last-frame")
     async def last_frame(task_id: str):
-        return await stream_proxy_file(task_id, "last_frame", f"{task_id}.png")
+        return await stream_proxy_file(task_id, "last_frame", task_id, ".png")
 
     resolved_static = static_dir or Path(__file__).resolve().parent / "static"
     if resolved_static.is_dir():

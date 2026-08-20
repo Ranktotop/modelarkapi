@@ -12,43 +12,7 @@ from urllib.parse import quote, urlencode, urlparse
 import httpx
 
 from .config import Settings
-
-VIDEO_RATIOS = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
-
-
-def _video_capabilities(family_name: str) -> dict[str, Any]:
-    if family_name == "dreamina-seedance-2-0":
-        resolutions = ["480p", "720p", "1080p", "4k"]
-    elif family_name in {
-        "dreamina-seedance-2-0-fast",
-        "dreamina-seedance-2-0-mini",
-    } or "seedance-2-" in family_name:
-        resolutions = ["480p", "720p"]
-    else:
-        resolutions = ["480p", "720p", "1080p"]
-
-    if "seedance-2-" in family_name:
-        durations = [-1, *range(4, 16)]
-        default_ratio = "adaptive"
-    elif "seedance-1-5" in family_name:
-        durations = [-1, *range(4, 13)]
-        default_ratio = "adaptive"
-    else:
-        durations = list(range(2, 13))
-        default_ratio = "16:9"
-
-    return {
-        "resolutions": resolutions,
-        "ratios": VIDEO_RATIOS,
-        "durations": durations,
-        "defaults": {
-            "resolution": "720p"
-            if "seedance-2-" in family_name or "seedance-1-5" in family_name
-            else "1080p",
-            "ratio": default_ratio,
-            "duration": 5,
-        },
-    }
+from .models import capabilities_for
 
 
 class AssetAPIError(RuntimeError):
@@ -278,7 +242,7 @@ class AssetClient:
                 {
                     "id": f"{family_name}-{version['ModelVersion']}",
                     "label": label,
-                    "capabilities": _video_capabilities(family_name),
+                    "capabilities": capabilities_for(family_name),
                 }
                 for version in versions
                 if isinstance(version, dict) and version.get("ModelVersion")

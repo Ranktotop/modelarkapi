@@ -105,7 +105,9 @@ MODELARK_PROXY_API_KEY=<derselbe mindestens 32 Zeichen lange PROXY_API_KEY>
 nicht nativ kennt, wird bewusst sein vorhandener `openai`-Video-Adapter benutzt.
 LiteLLM sendet die konkrete, versionierte ModelArk-ID. Die aktuell verfügbaren
 Seedance-IDs liefert dieser Proxy über `GET /v1/models`; das Beispiel verwendet
-`dreamina-seedance-2-0-fast-260128`.
+`dreamina-seedance-2-0-fast-260128`. Jedes weitere im BytePlus-Konto
+freigeschaltete Modell – etwa `dreamina-seedance-2-5-260628` – braucht nur einen
+zusätzlichen Eintrag derselben Form.
 
 Text-to-video über das LiteLLM Gateway:
 
@@ -238,8 +240,11 @@ video = video_generation(
 
 Bei einem direkten Request an diesen Proxy können ModelArk-Felder wie
 `generate_audio`, `watermark`, `resolution`, `ratio`, `duration`, `priority`,
-`service_tier` und `return_last_frame` mitgegeben werden. Mehrere öffentliche
-Referenzen sind über `reference_urls` möglich:
+`service_tier`, `return_last_frame` sowie die Seedance-2.5-Felder
+`output_format` und `omni_reference_task_type` mitgegeben werden. Welche Werte
+das gewählte Modell unterstützt, steht in `capabilities` aus
+`GET /v1/models`; der Proxy validiert dagegen, bevor er einen Task anlegt.
+Mehrere öffentliche Referenzen sind über `reference_urls` möglich:
 
 ```json
 {

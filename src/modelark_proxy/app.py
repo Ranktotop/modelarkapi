@@ -24,6 +24,7 @@ from .assets import AssetAPIError, AssetClient
 from .client import ModelArkClient, ModelArkError
 from .config import Settings
 from .media import MediaStore, UploadTooLarge
+from .models import ADAPTIVE_RATIO_TASKS, ModelSpec, spec_for
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError, apply_openai_format, byteplus_to_openai
 
@@ -32,6 +33,8 @@ PASSTHROUGH_FIELDS = {
     "ratio",
     "duration",
     "frames",
+    "output_format",
+    "omni_reference_task_type",
     "generate_audio",
     "watermark",
     "camera_fixed",
@@ -65,6 +68,8 @@ VALID_REFERENCE_ROLES = {
 }
 
 logger = logging.getLogger(__name__)
+# Seedance 2.5 accepts 30 images + 10 videos + 10 audio clips in one request.
+MAX_REFERENCE_UPLOADS = 50
 REFERENCE_SIZE_LIMITS = {
     "image": 30 * 1024 * 1024,
     "video": 200 * 1024 * 1024,
@@ -259,19 +264,37 @@ def _append_internal_asset_references(
         content.append(_asset_content(asset_id, kind, role))
 
 
-def _validate_reference_limits(content: list[dict[str, Any]]) -> None:
-    counts = {
+def _reference_counts(content: list[dict[str, Any]]) -> dict[str, int]:
+    return {
         kind: sum(item.get("type") == f"{kind}_url" for item in content)
         for kind in ASSET_KINDS
     }
-    if counts["image"] > 9:
-        raise TranslationError("Seedance 2.0 accepts at most 9 reference images")
-    if counts["video"] > 3:
-        raise TranslationError("Seedance 2.0 accepts at most 3 reference videos")
-    if counts["audio"] > 3:
-        raise TranslationError("Seedance 2.0 accepts at most 3 reference audio files")
-    if counts["audio"] and not (counts["image"] or counts["video"]):
-        raise TranslationError("Reference audio requires at least one image or video")
+
+
+def _validate_reference_limits(
+    content: list[dict[str, Any]], model: str, spec: ModelSpec
+) -> None:
+    counts = _reference_counts(content)
+    if spec.known:
+        for kind, limit in spec.reference_limits.items():
+            if counts[kind] <= limit:
+                continue
+            if limit == 0:
+                raise TranslationError(
+                    f"{model} does not accept reference {kind} assets"
+                )
+            raise TranslationError(
+                f"{model} accepts at most {limit} reference {kind} assets"
+            )
+        if (
+            counts["audio"]
+            and spec.reference_audio_requires_visual
+            and not (counts["image"] or counts["video"])
+        ):
+            raise TranslationError(
+                f"{model} requires at least one reference image or video "
+                "alongside reference audio"
+            )
 
     frame_roles = [
         item.get("role")
@@ -291,6 +314,101 @@ def _validate_reference_limits(content: list[dict[str, Any]]) -> None:
         raise TranslationError("Only one first_frame and one last_frame are allowed")
     if "last_frame" in frame_roles and "first_frame" not in frame_roles:
         raise TranslationError("last_frame requires a first_frame reference")
+    if "last_frame" in frame_roles and spec.known and not spec.supports_last_frame_role:
+        raise TranslationError(f"{model} does not support last_frame references")
+
+
+def _validate_choice(
+    payload: dict[str, Any],
+    field: str,
+    allowed: tuple[str, ...] | tuple[int, ...],
+    model: str,
+) -> None:
+    value = payload.get(field)
+    if value is None or value in allowed:
+        return
+    supported = ", ".join(str(item) for item in allowed)
+    raise TranslationError(
+        f"{model} does not support {field}={value}; supported values: {supported}"
+    )
+
+
+def _apply_model_constraints(
+    payload: dict[str, Any],
+    content: list[dict[str, Any]],
+    model: str,
+    spec: ModelSpec,
+    *,
+    explicit_ratio: bool,
+    explicit_duration: bool,
+) -> None:
+    """Validate parameters against the model and resolve its forced values.
+
+    Seedance 2.5 pins the aspect ratio (and, when editing, the duration) to the
+    input asset. Rejecting a conflicting request here turns an asynchronous
+    ``InvalidParameter.TaskTypeConstraint`` failure into an immediate 400.
+    """
+    task_type = payload.get("omni_reference_task_type")
+    if task_type is not None:
+        if not spec.task_types:
+            raise TranslationError(f"{model} does not support omni_reference_task_type")
+        _validate_choice(payload, "omni_reference_task_type", spec.task_types, model)
+    if payload.get("output_format") is not None:
+        _validate_choice(payload, "output_format", spec.output_formats, model)
+    if payload.get("frames") is not None and spec.known and not spec.supports_frames:
+        raise TranslationError(f"{model} does not support frames; use duration")
+    if spec.known:
+        _validate_choice(payload, "resolution", spec.resolutions, model)
+        _validate_choice(payload, "ratio", spec.ratios, model)
+        _validate_choice(payload, "duration", spec.durations, model)
+
+    roles = {item.get("role") for item in content}
+    if task_type in ADAPTIVE_RATIO_TASKS and not roles & {"reference_video"}:
+        raise TranslationError(
+            f"omni_reference_task_type={task_type} requires at least one "
+            "reference video"
+        )
+
+    frame_task = bool(roles & {"first_frame", "last_frame"})
+    needs_adaptive_ratio = task_type in ADAPTIVE_RATIO_TASKS or (
+        frame_task and spec.adaptive_ratio_for_frames
+    )
+    if needs_adaptive_ratio:
+        reason = (
+            f"omni_reference_task_type={task_type}"
+            if task_type in ADAPTIVE_RATIO_TASKS
+            else "first_frame/last_frame generation"
+        )
+        if explicit_ratio and payload.get("ratio") not in (None, "adaptive"):
+            raise TranslationError(
+                f"{model} only supports ratio=adaptive for {reason}; the output "
+                "keeps the aspect ratio of the input asset"
+            )
+        payload["ratio"] = "adaptive"
+
+    if task_type == "edit":
+        if explicit_duration and payload.get("duration") not in (None, -1):
+            raise TranslationError(
+                f"{model} only supports duration=-1 for "
+                "omni_reference_task_type=edit; the output keeps the duration "
+                "of the edited video"
+            )
+        payload["duration"] = -1
+
+
+def _normalize_passthrough(payload: dict[str, Any]) -> None:
+    """Accept the spellings clients send and hand ModelArk its own."""
+    for field in ("duration", "frames"):
+        value = payload.get(field)
+        if isinstance(value, str):
+            try:
+                payload[field] = int(value)
+            except ValueError as exc:
+                raise TranslationError(f"{field} must be an integer") from exc
+    for field in ("resolution", "output_format", "omni_reference_task_type"):
+        value = payload.get(field)
+        if isinstance(value, str):
+            payload[field] = value.strip().lower()
 
 
 def build_task_payload(
@@ -303,6 +421,8 @@ def build_task_payload(
     requested_model = data.get("model")
     if not isinstance(requested_model, str) or not requested_model.strip():
         raise TranslationError("model is required")
+    model = settings.resolve_model(requested_model.strip())
+    spec = spec_for(model)
     prompt = str(data.get("prompt", "")).strip()
     content: list[dict[str, Any]] = []
     if prompt:
@@ -341,18 +461,16 @@ def build_task_payload(
     if isinstance(supplied_content, list):
         content.extend(item for item in supplied_content if isinstance(item, dict))
 
-    _validate_reference_limits(content)
+    _validate_reference_limits(content, model, spec)
 
     if not content:
         raise TranslationError("A prompt or at least one reference is required")
 
-    payload: dict[str, Any] = {
-        "model": settings.resolve_model(requested_model.strip()),
-        "content": content,
-    }
+    payload: dict[str, Any] = {"model": model, "content": content}
     for field in PASSTHROUGH_FIELDS:
         if field in data and data[field] is not None:
             payload[field] = data[field]
+    _normalize_passthrough(payload)
     if "safety_identifier" not in payload and data.get("user") is not None:
         payload["safety_identifier"] = str(data["user"])
 
@@ -363,6 +481,14 @@ def build_task_payload(
             raise TranslationError("seconds must be an integer") from exc
     payload.setdefault("generate_audio", settings.default_generate_audio)
     apply_openai_format(payload, data.get("size"))
+    _apply_model_constraints(
+        payload,
+        content,
+        model,
+        spec,
+        explicit_ratio="ratio" in data,
+        explicit_duration="duration" in data or "seconds" in data,
+    )
     return payload
 
 
@@ -708,8 +834,11 @@ def create_app(
         ]
         if not uploads:
             raise TranslationError("At least one reference file is required")
-        if len(uploads) > 15:
-            raise TranslationError("At most 15 reference files are allowed per upload")
+        if len(uploads) > MAX_REFERENCE_UPLOADS:
+            raise TranslationError(
+                f"At most {MAX_REFERENCE_UPLOADS} reference files are allowed "
+                "per upload"
+            )
 
         saved: list[str] = []
         references: list[MediaReference] = []
@@ -951,6 +1080,10 @@ def create_app(
                 detail=detail,
             )
         _safe_download_url(url, settings)
+        # Seedance 2.5 can return .mov; keep the served type in sync with it.
+        guessed = mimetypes.guess_type(urlparse(url).path)[0]
+        if guessed and guessed.split("/", 1)[0] == media_type.split("/", 1)[0]:
+            media_type = guessed
 
         async def stream() -> AsyncIterator[bytes]:
             async with (

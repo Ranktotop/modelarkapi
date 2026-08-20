@@ -15,12 +15,19 @@ export type ModelCapabilities = {
   ratios: string[];
   durations: number[];
   defaults: { resolution: string; ratio: string; duration: number };
+  reference_limits: Record<MediaKind, number>;
+  reference_audio_requires_visual: boolean;
+  output_formats: string[];
+  task_types: string[];
+  supports_frames: boolean;
+  supports_last_frame_role: boolean;
+  adaptive_ratio_for_frames: boolean;
+  reference_media_seconds?: { min: number; max: number; total: number };
 };
 
 export type StudioConfig = {
   models: { id: string; label: string; capabilities: ModelCapabilities }[];
   job_ttl_seconds: number;
-  reference_limits: Record<MediaKind, number>;
 };
 
 export type ProviderVideo = {

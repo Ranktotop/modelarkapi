@@ -170,6 +170,14 @@ async def test_models_are_discovered_from_available_activations(settings: Settin
                         "ratio": "adaptive",
                         "duration": 5,
                     },
+                    "reference_limits": {"image": 9, "video": 3, "audio": 3},
+                    "reference_audio_requires_visual": True,
+                    "output_formats": ["mp4"],
+                    "task_types": [],
+                    "supports_frames": False,
+                    "supports_last_frame_role": True,
+                    "adaptive_ratio_for_frames": False,
+                    "reference_media_seconds": {"min": 2, "max": 15, "total": 15},
                 },
             },
         ],
@@ -1029,3 +1037,173 @@ async def test_real_human_jobs_are_backgrounded_and_concurrency_is_bounded(
 
     assert all(response.json()["status"] == "completed" for response in statuses)
     assert max_active_creates == 4
+
+
+SEEDANCE_2_5 = "dreamina-seedance-2-5-260628"
+SEEDANCE_2_0_FAST = "dreamina-seedance-2-0-fast-260128"
+
+
+def reference_urls(kind: str, count: int) -> list[dict[str, str]]:
+    return [
+        {"url": f"https://cdn.example.com/{kind}-{index}", "media_type": kind}
+        for index in range(count)
+    ]
+
+
+async def create_video(client: httpx.AsyncClient, **payload):
+    return await client.post("/v1/videos", json={"prompt": "A fox", **payload})
+
+
+@pytest.fixture
+async def proxy(settings: Settings):
+    captured: list[httpx.Request] = []
+    app = create_app(settings, ark_transport=ark_transport(captured))
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        yield client, captured
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_5_accepts_its_full_parameter_range(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client,
+        model=SEEDANCE_2_5,
+        resolution="1080p",
+        duration=30,
+        ratio="21:9",
+        output_format="mov",
+        omni_reference_task_type="reference",
+        reference_urls=reference_urls("image", 30) + reference_urls("audio", 10),
+    )
+
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert upstream["resolution"] == "1080p"
+    assert upstream["duration"] == 30
+    assert upstream["ratio"] == "21:9"
+    assert upstream["output_format"] == "mov"
+    assert upstream["omni_reference_task_type"] == "reference"
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_5_allows_audio_only_references(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client, model=SEEDANCE_2_5, reference_urls=reference_urls("audio", 1)
+    )
+
+    assert response.status_code == 200
+    assert json.loads(captured[0].content)["content"][1]["type"] == "audio_url"
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_0_fast_rejects_seedance_2_5_only_settings(proxy):
+    client, captured = proxy
+    cases = {
+        "resolution=1080p": {"resolution": "1080p"},
+        "duration=30": {"duration": 30},
+        "output_format=mov": {"output_format": "mov"},
+        "omni_reference_task_type": {"omni_reference_task_type": "edit"},
+        "audio-only": {"reference_urls": reference_urls("audio", 1)},
+        "too many images": {"reference_urls": reference_urls("image", 10)},
+    }
+    for label, payload in cases.items():
+        response = await create_video(client, model=SEEDANCE_2_0_FAST, **payload)
+        assert response.status_code == 400, label
+
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_5_edit_task_forces_adaptive_ratio_and_auto_duration(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client,
+        model=SEEDANCE_2_5,
+        omni_reference_task_type="edit",
+        size="1280x720",
+        reference_urls=reference_urls("video", 1),
+    )
+
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert upstream["ratio"] == "adaptive"
+    assert upstream["duration"] == -1
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_5_rejects_conflicting_ratio_for_constrained_tasks(proxy):
+    client, captured = proxy
+    edit = await create_video(
+        client,
+        model=SEEDANCE_2_5,
+        omni_reference_task_type="edit",
+        ratio="16:9",
+        reference_urls=reference_urls("video", 1),
+    )
+    frames = await create_video(
+        client,
+        model=SEEDANCE_2_5,
+        ratio="16:9",
+        reference_urls=[
+            {
+                "url": "https://cdn.example.com/first",
+                "media_type": "image",
+                "role": "first_frame",
+            }
+        ],
+    )
+
+    assert edit.status_code == 400
+    assert "ratio=adaptive" in edit.json()["error"]["message"]
+    assert frames.status_code == 400
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_seedance_2_5_edit_task_requires_a_reference_video(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client,
+        model=SEEDANCE_2_5,
+        omni_reference_task_type="edit",
+        reference_urls=reference_urls("image", 1),
+    )
+
+    assert response.status_code == 400
+    assert "reference video" in response.json()["error"]["message"]
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_models_are_left_to_upstream_validation(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client, model="dreamina-seedance-9-9-991231", resolution="8k", duration=99
+    )
+
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert upstream["resolution"] == "8k"
+    assert upstream["duration"] == 99
+
+
+@pytest.mark.asyncio
+async def test_openai_size_and_string_duration_are_normalized(proxy):
+    client, captured = proxy
+    response = await create_video(
+        client,
+        model="dreamina-seedance-2-0-260128",
+        size="3840x2160",
+        duration="12",
+    )
+
+    assert response.status_code == 200
+    upstream = json.loads(captured[0].content)
+    assert upstream["resolution"] == "4k"
+    assert upstream["duration"] == 12

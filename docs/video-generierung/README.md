@@ -57,17 +57,62 @@ von bis zu drei Clips erreichbar.
 }
 ```
 
-Audio darf nicht allein stehen; mindestens ein Bild oder Video ist nötig.
+Bei Seedance 2.0 darf Audio nicht allein stehen; mindestens ein Bild oder
+Video ist nötig. Seedance 2.5 akzeptiert auch reine Audioreferenzen.
 
-## Ausgabeoptionen für Seedance 2.0 Fast
+## Modellabhängige Ausgabeoptionen
 
-Der derzeitige Fast-Zugang unterstützt 480p und 720p. Die Dauer beträgt 4 bis
-15 ganze Sekunden oder `-1` für automatische Wahl. Übliche Seitenverhältnisse
-sind `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `21:9` und `adaptive`.
-`generate_audio` schaltet synchrones Mono-Audio ein oder aus. Modellabhängige
-Felder wie `frames`, `seed`, `camera_fixed`, `service_tier=flex` oder 4K dürfen
-bei Seedance 2.0 Fast nicht als verfügbar vorausgesetzt werden; ModelArk ist
-hier die maßgebliche Validierungsinstanz.
+Die maßgeblichen Werte liefert `GET /v1/models` je Modell unter
+`capabilities`; der Proxy validiert dagegen, bevor er einen Task anlegt.
+
+| | Seedance 2.5 | Seedance 2.0 | Seedance 2.0 Fast/Mini |
+|---|---|---|---|
+| `resolution` | 480p, 720p, 1080p | 480p, 720p, 1080p, 4k | 480p, 720p |
+| `duration` | 4–30 oder `-1` | 4–15 oder `-1` | 4–15 oder `-1` |
+| `ratio` | `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `21:9`, `adaptive` | wie 2.5 | wie 2.5 |
+| Referenzen | 30 Bilder, 10 Videos, 10 Audio | 9 Bilder, 3 Videos, 3 Audio | 9 Bilder, 3 Videos, 3 Audio |
+| Referenzlänge | je 2–30 s, zusammen ≤ 30 s | je 2–15 s, zusammen ≤ 15 s | je 2–15 s, zusammen ≤ 15 s |
+| Audio ohne Bild/Video | ja | nein | nein |
+| `output_format` | `mp4`, `mov` | `mp4` | `mp4` |
+| `omni_reference_task_type` | `auto`, `reference`, `edit`, `extend` | – | – |
+
+1080p bei Seedance 2.5 und 4k bei Seedance 2.0 liefern 10-Bit-Farbtiefe mit
+H.265/HEVC. Nicht jeder Player spielt das ab; VLC, mpv oder QuickTime sind der
+verlässliche Weg.
+
+## Task-Typen bei Seedance 2.5
+
+Seedance 2.5 leitet aus Referenzen und Prompt ab, ob es sich um eine
+Referenz-, Bearbeitungs- oder Verlängerungsaufgabe handelt. `edit` und
+`extend` unterliegen dabei eigenen Regeln. `omni_reference_task_type` legt den
+Typ vorab fest und verschiebt die Prüfung nach vorn:
+
+```json
+{
+  "model": "dreamina-seedance-2-5-260628",
+  "prompt": "Video edit: remove everyone in @Video1 except the protagonist.",
+  "omni_reference_task_type": "edit",
+  "reference_urls": [
+    {"url": "https://media.example/clip.mov", "media_type": "video"}
+  ],
+  "output_format": "mov"
+}
+```
+
+- `edit` verlangt mindestens eine Videoreferenz von 4–30 s; `ratio` ist
+  `adaptive` und `duration` ist `-1`, weil das Ergebnis Seitenverhältnis und
+  Länge des Originals behält. Der Prompt muss die Bearbeitungsabsicht nennen
+  („edit the video“, „add“, „remove“, „replace“).
+- `extend` verlangt ebenfalls eine Videoreferenz und `ratio: "adaptive"`; die
+  Länge ist mit `[4, 30]` oder `-1` frei wählbar. Der Prompt muss die
+  Fortsetzung benennen („extend forward/backward“, „continue“).
+- First-/Last-Frame-Tasks übernehmen das Seitenverhältnis des Startbilds und
+  laufen deshalb ebenfalls mit `ratio: "adaptive"`.
+
+Der Proxy setzt diese erzwungenen Werte selbst und lehnt widersprüchliche
+Angaben sofort mit HTTP 400 ab. Weicht der vom Modell erkannte Task-Typ
+trotzdem vom angegebenen ab, meldet ModelArk asynchron
+`InvalidParameter.TaskTypeMismatch`.
 
 Mit `return_last_frame: true` kann ein PNG-Endframe angefordert werden. Es ist
 anschließend über `/v1/videos/{id}/last_frame` abrufbar und eignet sich als
