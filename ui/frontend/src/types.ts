@@ -39,6 +39,39 @@ export type ProviderVideo = {
   error?: { message?: string; code?: string };
 };
 
+export type JobReference = {
+  url?: string;
+  media_type?: string;
+  role?: string;
+  real_human?: boolean;
+};
+
+export type JobUiReference = {
+  filename?: string;
+  kind?: MediaKind;
+  role?: string;
+  real_human?: boolean;
+};
+
+export type JobRequest = {
+  model?: string;
+  ui_mode?: string;
+  prompt?: string;
+  duration?: number;
+  resolution?: string;
+  ratio?: string;
+  output_format?: string;
+  omni_reference_task_type?: string;
+  generate_audio?: boolean;
+  watermark?: boolean;
+  return_last_frame?: boolean;
+  priority?: number;
+  reference_urls?: JobReference[];
+  ui_references?: JobUiReference[];
+  input_reference_task_id?: string;
+  [key: string]: unknown;
+};
+
 export type Job = {
   id: string;
   status: string;
@@ -49,6 +82,6 @@ export type Job = {
   updated_at: number;
   terminal_at?: number;
   expires_at?: number;
-  request: Record<string, unknown>;
+  request: JobRequest;
   provider: ProviderVideo;
 };

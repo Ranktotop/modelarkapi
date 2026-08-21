@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -219,6 +220,44 @@ async def test_ui_creates_tracks_and_streams_job(ui_settings: UISettings):
         assert content.headers["content-type"].startswith("video/mp4")
 
     assert captured[0].headers["authorization"] == "Bearer proxy-test"
+
+
+@pytest.mark.asyncio
+async def test_ui_keeps_ui_only_fields_out_of_the_proxy_request(
+    ui_settings: UISettings,
+):
+    captured: list[httpx.Request] = []
+    app = create_app(
+        ui_settings,
+        proxy_transport=proxy_transport(captured),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        await client.post(
+            "/api/videos",
+            headers={"X-UI-Request": "1"},
+            json={
+                "model": "seedance",
+                "ui_mode": "multimodal",
+                "ui_references": [{"filename": "clip.mp4", "kind": "video"}],
+                "prompt": "A small test scene",
+            },
+        )
+        jobs = await client.get("/api/videos")
+
+    upstream = json.loads(captured[0].content)
+    assert "ui_mode" not in upstream
+    assert "ui_references" not in upstream
+    assert upstream["prompt"] == "A small test scene"
+
+    stored = jobs.json()["data"][0]["request"]
+    assert stored["ui_mode"] == "multimodal"
+    assert stored["ui_references"] == [{"filename": "clip.mp4", "kind": "video"}]
 
 
 @pytest.mark.asyncio

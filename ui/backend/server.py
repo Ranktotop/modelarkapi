@@ -568,7 +568,9 @@ def create_app(
         data = await request.json()
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="JSON object required")
-        upstream = {key: value for key, value in data.items() if key != "ui_mode"}
+        upstream = {
+            key: value for key, value in data.items() if not key.startswith("ui_")
+        }
         status, body = await proxy_json("POST", "/videos", json=upstream)
         if status < 400:
             body = store.add(body, data)

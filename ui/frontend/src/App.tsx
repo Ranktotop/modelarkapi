@@ -4,6 +4,14 @@ import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
 import type { Job, MediaKind, ModelCapabilities, Reference, StudioConfig } from "./types";
 
+const ROLE_LABELS: Record<string, string> = {
+  first_frame: "Startbild",
+  last_frame: "Endbild",
+  reference_image: "Referenzbild",
+  reference_video: "Referenzvideo",
+  reference_audio: "Referenzaudio",
+};
+
 const MODES = [
   { id: "text", label: "Text", hint: "Nur aus einer Beschreibung", tooltip: "Erzeugt ein Video ausschließlich aus deinem Prompt. Es werden keine Referenzdateien an Seedance gesendet." },
   { id: "first_frame", label: "Startbild", hint: "Ein Bild als exakter Anfang", tooltip: "Verwendet genau ein Bild als erstes Frame. Seedance animiert die Szene von diesem festen Ausgangspunkt aus." },
@@ -48,7 +56,7 @@ const SOCIAL_LINKS = [
   { label: "LinkedIn", href: "https://link.marcmeese.de/linkedin", short: "IN" },
 ] as const;
 
-function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "play" | "lock" | "logout" }) {
+function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "play" | "lock" | "logout" | "info" }) {
   const paths: Record<string, JSX.Element> = {
     spark: <><path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></>,
     upload: <><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></>,
@@ -57,6 +65,7 @@ function Icon({ name }: { name: "spark" | "upload" | "trash" | "download" | "pla
     play: <path d="m8 5 11 7-11 7V5Z"/>,
     lock: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,
     logout: <><path d="M10 5H5v14h5"/><path d="m14 8 4 4-4 4"/><path d="M18 12H9"/></>,
+    info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6h.01"/></>,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -173,6 +182,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [priority, setPriority] = useState(0);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
   const [continuationTaskId, setContinuationTaskId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -182,6 +192,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
+  const detailsJob = detailsId ? jobs.find(job => job.id === detailsId) || null : null;
   const selectedModel = config.models.find(option => option.id === model);
   const capabilities = selectedModel?.capabilities;
   const limits = capabilities?.reference_limits;
@@ -212,6 +223,15 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }, [loadJobs]);
 
   useEffect(() => { setPreviewRatio(null); }, [selected?.id]);
+  useEffect(() => {
+    if (detailsId && jobs.length && !jobs.some(job => job.id === detailsId)) setDetailsId(null);
+  }, [detailsId, jobs]);
+  useEffect(() => {
+    if (!detailsId) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setDetailsId(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [detailsId]);
 
   async function uploadFiles(files: FileList | File[]) {
     if (!files.length) return;
@@ -319,6 +339,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       return_last_frame: returnLastFrame,
       priority,
       ...(includeReferences && references.length ? { reference_urls: references.map(item => ({ url: item.url, media_type: item.kind, role: roleFor(item.kind), real_human: Boolean(item.real_human) })) } : {}),
+      ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind, real_human: Boolean(item.real_human) })) } : {}),
       ...(includeReferences && continuationTaskId ? { input_reference_task_id: continuationTaskId } : {}),
     };
   }
@@ -410,10 +431,13 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
             {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
-          {selected.provider.status === "completed" && <div className="result-actions"><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</div>}
+          <div className="result-actions">
+            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</>}
+            <button className="action" onClick={() => setDetailsId(selected.id)} title="Einstellungen und Statusdetails dieses Jobs anzeigen"><Icon name="info" /> Details</button>
+          </div>
         </> : <div className="empty-state"><div className="empty-visual"><Icon name="play" /></div><strong>Noch kein Video</strong><span>Deine aktuelle Generierung erscheint hier.</span></div>}
 
-        <div className="job-list"><div className="list-title"><span>Letzte 24 Stunden</span><small>automatisch bereinigt</small></div>{jobs.map(job => <button className={`job-row ${selected?.id === job.id ? "active" : ""}`} key={job.id} onClick={() => setSelectedId(job.id)}><div className="job-thumb"><Icon name="play" /></div><div className="job-copy"><strong>{job.prompt || "Ohne Prompt"}</strong><span>{MODES.find(item => item.id === job.mode)?.label || job.mode} · {new Date(job.created_at * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span></div><Status status={job.provider.status}/><span className="delete-job" onClick={event => { event.stopPropagation(); deleteJob(job); }}><Icon name="trash" /></span></button>)}</div>
+        <div className="job-list"><div className="list-title"><span>Letzte 24 Stunden</span><small>automatisch bereinigt</small></div>{jobs.map(job => <button className={`job-row ${selected?.id === job.id ? "active" : ""}`} key={job.id} onClick={() => setSelectedId(job.id)}><div className="job-thumb"><Icon name="play" /></div><div className="job-copy"><strong>{job.prompt || "Ohne Prompt"}</strong><span>{MODES.find(item => item.id === job.mode)?.label || job.mode} · {new Date(job.created_at * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span></div><Status status={job.provider.status}/><span className="job-info" title="Details anzeigen" onClick={event => { event.stopPropagation(); setDetailsId(job.id); }}><Icon name="info" /></span><span className="delete-job" title="Job löschen" onClick={event => { event.stopPropagation(); deleteJob(job); }}><Icon name="trash" /></span></button>)}</div>
       </aside>
     </main>
 
@@ -430,7 +454,108 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     </footer>
 
     {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
+    {detailsJob && <JobDetails job={detailsJob} config={config} onClose={() => setDetailsId(null)} />}
   </div>;
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return <div className="detail-row"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function JobDetails({ job, config, onClose }: { job: Job; config: StudioConfig; onClose: () => void }) {
+  const request = job.request || {};
+  const provider = job.provider || { id: job.id, status: job.status };
+  const modelId = request.model || job.model;
+  const modelLabel = config.models.find(option => option.id === modelId)?.label || modelId || "Unbekannt";
+  const modeId = request.ui_mode || job.mode;
+  const modeEntry = MODES.find(item => item.id === modeId);
+  const duration = request.duration;
+  const failed = provider.status === "failed";
+  const errorMessage = provider.error?.message
+    || (failed ? "Der Anbieter hat keine Fehlermeldung mitgeliefert." : "");
+  const references = (request.reference_urls || []).map((item, index) => {
+    const hint = request.ui_references?.[index];
+    const kind = (hint?.kind || item.media_type || "image") as MediaKind;
+    return {
+      name: hint?.filename || `${kindLabel[kind] || kind} ${index + 1}`,
+      kind,
+      role: item.role ? ROLE_LABELS[item.role] || item.role : kindLabel[kind] || kind,
+      realHuman: Boolean(item.real_human ?? hint?.real_human),
+    };
+  });
+
+  return <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className="details-modal" role="dialog" aria-modal="true" aria-label="Job-Details" onMouseDown={event => event.stopPropagation()}>
+      <div className="details-head">
+        <div><p className="eyebrow">JOB DETAILS</p><h2>{modeEntry?.label || modeId}</h2><Status status={provider.status} /></div>
+        <button className="icon-button" onClick={onClose} aria-label="Schließen" title="Schließen">✕</button>
+      </div>
+
+      {errorMessage && <div className="error-message wide">
+        <strong>Fehlermeldung</strong>
+        <p>{errorMessage}</p>
+        {provider.error?.code && <code>{provider.error.code}</code>}
+      </div>}
+
+      <div className="details-section">
+        <h3>Konfiguration</h3>
+        <div className="detail-grid">
+          <DetailRow label="Modell" value={modelLabel} />
+          <DetailRow label="Workflow" value={modeEntry?.label || String(modeId)} />
+          <DetailRow label="Dauer" value={duration === undefined || duration === -1 ? "Automatisch" : `${duration} Sekunden`} />
+          <DetailRow label="Auflösung" value={request.resolution || "—"} />
+          <DetailRow label="Seitenverhältnis" value={request.ratio || "—"} />
+          <DetailRow label="Dateiformat" value={String(request.output_format || "mp4").toUpperCase()} />
+          {request.omni_reference_task_type && <DetailRow label="Task-Typ" value={String(request.omni_reference_task_type)} />}
+          <DetailRow label="Priorität" value={String(request.priority ?? 0)} />
+          <DetailRow label="Synchrones Audio" value={request.generate_audio ? "An" : "Aus"} />
+          <DetailRow label="AI-Wasserzeichen" value={request.watermark ? "An" : "Aus"} />
+          <DetailRow label="Letztes Frame" value={request.return_last_frame ? "Angefordert" : "Nicht angefordert"} />
+        </div>
+      </div>
+
+      <div className="details-section">
+        <h3>Prompt</h3>
+        <p className="detail-prompt">{request.prompt || job.prompt || "Ohne Prompt"}</p>
+      </div>
+
+      <div className="details-section">
+        <h3>Referenzen <small>{references.length + (request.input_reference_task_id ? 1 : 0)}</small></h3>
+        {request.input_reference_task_id && <div className="detail-reference">
+          <div className="media-symbol image"><Icon name="play" /></div>
+          <div><strong>Letztes Frame aus vorherigem Job</strong><span>Startbild · {request.input_reference_task_id}</span></div>
+        </div>}
+        {references.map((item, index) => <div className="detail-reference" key={`${item.name}-${index}`}>
+          <div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div>
+          <div><strong>{item.name}</strong><span>{item.role}{item.realHuman ? " · reale Person" : ""}</span></div>
+        </div>)}
+        {!references.length && !request.input_reference_task_id && <p className="detail-empty">Ohne Referenzen generiert.</p>}
+      </div>
+
+      <div className="details-section">
+        <h3>Verlauf</h3>
+        <div className="detail-grid">
+          <DetailRow label="Erstellt" value={formatMoment(job.created_at)} />
+          <DetailRow label="Aktualisiert" value={formatMoment(job.updated_at)} />
+          <DetailRow label="Gelöscht am" value={formatMoment(job.expires_at)} />
+          <DetailRow label="Anbieter-Status" value={provider.provider_status || provider.status} />
+          {provider.progress !== undefined && <DetailRow label="Fortschritt" value={`${provider.progress} %`} />}
+        </div>
+        <code className="detail-id">{job.id}</code>
+      </div>
+
+      <details className="details-raw">
+        <summary>Rohdaten anzeigen</summary>
+        <pre>{JSON.stringify({ request, provider }, null, 2)}</pre>
+      </details>
+
+      <div className="modal-actions"><button className="action" onClick={onClose}>Schließen</button></div>
+    </div>
+  </div>;
+}
+
+function formatMoment(value?: number) {
+  return value ? new Date(value * 1000).toLocaleString("de-DE") : "—";
 }
 
 function Toggle({ label, tooltip, checked, onChange }: { label: string; tooltip: string; checked: boolean; onChange: (value: boolean) => void }) {
