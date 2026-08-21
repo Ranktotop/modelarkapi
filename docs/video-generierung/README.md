@@ -80,6 +80,32 @@ Die maßgeblichen Werte liefert `GET /v1/models` je Modell unter
 H.265/HEVC. Nicht jeder Player spielt das ab; VLC, mpv oder QuickTime sind der
 verlässliche Weg.
 
+## Bearbeiten und Verlängern ohne Task-Typ
+
+Nur Seedance 2.5 kennt `omni_reference_task_type`. Bei Seedance 2.0, 2.0 Fast
+und 2.0 Mini gibt es kein Feld, das eine Bearbeitung von einer gewöhnlichen
+Referenzgenerierung unterscheidet: Beides ist derselbe multimodale Request mit
+`role: "reference_video"`. Die Absicht transportiert ausschließlich der Prompt.
+
+```json
+{
+  "model": "dreamina-seedance-2-0-fast",
+  "prompt": "Edit Video 1: remove everyone except the protagonist.",
+  "reference_urls": [
+    {"url": "https://media.example/clip.mp4", "media_type": "video"}
+  ]
+}
+```
+
+Weil der Proxy hier keinen Task-Typ kennt, erzwingt er auch weder
+`ratio: "adaptive"` noch `duration: -1`. Beide Werte bleiben frei wählbar und
+gelten für das Ergebnis, statt vom Ausgangsvideo übernommen zu werden.
+
+Wird `omni_reference_task_type` trotzdem an ein 2.0-Modell gesendet, antwortet
+der Proxy mit HTTP 400 statt einer Task-ID. Ob ein Modell den Typ akzeptiert,
+steht in `GET /v1/models` unter `capabilities.task_types`; eine leere Liste
+bedeutet, dass der Prompt der einzige Steuerweg ist.
+
 ## Task-Typen bei Seedance 2.5
 
 Seedance 2.5 leitet aus Referenzen und Prompt ab, ob es sich um eine

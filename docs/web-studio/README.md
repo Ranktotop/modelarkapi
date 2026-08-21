@@ -100,6 +100,36 @@ effektive Zahl gleichzeitig rechnender Videos bleibt trotzdem durch die
 ModelArk-/Endpoint-Quota begrenzt; darüber hinausgehende Tasks werden von
 ModelArk in `queued` gehalten.
 
+## Workflows und ihre API-Felder
+
+Die Workflow-Auswahl ist eine reine Bedienhilfe des Studios. Sie wird als
+`ui_mode` an das UI-Backend gesendet, dort aber zusammen mit allen anderen
+`ui_*`-Feldern verworfen und nur für die Jobanzeige gespeichert. Der Proxy
+sieht ausschließlich die Rollen der Referenzen und – sofern das Modell ihn
+kennt – den Task-Typ.
+
+| Workflow | Erfordert | Zusätzlich gesendet |
+|---|---|---|
+| Text | keine Referenz | nichts |
+| Startbild | genau ein Bild | `role: "first_frame"` |
+| Start + Ende | genau zwei Bilder | `role: "first_frame"` und `role: "last_frame"` |
+| Referenzen | mindestens eine Referenz | `role: "reference_image"`, `"reference_video"`, `"reference_audio"` |
+| Bearbeiten | mindestens ein Video | wie Referenzen, dazu `omni_reference_task_type: "edit"` |
+| Verlängern | mindestens ein Video | wie Referenzen, dazu `omni_reference_task_type: "extend"` |
+| Verbinden | mindestens zwei Videos | wie Referenzen |
+
+Den Task-Typ setzt das Studio nur, wenn das gewählte Modell ihn laut
+`capabilities.task_types` unterstützt – derzeit ausschließlich Seedance 2.5.
+Bei der 2.0-Familie erzeugen **Bearbeiten**, **Verlängern**, **Verbinden** und
+**Referenzen** deshalb identische Requests; sie unterscheiden sich nur in der
+lokalen Prüfung, wie viele Videos vorhanden sein müssen. Die Absicht gehört
+dort in den Prompt, siehe
+[Video-Generierung](../video-generierung/README.md#bearbeiten-und-verlängern-ohne-task-typ).
+
+Aus demselben Grund sperrt das Studio Seitenverhältnis und Dauer nur bei
+Seedance 2.5: Nur dort übernimmt das Ergebnis von `edit` und `extend`
+zwingend die Werte der Vorlage.
+
 ## Referenzworkflow
 
 Lokale Dateien werden zuerst über die geschützte UI-API an

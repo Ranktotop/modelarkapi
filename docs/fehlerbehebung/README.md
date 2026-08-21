@@ -55,6 +55,16 @@ oder nur `reference_image`/`reference_video`/`reference_audio` einsetzen. In
 einem multimodalen Prompt kann ein Bild stattdessen semantisch als Anfang oder
 Ende beschrieben werden, ohne eine Frame-Rolle zu verwenden.
 
+## `does not support omni_reference_task_type`
+
+Der Task-Typ wurde an ein Modell gesendet, das ihn nicht kennt. `auto`,
+`reference`, `edit` und `extend` gibt es ausschließlich bei Seedance 2.5; die
+2.0-Familie lehnt das Feld vor dem Upstream-Aufruf mit HTTP 400 ab. Das Feld
+weglassen und die Bearbeitungs- oder Verlängerungsabsicht im Prompt
+formulieren. Welche Werte ein Modell akzeptiert, steht in `GET /v1/models`
+unter `capabilities.task_types`; eine leere Liste bedeutet, dass es keinen
+Task-Typ gibt.
+
 ## Modell oder Parameter nicht unterstützt
 
 `GET /v1/models`, den IAM-Zugriff und die aktivierte Modell-ID prüfen.
