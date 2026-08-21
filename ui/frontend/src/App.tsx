@@ -4,6 +4,8 @@ import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
 import type { Job, MediaKind, ModelCapabilities, Reference, StudioConfig } from "./types";
 
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || "dev";
+
 const ROLE_LABELS: Record<string, string> = {
   first_frame: "Startbild",
   last_frame: "Endbild",
@@ -451,6 +453,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           {SOCIAL_LINKS.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer"><b>{link.short}</b>{link.label}</a>)}
         </nav>
       </div>
+      <div className="footer-meta"><span>Seedance Studio</span><span className="footer-version">Version {APP_VERSION}</span></div>
     </footer>
 
     {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}

@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+ARG IMG_VERSION=dev
+ENV APP_VERSION=$IMG_VERSION
+
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src

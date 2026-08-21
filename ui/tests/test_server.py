@@ -223,6 +223,24 @@ async def test_ui_creates_tracks_and_streams_job(ui_settings: UISettings):
 
 
 @pytest.mark.asyncio
+async def test_ui_health_reports_the_baked_image_version(
+    ui_settings: UISettings, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("APP_VERSION", "0.0.42")
+    app = create_app(
+        ui_settings,
+        proxy_transport=proxy_transport([]),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://studio"
+    ) as client:
+        health = await client.get("/health")
+
+    assert health.json() == {"status": "ok", "version": "0.0.42"}
+
+
+@pytest.mark.asyncio
 async def test_ui_keeps_ui_only_fields_out_of_the_proxy_request(
     ui_settings: UISettings,
 ):

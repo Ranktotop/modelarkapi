@@ -259,6 +259,8 @@ textarea::placeholder, input::placeholder { color: #555761; }
 .social-links a { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line); color: #d4d4d8; background: rgba(0,0,0,.35); text-decoration: none; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .035em; transition: color .2s, border-color .2s, background .2s; }
 .social-links a:hover { color: var(--lime-soft); border-color: rgba(76,175,80,.7); background: rgba(76,175,80,.07); }
 .social-links b { color: var(--lime-soft); font-size: 8px; }
+.footer-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+.footer-version { font-family: ui-monospace, SFMono-Regular, monospace; letter-spacing: .04em; }
 
 @media (max-width: 1050px) {
   .studio-grid { grid-template-columns: 1fr; }

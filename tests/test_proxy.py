@@ -227,6 +227,7 @@ async def test_startup_validates_ark_and_iam_credentials(settings: Settings):
         health = await client.get("/health")
 
     assert health.json()["credentials"]["status"] == "valid"
+    assert health.json()["version"] == "dev"
     assert len(ark_requests) == 1
     assert ark_requests[0].method == "GET"
     assert ark_requests[0].url.path.endswith("/contents/generations/tasks")

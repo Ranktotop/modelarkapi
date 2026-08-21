@@ -748,7 +748,11 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "credentials": deepcopy(credential_state)}
+        return {
+            "status": "ok",
+            "version": settings.app_version,
+            "credentials": deepcopy(credential_state),
+        }
 
     @app.get("/v1/models")
     @app.get("/models", include_in_schema=False)

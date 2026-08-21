@@ -12,6 +12,7 @@ class Settings(BaseSettings):
         env_file=".env", extra="ignore", validate_default=True
     )
 
+    app_version: str = "dev"
     ark_api_key: str = ""
     ark_base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
     credential_validation_interval_seconds: float = Field(default=10_800, gt=0)

@@ -436,7 +436,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": os.environ.get("APP_VERSION", "dev")}
 
     @app.get("/api/session")
     async def session(request: Request) -> dict[str, bool]:
