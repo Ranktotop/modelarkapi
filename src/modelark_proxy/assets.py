@@ -13,6 +13,7 @@ import httpx
 
 from .config import Settings
 from .models import capabilities_for
+from .retry import with_retry
 
 
 class AssetAPIError(RuntimeError):
@@ -107,11 +108,23 @@ class AssetClient:
     async def call(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         query = {"Action": action, "Version": self.version}
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
-        response = await self.http.post(
-            "/",
-            params=query,
-            content=body,
-            headers=self._signed_headers("POST", "/", query, body),
+
+        async def send() -> httpx.Response:
+            # Sign per attempt: the request signature carries a timestamp that
+            # must stay inside the API's validity window across retries.
+            return await self.http.post(
+                "/",
+                params=query,
+                content=body,
+                headers=self._signed_headers("POST", "/", query, body),
+            )
+
+        response = await with_retry(
+            send,
+            attempts=self.settings.upstream_retry_attempts,
+            backoff_seconds=self.settings.upstream_retry_backoff_seconds,
+            max_backoff_seconds=self.settings.upstream_retry_max_backoff_seconds,
+            description=f"ModelArk management API {action}",
         )
         try:
             data = response.json()

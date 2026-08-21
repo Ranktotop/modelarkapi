@@ -2,12 +2,51 @@
 
 ## `upstream_credentials_invalid`
 
-Der Proxy läuft, hat aber beim letzten Read-only-Check einen ungültigen oder
-nicht erreichbaren `ARK_API_KEY` beziehungsweise IAM-Zugang festgestellt.
+Der Proxy läuft, hat aber beim letzten Read-only-Check einen von ModelArk
+abgelehnten `ARK_API_KEY` beziehungsweise IAM-Zugang festgestellt.
 `GET /health` zeigt unter `credentials` den betroffenen Zugang und den
 Prüfzeitpunkt. Nach einer serverseitigen Freischaltung wird der Zugriff beim
 nächsten Intervall automatisch aktiviert. Nach einer Änderung der
 Container-Umgebungsvariablen ist ein Neustart nötig.
+
+## `upstream_credentials_unavailable`
+
+Der Proxy konnte ModelArk bei der Credential-Prüfung nicht erreichen und hat
+für diesen Zugang noch nie eine gültige Antwort gesehen — typischerweise beim
+Start ohne funktionierendes Netz oder DNS. Der Zustand lautet dann `checking`,
+nicht `invalid`: es ist keine Aussage über den Schlüssel, sondern über die
+Erreichbarkeit. Geprüft wird im verkürzten Takt aus
+`CREDENTIAL_REVALIDATION_INTERVAL_SECONDS` (Standard 30 Sekunden), die Routen
+geben sich also ohne Neustart wieder frei. War der Zugang zuvor bereits gültig,
+tritt dieser Fall gar nicht ein: der Proxy bleibt dann auf `valid` und nennt den
+Netzwerkfehler nur unter `credentials.message`.
+
+## `Name or service not known` / `real_human_asset_error`
+
+DNS im Container ist zeitweise ausgefallen. Der Text stammt aus dem
+Betriebssystem und erreicht den Client als `error.message` eines
+`video-rh-…`-Jobs. Bevorzugt tritt das bei mehreren gleichzeitigen Aufträgen
+auf, weil dabei mehrere Namensauflösungen parallel starten.
+
+Der Proxy fängt das auf zwei Ebenen ab: jeder ModelArk-Aufruf wird bei einem
+Verbindungsfehler bis zu `UPSTREAM_RETRY_ATTEMPTS` mal wiederholt, und ein Job,
+dessen Aufrufe trotzdem alle scheitern, wird nicht mehr endgültig
+abgebrochen. Er wartet stattdessen mit Backoff
+(`ASSET_TRANSIENT_RETRY_SECONDS`) und läuft weiter, sobald das Netz wieder da
+ist. Erst `ASSET_MAX_PROCESSING_SECONDS` beziehungsweise `ASSET_JOB_TTL_SECONDS`
+beenden ihn hart. Im Log erscheinen währenddessen `could not connect` und
+`could not reach ModelArk`.
+
+Bleibt der Fehler dauerhaft, liegt er in der Infrastruktur, nicht in der
+Anwendung. Docker-eigener DNS unter `127.0.0.11` ist der übliche Kandidat; ein
+`dns_opt: ["single-request-reopen"]` am Compose-Service entschärft die bekannte
+glibc-Race, bei der A- und AAAA-Abfrage parallel über denselben Port laufen.
+
+Wichtig für die Abgrenzung: erscheint derselbe Text nicht im Job-Objekt, sondern
+schon beim Absenden der Anfrage als `APIConnectionError`, dann konnte der Client
+beziehungsweise LiteLLM den Proxy selbst nicht auflösen. Dann ist der Alias
+`modelarkapi_server` oder das gemeinsame Docker-Netz zu prüfen, nicht dieser
+Abschnitt.
 
 ## Seedance-Resource-Package
 

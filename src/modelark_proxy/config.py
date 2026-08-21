@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     ark_api_key: str = ""
     ark_base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
     credential_validation_interval_seconds: float = Field(default=10_800, gt=0)
+    credential_revalidation_interval_seconds: float = Field(default=30.0, gt=0)
     credential_validation_timeout_seconds: float = Field(default=10.0, gt=0)
     proxy_api_key: str | None = None
     require_proxy_api_key: bool = False
@@ -30,6 +31,9 @@ class Settings(BaseSettings):
     download_timeout_seconds: float = 600.0
     max_upstream_connections: int = 100
     max_keepalive_connections: int = 20
+    upstream_retry_attempts: int = Field(default=3, ge=1)
+    upstream_retry_backoff_seconds: float = Field(default=0.5, gt=0)
+    upstream_retry_max_backoff_seconds: float = Field(default=5.0, gt=0)
     allowed_download_host_suffixes: list[str] = Field(
         default_factory=lambda: [".bytepluses.com", ".volces.com"]
     )
@@ -46,6 +50,8 @@ class Settings(BaseSettings):
     asset_job_ttl_seconds: int = 86_400
     asset_worker_concurrency: int = 10
     asset_cleanup_retries: int = 5
+    asset_transient_retry_seconds: float = Field(default=5.0, gt=0)
+    asset_transient_retry_max_seconds: float = Field(default=60.0, gt=0)
     asset_orphan_cleanup_interval_seconds: int = 900
     asset_orphan_ttl_seconds: int = 86_400
 

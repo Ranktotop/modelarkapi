@@ -609,30 +609,36 @@ def create_app(
                 await asyncio.sleep(settings.asset_maintenance_interval_seconds)
 
         async def refresh_credential_state() -> None:
-            async def validate_ark_api_key() -> str | None:
+            # Each validator returns (message, unreachable). "unreachable" marks a
+            # network-level failure, which says nothing about the credential and
+            # must not lock the proxy out of its own upstream.
+            async def validate_ark_api_key() -> tuple[str | None, bool]:
                 if not settings.ark_api_key:
-                    return "ARK_API_KEY is not configured"
+                    return "ARK_API_KEY is not configured", False
                 try:
                     async with asyncio.timeout(
                         settings.credential_validation_timeout_seconds
                     ):
                         await ark.validate_api_key()
                 except ModelArkError as exc:
-                    return f"ARK_API_KEY was rejected with HTTP {exc.status_code}"
+                    return (
+                        f"ARK_API_KEY was rejected with HTTP {exc.status_code}",
+                        False,
+                    )
                 except TimeoutError:
-                    return "ARK_API_KEY validation timed out"
+                    return "ARK_API_KEY validation timed out", True
                 except httpx.HTTPError:
-                    return "ARK_API_KEY validation could not reach ModelArk"
+                    return "ARK_API_KEY validation could not reach ModelArk", True
                 except Exception:
                     logger.exception("Unexpected ARK_API_KEY validation failure")
-                    return "ARK_API_KEY validation failed unexpectedly"
-                return None
+                    return "ARK_API_KEY validation failed unexpectedly", False
+                return None, False
 
-            async def validate_iam_credentials() -> str | None:
+            async def validate_iam_credentials() -> tuple[str | None, bool]:
                 if not settings.byteplus_access_key_id:
-                    return "BYTEPLUS_ACCESS_KEY_ID is not configured"
+                    return "BYTEPLUS_ACCESS_KEY_ID is not configured", False
                 if not settings.byteplus_secret_access_key:
-                    return "BYTEPLUS_SECRET_ACCESS_KEY is not configured"
+                    return "BYTEPLUS_SECRET_ACCESS_KEY is not configured", False
                 try:
                     async with asyncio.timeout(
                         settings.credential_validation_timeout_seconds
@@ -640,40 +646,71 @@ def create_app(
                         await assets.validate_management_access()
                 except AssetAPIError:
                     return (
-                        "BYTEPLUS_ACCESS_KEY_ID/BYTEPLUS_SECRET_ACCESS_KEY were "
-                        "rejected by the ModelArk management API"
+                        (
+                            "BYTEPLUS_ACCESS_KEY_ID/BYTEPLUS_SECRET_ACCESS_KEY "
+                            "were rejected by the ModelArk management API"
+                        ),
+                        False,
                     )
                 except TimeoutError:
-                    return "IAM credential validation timed out"
+                    return "IAM credential validation timed out", True
                 except httpx.HTTPError:
                     return (
-                        "IAM credential validation could not reach the ModelArk "
-                        "management API"
+                        (
+                            "IAM credential validation could not reach the "
+                            "ModelArk management API"
+                        ),
+                        True,
                     )
                 except Exception:
                     logger.exception("Unexpected IAM credential validation failure")
-                    return "IAM credential validation failed unexpectedly"
-                return None
+                    return "IAM credential validation failed unexpectedly", False
+                return None, False
 
-            ark_error, iam_error = await asyncio.gather(
+            ark_result, iam_result = await asyncio.gather(
                 validate_ark_api_key(), validate_iam_credentials()
             )
-            errors = [error for error in (ark_error, iam_error) if error]
+            results = (("ark_api_key", ark_result), ("iam", iam_result))
+            fields: dict[str, str] = {}
+            for field, (message, unreachable) in results:
+                if message is None:
+                    fields[field] = "valid"
+                elif unreachable:
+                    # Keep a credential that already worked; otherwise stay
+                    # undecided so the fast recheck loop can settle it.
+                    fields[field] = (
+                        "valid" if credential_state[field] == "valid" else "checking"
+                    )
+                else:
+                    fields[field] = "invalid"
+            if "invalid" in fields.values():
+                status = "invalid"
+            elif "checking" in fields.values():
+                status = "checking"
+            else:
+                status = "valid"
+            errors = [message for _, (message, _) in results if message]
             credential_state.update(
-                status="invalid" if errors else "valid",
+                status=status,
                 message="; ".join(errors) if errors else None,
                 last_checked_at=datetime.now(UTC).isoformat(),
-                ark_api_key="invalid" if ark_error else "valid",
-                iam="invalid" if iam_error else "valid",
+                **fields,
             )
             if errors:
-                logger.warning("ModelArk credentials are invalid: %s", "; ".join(errors))
+                logger.warning(
+                    "ModelArk credential check reported %s: %s",
+                    status,
+                    "; ".join(errors),
+                )
 
         async def maintain_credential_state() -> None:
             while True:
-                await asyncio.sleep(
-                    settings.credential_validation_interval_seconds
-                )
+                interval = settings.credential_validation_interval_seconds
+                if credential_state["status"] != "valid":
+                    interval = min(
+                        interval, settings.credential_revalidation_interval_seconds
+                    )
+                await asyncio.sleep(interval)
                 await refresh_credential_state()
 
         cleanup_task: asyncio.Task[None] | None = None
@@ -730,6 +767,12 @@ def create_app(
             and credential_state["status"] != "valid"
         ):
             message = credential_state["message"] or "validation is still pending"
+            if credential_state["status"] == "checking":
+                return openai_error(
+                    f"ModelArk credentials could not be validated yet: {message}",
+                    503,
+                    "upstream_credentials_unavailable",
+                )
             return openai_error(
                 f"ModelArk credentials are currently invalid: {message}",
                 503,

@@ -33,6 +33,7 @@ pip install -e '.[test]'
 | `ARK_BASE_URL` | AP-Southeast ModelArk `/api/v3` | Upstream-Basis-URL |
 | `CREDENTIAL_VALIDATION_INTERVAL_SECONDS` | `10800` | Abstand der erneuten API-Key-/IAM-Prüfung in Sekunden |
 | `CREDENTIAL_VALIDATION_TIMEOUT_SECONDS` | `10` | Timeout je einzelner Credential-Prüfung |
+| `CREDENTIAL_REVALIDATION_INTERVAL_SECONDS` | `30` | verkürzter Abstand, solange der Zustand nicht `valid` ist |
 | `PROXY_API_KEY` | leer | Bearer-Key für alle API-Routen außer Health/Referenzmedien |
 | `REQUIRE_PROXY_API_KEY` | `false` | bei `true` Start nur mit mindestens 32 Zeichen langem Proxy-Key |
 | `PUBLIC_BASE_URL` | leer | öffentliche HTTPS-URL des Proxys; für hochgeladene Videos nötig |
@@ -46,6 +47,9 @@ pip install -e '.[test]'
 | `DOWNLOAD_TIMEOUT_SECONDS` | `600` | Timeout für Ergebnisstreams |
 | `MAX_UPSTREAM_CONNECTIONS` | `100` | maximale parallele ModelArk-Verbindungen |
 | `MAX_KEEPALIVE_CONNECTIONS` | `20` | wiederverwendete ModelArk-Verbindungen |
+| `UPSTREAM_RETRY_ATTEMPTS` | `3` | Versuche je ModelArk-Aufruf bei Verbindungsfehlern (DNS, Connect) |
+| `UPSTREAM_RETRY_BACKOFF_SECONDS` | `0.5` | Basiswartezeit des exponentiellen Retry-Backoffs |
+| `UPSTREAM_RETRY_MAX_BACKOFF_SECONDS` | `5` | Obergrenze einer einzelnen Retry-Wartezeit |
 | `ALLOWED_DOWNLOAD_HOST_SUFFIXES` | BytePlus/Volces | erlaubte Hosts für Ergebnisdownloads |
 | `BYTEPLUS_ACCESS_KEY_ID` | leer | AK des dedizierten IAM-Users für Management- und Assets-API |
 | `BYTEPLUS_SECRET_ACCESS_KEY` | leer | SK des IAM-Users; ausschließlich serverseitig |
@@ -60,6 +64,8 @@ pip install -e '.[test]'
 | `ASSET_JOB_TTL_SECONDS` | `86400` | maximale Job- und Remote-Asset-Lebenszeit |
 | `ASSET_WORKER_CONCURRENCY` | `10` | parallele Asset-/Job-Worker |
 | `ASSET_CLEANUP_RETRIES` | `5` | begrenzt den Exponenten des Cleanup-Backoffs |
+| `ASSET_TRANSIENT_RETRY_SECONDS` | `5` | Basiswartezeit, bevor ein Job nach Netzwerkausfall erneut läuft |
+| `ASSET_TRANSIENT_RETRY_MAX_SECONDS` | `60` | Obergrenze dieser Wartezeit |
 | `ASSET_ORPHAN_CLEANUP_INTERVAL_SECONDS` | `900` | Abstand des Remote-Reconcilers |
 | `ASSET_ORPHAN_TTL_SECONDS` | `86400` | Mindestalter verwaister App-Assets vor Löschung |
 
@@ -88,6 +94,15 @@ erfolgreichen Prüfung HTTP `503` mit dem Code
 geprüft. Eine serverseitige Freischaltung oder Berechtigungsänderung wird damit
 ohne Neustart erkannt; geänderte Docker-Umgebungsvariablen erfordern weiterhin
 einen Containerneustart.
+
+Ein Netzwerkausfall ist dabei kein abgelehnter Zugang. Ist ModelArk während der
+Prüfung nicht erreichbar, behält ein zuvor gültiger Zugang den Zustand `valid`,
+und der Proxy arbeitet weiter; `/health` nennt den Grund unter
+`credentials.message`. War der Zugang noch nie bestätigt — etwa beim Start ohne
+Netz —, lautet der Zustand `checking` und Fachrouten antworten mit `503
+upstream_credentials_unavailable`. Solange der Zustand nicht `valid` ist, wird
+im verkürzten Takt aus `CREDENTIAL_REVALIDATION_INTERVAL_SECONDS` erneut
+geprüft statt erst nach drei Stunden.
 
 `.env` ist von Git ausgeschlossen. API-Schlüssel dürfen weder committed noch
 in Logs, Fehlermeldungen oder Screenshots veröffentlicht werden.

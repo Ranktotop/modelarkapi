@@ -75,6 +75,7 @@ Wesentliche Variablen:
 |---|---|
 | `ARK_API_KEY` | ModelArk API Key |
 | `CREDENTIAL_VALIDATION_INTERVAL_SECONDS` | Abstand der erneuten API-Key-/IAM-Prüfung (Standard: drei Stunden) |
+| `UPSTREAM_RETRY_ATTEMPTS` | Versuche je ModelArk-Aufruf bei Verbindungsfehlern wie DNS-Ausfällen (Standard: 3) |
 | `PUBLIC_BASE_URL` | Öffentliche HTTPS-Basis-URL dieses Proxys; für Uploads Pflicht |
 | `PROXY_API_KEY` | verpflichtender Schlüssel im Docker-Deployment zwischen LiteLLM und Proxy |
 | `BYTEPLUS_ACCESS_KEY_ID` / `BYTEPLUS_SECRET_ACCESS_KEY` | verpflichtender IAM-Zugang für die Live-Modellliste |
@@ -85,6 +86,14 @@ Der Proxy prüft beim Start mit kostenfreien Read-only-Aufrufen sowohl den
 Stunden. Bei ungültigen Zugangsdaten bleibt der Prozess samt `/health` erreichbar,
 antwortet auf Fachrouten aber mit `503 upstream_credentials_invalid`. Sobald eine
 spätere Prüfung erfolgreich ist, werden die Routen automatisch wieder freigegeben.
+
+Ein reiner Netzwerk- oder DNS-Ausfall gilt dabei nicht als ungültiger Zugang: ein
+zuvor bestätigter Schlüssel behält den Zustand `valid`, und solange der Zustand
+nicht `valid` ist, wird alle 30 Sekunden statt alle drei Stunden erneut geprüft.
+Ausgehende ModelArk-Aufrufe wiederholen Verbindungsfehler zudem selbstständig mit
+Backoff, und ein Real-Human-Job, der ModelArk gerade nicht erreicht, wartet
+darauf statt endgültig zu scheitern. Details unter
+[Fehlerbehebung](docs/fehlerbehebung/README.md).
 
 Der allgemeine BytePlus-Kontosaldo ist kein verlässlicher Indikator für
 Seedance-Resource-Packages und wird daher weder angezeigt noch als Sperre

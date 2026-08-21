@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -15,8 +16,11 @@ from typing import Any
 from .assets import AssetClient
 from .client import ModelArkClient
 from .config import Settings
+from .retry import TransientUpstreamError, backoff_delay, is_retryable
 from .schemas import VideoObject
 from .translation import byteplus_to_openai
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_PROVIDER_STATUSES = {"succeeded", "failed", "cancelled", "expired"}
 
@@ -175,6 +179,8 @@ class AssetJobManager:
         self.running: set[str] = set()
         self.tasks: set[asyncio.Task[None]] = set()
         self.last_orphan_cleanup = 0.0
+        self.transient_attempts: dict[str, int] = {}
+        self.retry_after: dict[str, float] = {}
 
     def create(
         self, request: dict[str, Any], sources: list[dict[str, Any]]
@@ -183,8 +189,33 @@ class AssetJobManager:
         self.schedule(job["id"])
         return self.to_video(job)
 
+    def defer(self, job_id: str, exc: BaseException) -> None:
+        """Hold a job back after an unreachable upstream instead of failing it."""
+        attempt = self.transient_attempts.get(job_id, 0) + 1
+        self.transient_attempts[job_id] = attempt
+        delay = backoff_delay(
+            attempt,
+            self.settings.asset_transient_retry_seconds,
+            self.settings.asset_transient_retry_max_seconds,
+        )
+        self.retry_after[job_id] = time.monotonic() + delay
+        logger.warning(
+            "Job %s could not reach ModelArk (attempt %d): %s; retrying in %.1fs",
+            job_id,
+            attempt,
+            exc,
+            delay,
+        )
+
+    def forget_retry_state(self, job_id: str) -> None:
+        self.transient_attempts.pop(job_id, None)
+        self.retry_after.pop(job_id, None)
+
+    def deferred(self, job_id: str) -> bool:
+        return self.retry_after.get(job_id, 0.0) > time.monotonic()
+
     def schedule(self, job_id: str) -> None:
-        if job_id in self.running:
+        if job_id in self.running or self.deferred(job_id):
             return
         self.running.add(job_id)
 
@@ -192,6 +223,9 @@ class AssetJobManager:
             try:
                 async with self.semaphore:
                     await self.process_once(job_id)
+                self.forget_retry_state(job_id)
+            except TransientUpstreamError as exc:
+                self.defer(job_id, exc.__cause__ or exc)
             finally:
                 self.running.discard(job_id)
 
@@ -296,7 +330,11 @@ class AssetJobManager:
                 await self.cleanup(job_id)
             else:
                 self.store.update(job_id, provider=provider, status="in_progress")
-        except Exception as exc:  # noqa: BLE001 - persist any background failure
+        except Exception as exc:  # persist or defer any background failure
+            if is_retryable(exc):
+                # A DNS or connect outage says nothing about this job; keep it
+                # alive so maintenance() picks it up once the network recovers.
+                raise TransientUpstreamError(str(exc)) from exc
             self.store.update(
                 job_id,
                 status="failed",
@@ -347,6 +385,7 @@ class AssetJobManager:
                 and job["cleanup_done"]
             ):
                 self.store.delete(job["id"])
+                self.forget_retry_state(job["id"])
         if (
             self.settings.real_human_assets_configured
             and time.monotonic() - self.last_orphan_cleanup
@@ -399,7 +438,7 @@ class AssetJobManager:
             page += 1
 
     def schedule_cleanup(self, job_id: str) -> None:
-        if job_id in self.running:
+        if job_id in self.running or self.deferred(job_id):
             return
         self.running.add(job_id)
 

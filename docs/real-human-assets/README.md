@@ -99,6 +99,13 @@ zusätzlicher Reconciler löscht nach der TTL ausschließlich verwaiste Assets m
 dem reservierten Namen `modelark-proxy-temp-…`. Manuell angelegte Assets werden
 nie automatisch gelöscht.
 
+Erreicht der Proxy ModelArk während dieser Schritte nicht — etwa bei einem
+DNS-Aussetzer im Container —, gilt der Job nicht als gescheitert. Der Aufruf
+selbst wird zunächst mehrfach wiederholt; bleibt er erfolglos, wartet der Job
+mit Backoff und setzt seinen Ablauf fort, sobald das Netz zurück ist. Erst
+`ASSET_MAX_PROCESSING_SECONDS` beziehungsweise `ASSET_JOB_TTL_SECONDS` beenden
+ihn endgültig.
+
 BytePlus vergleicht das neue Material bei `CreateAsset` mit der während der
 Lebendprüfung erfassten Person. Die Schnittstelle ist asynchron und garantiert
 keine maximale Bearbeitungszeit. Mehrere Gesichter oder eine abweichende Person

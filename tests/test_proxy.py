@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from modelark_proxy.app import create_app as create_proxy_app
+from modelark_proxy.client import ModelArkClient
 from modelark_proxy.config import Settings
 from modelark_proxy.main import _SuccessfulHealthCheckFilter
 
@@ -1208,3 +1209,235 @@ async def test_openai_size_and_string_duration_are_normalized(proxy):
     upstream = json.loads(captured[0].content)
     assert upstream["resolution"] == "4k"
     assert upstream["duration"] == 12
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_errors_are_retried(settings: Settings):
+    """A DNS blip must not surface as a request failure."""
+    settings.upstream_retry_attempts = 3
+    settings.upstream_retry_backoff_seconds = 0.001
+    settings.upstream_retry_max_backoff_seconds = 0.002
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.ConnectError(
+                "[Errno -2] Name or service not known", request=request
+            )
+        return httpx.Response(200, json={"id": "cgt-retry", "status": "queued"})
+
+    client = ModelArkClient(settings, httpx.MockTransport(handler))
+    try:
+        result = await client.create_task({"model": "seedance-test"})
+    finally:
+        await client.close()
+
+    assert attempts == 3
+    assert result["id"] == "cgt-retry"
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_errors_stop_after_configured_attempts(
+    settings: Settings,
+):
+    settings.upstream_retry_attempts = 2
+    settings.upstream_retry_backoff_seconds = 0.001
+    settings.upstream_retry_max_backoff_seconds = 0.002
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError(
+            "[Errno -2] Name or service not known", request=request
+        )
+
+    client = ModelArkClient(settings, httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.ConnectError):
+            await client.create_task({"model": "seedance-test"})
+    finally:
+        await client.close()
+
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_read_errors_are_not_retried(settings: Settings):
+    """Retrying a half-sent POST could bill a second paid generation."""
+    settings.upstream_retry_attempts = 3
+    settings.upstream_retry_backoff_seconds = 0.001
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadError("connection reset", request=request)
+
+    client = ModelArkClient(settings, httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.ReadError):
+            await client.create_task({"model": "seedance-test"})
+    finally:
+        await client.close()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_real_human_job_survives_a_transient_dns_outage(settings: Settings):
+    """CreateAsset failing to resolve must not permanently fail the job."""
+    settings.byteplus_asset_group_id = "group-person"
+    settings.asset_maintenance_interval_seconds = 0.005
+    settings.asset_poll_interval_seconds = 0.001
+    settings.asset_transient_retry_seconds = 0.01
+    settings.asset_transient_retry_max_seconds = 0.02
+    settings.upstream_retry_attempts = 1
+    create_calls = 0
+
+    def asset_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal create_calls
+        action = request.url.params["Action"]
+        if action == "ListAssets":
+            return httpx.Response(200, json={"Result": {"Items": [], "TotalCount": 0}})
+        if action == "CreateAsset":
+            create_calls += 1
+            if create_calls == 1:
+                raise httpx.ConnectError(
+                    "[Errno -2] Name or service not known", request=request
+                )
+            return httpx.Response(200, json={"Result": {"Id": "asset-dns-1"}})
+        if action == "GetAsset":
+            body = json.loads(request.content)
+            return httpx.Response(
+                200, json={"Result": {"Id": body["Id"], "Status": "Active"}}
+            )
+        if action == "DeleteAsset":
+            return httpx.Response(200, json={"Result": {}})
+        raise AssertionError(action)
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "cgt-dns"})
+        return httpx.Response(200, json={"id": "cgt-dns", "status": "succeeded"})
+
+    app = create_app(
+        settings,
+        ark_transport=httpx.MockTransport(provider_handler),
+        asset_transport=httpx.MockTransport(asset_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        created = await client.post(
+            "/v1/videos",
+            json={
+                "model": "seedance-test",
+                "prompt": "Edit Video 1",
+                "reference_urls": [
+                    {
+                        "url": "https://example.com/person.mp4",
+                        "media_type": "video",
+                        "real_human": True,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 200
+        job_id = created.json()["id"]
+        for _ in range(300):
+            status = await client.get(f"/v1/videos/{job_id}")
+            if status.json()["status"] in {"completed", "failed"}:
+                break
+            await asyncio.sleep(0.01)
+
+    assert create_calls >= 2
+    assert status.json()["status"] == "completed"
+    assert status.json().get("error") is None
+
+
+@pytest.mark.asyncio
+async def test_unreachable_upstream_does_not_invalidate_working_credentials(
+    settings: Settings,
+):
+    """A network outage is not a rejected credential and must not 503 everything."""
+    settings.credential_validation_interval_seconds = 0.01
+    settings.credential_revalidation_interval_seconds = 0.01
+    settings.upstream_retry_attempts = 1
+    ark_checks = 0
+
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal ark_checks
+        ark_checks += 1
+        if ark_checks > 1:
+            raise httpx.ConnectError(
+                "[Errno -2] Name or service not known", request=request
+            )
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"Result": {"Items": [], "TotalCount": 0}})
+
+    app = create_proxy_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        for _ in range(100):
+            health = await client.get("/health")
+            if health.json()["credentials"]["message"]:
+                break
+            await asyncio.sleep(0.01)
+        still_open = await client.get("/v1/real-human/configuration")
+
+    assert ark_checks > 1
+    assert health.json()["credentials"]["status"] == "valid"
+    assert "could not reach ModelArk" in health.json()["credentials"]["message"]
+    assert still_open.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unreachable_upstream_at_startup_reports_checking_not_invalid(
+    settings: Settings,
+):
+    settings.credential_validation_interval_seconds = 3600
+    settings.credential_revalidation_interval_seconds = 3600
+    settings.upstream_retry_attempts = 1
+
+    def ark_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            "[Errno -2] Name or service not known", request=request
+        )
+
+    def management_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"Result": {"Items": [], "TotalCount": 0}})
+
+    app = create_proxy_app(
+        settings,
+        ark_transport=httpx.MockTransport(ark_handler),
+        asset_transport=httpx.MockTransport(management_handler),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        health = await client.get("/health")
+        blocked = await client.get("/v1/models")
+
+    assert health.json()["credentials"]["status"] == "checking"
+    assert health.json()["credentials"]["ark_api_key"] == "checking"
+    assert blocked.status_code == 503
+    assert blocked.json()["error"]["code"] == "upstream_credentials_unavailable"
