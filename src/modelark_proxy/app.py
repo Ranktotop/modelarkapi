@@ -4,8 +4,8 @@ import asyncio
 import hmac
 import json
 import logging
-import re
 import mimetypes
+import re
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
@@ -18,9 +18,9 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
-    Response,
     JSONResponse,
     PlainTextResponse,
+    Response,
     StreamingResponse,
 )
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -44,22 +44,22 @@ from .litellm_export import export_model_list
 from .media import REFERENCE_SIZE_LIMITS, MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
 from .prompt_guides import PromptGuides
-from .references import ReferenceResolver
 from .provider_jobs import ProviderJobStore, purge_expired
 from .providers import (
     DEFAULT_PROVIDER,
     ProviderRegistry,
     ProviderUnavailable,
     VideoProvider,
+    seedance,
     strip_model_namespace,
 )
-from .providers import seedance
 from .providers.google import GoogleProvider
 from .providers.google_backends import GeminiBackend, GoogleBackend, VertexBackend
 from .providers.kling import KlingProvider
 from .providers.kling.client import KlingClient
 from .providers.kling.models import EFFECTS
 from .providers.seedance import SeedanceProvider
+from .references import ReferenceResolver
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
 from .webhooks import WebhookDispatcher, validate_webhook_url
@@ -324,7 +324,9 @@ def create_app(
     enabled_providers: list[VideoProvider] = []
     if settings.modelark_configured:
         enabled_providers.append(
-            SeedanceProvider(settings, ark, asset_jobs, media, download_transport)
+            SeedanceProvider(
+                settings, ark, asset_jobs, media, download_transport, references
+            )
         )
     if settings.google_configured:
         enabled_providers.append(

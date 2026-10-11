@@ -22,10 +22,20 @@ from ..asset_jobs import AssetJobManager
 from ..client import ModelArkClient
 from ..config import Settings
 from ..errors import openai_error
+from ..ids import decode_video_id
 from ..media import MediaStore, upload_chunks
-from ..models import ADAPTIVE_RATIO_TASKS, ModelSpec, spec_for
+from ..models import (
+    ADAPTIVE_RATIO_TASKS,
+    ModelSpec,
+    family_name,
+    seedance_capabilities,
+    spec_for,
+)
+from ..references import ReferenceResolver
 from ..schemas import VideoList, VideoObject
 from ..translation import TranslationError, apply_openai_format, byteplus_to_openai
+from ..unified import normalize_request
+from ..validation import validate
 
 PASSTHROUGH_FIELDS = {
     "resolution",
@@ -44,7 +54,39 @@ PASSTHROUGH_FIELDS = {
     "priority",
     "callback_url",
     "safety_identifier",
+    "draft",
 }
+# A final video made from a draft inherits these from the draft task; ModelArk
+# rejects them when they are sent again, even with the same value.
+DRAFT_INHERITED_FIELDS = (
+    "prompt",
+    "references",
+    "reference_urls",
+    "input_reference_url",
+    "content",
+    "duration",
+    "seconds",
+    "ratio",
+    "aspect_ratio",
+    "size",
+    "seed",
+    "generate_audio",
+    "omni_reference_task_type",
+    "frames",
+    "camera_fixed",
+    "draft",
+)
+DRAFT_FINAL_FIELDS = (
+    "resolution",
+    "watermark",
+    "return_last_frame",
+    "output_format",
+    "service_tier",
+    "execution_expires_after",
+    "priority",
+    "callback_url",
+    "safety_identifier",
+)
 
 PUBLIC_ASSET_REFERENCE_FIELDS = {
     "asset_id",
@@ -96,8 +138,16 @@ def _media_kind(media_type: str | None, default: str = "video") -> str:
 def _reference_content(
     url: str, media_type: str | None = None, role: str | None = None
 ) -> dict[str, Any]:
-    _validate_public_reference_url(url)
-    kind = _media_kind(media_type)
+    if url.startswith("data:"):
+        # ModelArk takes images and audio inline; videos only by URL.
+        kind = _media_kind(media_type or url[5:].split(";", 1)[0])
+        if kind == "video" or not url.startswith(f"data:{kind}/"):
+            raise TranslationError(
+                "Inline data: references are accepted for images and audio only"
+            )
+    else:
+        _validate_public_reference_url(url)
+        kind = _media_kind(media_type)
     content_type, _ = ASSET_KINDS[kind]
     selected_role = _reference_role(kind, role)
     return {
@@ -318,6 +368,41 @@ def _normalize_passthrough(payload: dict[str, Any]) -> None:
             payload[field] = value.strip().lower()
 
 
+def _draft_final_payload(
+    data: dict[str, Any], model: str, spec: ModelSpec
+) -> dict[str, Any]:
+    if spec.known and not spec.supports_draft:
+        raise TranslationError(f"{model} does not support draft mode")
+    inherited = [
+        name for name in DRAFT_INHERITED_FIELDS if data.get(name) not in (None, "", [])
+    ]
+    if inherited:
+        raise TranslationError(
+            "A final video inherits these fields from its draft; do not send "
+            f"them: {', '.join(inherited)}"
+        )
+    payload: dict[str, Any] = {
+        "model": model,
+        "content": [
+            {
+                "type": "draft_task",
+                "draft_task": {"id": decode_video_id(str(data["draft_task_id"]))},
+            }
+        ],
+    }
+    for name in DRAFT_FINAL_FIELDS:
+        if data.get(name) is not None:
+            payload[name] = data[name]
+    _normalize_passthrough(payload)
+    if family_name(model).startswith("dreamina-seedance-2-5"):
+        payload.setdefault("resolution", "1080p")
+        if payload["resolution"] != "1080p":
+            raise TranslationError(
+                f"{model} renders the final video of a draft in 1080p only"
+            )
+    return payload
+
+
 def build_task_payload(
     data: dict[str, Any],
     settings: Settings,
@@ -330,6 +415,8 @@ def build_task_payload(
         raise TranslationError("model is required")
     model = settings.resolve_model(requested_model.strip())
     spec = spec_for(model)
+    if data.get("draft_task_id") is not None:
+        return _draft_final_payload(data, model, spec)
     prompt = str(data.get("prompt", "")).strip()
     content: list[dict[str, Any]] = []
     if prompt:
@@ -386,7 +473,18 @@ def build_task_payload(
             payload["duration"] = int(data["seconds"])
         except (TypeError, ValueError) as exc:
             raise TranslationError("seconds must be an integer") from exc
-    payload.setdefault("generate_audio", settings.default_generate_audio)
+    if payload.get("draft") is not True:
+        payload.pop("draft", None)
+    elif spec.known and not spec.supports_draft:
+        raise TranslationError(f"{model} does not support draft mode")
+    else:
+        payload.setdefault("resolution", "480p")
+        if payload["resolution"] != "480p":
+            raise TranslationError("Draft videos are rendered in 480p only")
+    if spec.supports_audio:
+        payload.setdefault("generate_audio", settings.default_generate_audio)
+    elif "generate_audio" in payload and spec.known:
+        raise TranslationError(f"{model} does not generate audio")
     apply_openai_format(payload, data.get("size"))
     _apply_model_constraints(
         payload,
@@ -397,6 +495,50 @@ def build_task_payload(
         explicit_duration="duration" in data or "seconds" in data,
     )
     return payload
+
+
+# Fields only the unified contract uses; any of them switches a request to it.
+UNIFIED_MARKERS = ("references", "task", "aspect_ratio", "parameter_policy")
+# Unified tasks that map onto an `omni_reference_task_type` (Seedance 2.5).
+OMNI_TASKS = {"edit": "edit", "extend": "extend", "stitch": "extend"}
+UNIFIED_TO_SEEDANCE_PARAMS = {
+    "resolution": "resolution",
+    "aspect_ratio": "ratio",
+    "generate_audio": "generate_audio",
+    "seed": "seed",
+    "watermark": "watermark",
+    "return_last_frame": "return_last_frame",
+    "output_format": "output_format",
+}
+# Request fields the unified translation replaces with Seedance fields.
+CONSUMED_FIELDS = (
+    *UNIFIED_MARKERS,
+    "seconds",
+    "duration",
+    "ratio",
+    "size",
+    "provider_options",
+    "input_reference_url",
+    "input_reference_media_type",
+    "input_reference_role",
+    "reference_urls",
+    "omni_reference_task_type",
+    *UNIFIED_TO_SEEDANCE_PARAMS,
+)
+
+
+def is_unified(data: dict[str, Any]) -> bool:
+    seconds = data.get("seconds")
+    return any(name in data for name in UNIFIED_MARKERS) or (
+        isinstance(seconds, str) and seconds.strip().lower() == "auto"
+    )
+
+
+def _seedance_role(reference: dict[str, Any]) -> str:
+    role = reference["role"]
+    if role in {"first_frame", "last_frame"}:
+        return role
+    return f"reference_{reference['type']}"
 
 
 def _local_reference_id(url: str, settings: Settings) -> str | None:
@@ -480,12 +622,84 @@ class SeedanceProvider:
         asset_jobs: AssetJobManager,
         media: MediaStore,
         download_transport: httpx.AsyncBaseTransport | None = None,
+        references: ReferenceResolver | None = None,
     ) -> None:
         self.settings = settings
         self.ark = ark
         self.asset_jobs = asset_jobs
         self.media = media
         self.download_transport = download_transport
+        self.references = references
+
+    async def _reference_url(self, reference: dict[str, Any]) -> str:
+        """A URL (or inline image/audio) ModelArk accepts for this reference."""
+        task_id = reference.get("task_id")
+        if task_id:
+            source_id = decode_video_id(str(task_id))
+            if source_id.startswith("cgt-"):
+                task = await self.ark.get_task(source_id)
+                url = (task.get("content") or {}).get("video_url")
+                if task.get("status") != "succeeded" or not isinstance(url, str):
+                    raise TranslationError(
+                        f"Task {source_id} has no finished video to reference "
+                        f"(status: {task.get('status')})"
+                    )
+                return url
+        url = reference.get("url")
+        if isinstance(url, str) and (
+            url.startswith("https://")
+            or (url.startswith("data:") and reference["type"] != "video")
+        ):
+            return url
+        if self.references is None:
+            raise TranslationError("This reference source is not available")
+        return await self.references.public_url(reference)
+
+    async def _from_unified(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Translate a unified request into the Seedance fields it maps to."""
+        request = normalize_request(data)
+        model = self.settings.resolve_model(request.model)
+        request, _ = validate(seedance_capabilities(model), request)
+        spec = spec_for(model)
+        legacy = {
+            key: value for key, value in data.items() if key not in CONSUMED_FIELDS
+        }
+        reference_urls: list[dict[str, Any]] = []
+        content = list(legacy.get("content") or [])
+        for reference in request.references:
+            if reference["type"] not in {"image", "video", "audio"}:
+                raise TranslationError(
+                    f"Seedance does not accept {reference['type']} references"
+                )
+            role = _seedance_role(reference)
+            if reference.get("asset_id"):
+                # Public ModelArk assets (e.g. the digital character library).
+                content.append(
+                    _asset_content(str(reference["asset_id"]), reference["type"], role)
+                )
+                continue
+            reference_urls.append(
+                {
+                    "url": await self._reference_url(reference),
+                    "media_type": reference["type"],
+                    "role": role,
+                    **({"real_human": True} if reference.get("real_human") else {}),
+                }
+            )
+        legacy["reference_urls"] = reference_urls
+        if content:
+            legacy["content"] = content
+        if request.task in OMNI_TASKS and OMNI_TASKS[request.task] in spec.task_types:
+            legacy["omni_reference_task_type"] = OMNI_TASKS[request.task]
+        params = request.params
+        if "seconds" in params:
+            legacy["duration"] = (
+                -1 if params["seconds"] == "auto" else params["seconds"]
+            )
+        for name, field_name in UNIFIED_TO_SEEDANCE_PARAMS.items():
+            if name in params:
+                legacy[field_name] = params[name]
+        return legacy
 
     def owns_video(self, video_id: str) -> bool:
         return video_id.startswith(("cgt-", "video-rh-"))
@@ -495,6 +709,8 @@ class SeedanceProvider:
     ) -> VideoObject:
         settings = self.settings
         _reject_public_asset_references(data)
+        if is_unified(data) and data.get("draft_task_id") is None:
+            data = await self._from_unified(data)
         source_task_id = data.get("input_reference_task_id")
         if source_task_id is not None:
             if not isinstance(source_task_id, str) or not source_task_id.startswith(

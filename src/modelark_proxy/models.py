@@ -64,6 +64,10 @@ class ModelSpec:
     supports_frames: bool = False
     supports_last_frame_role: bool = True
     adaptive_ratio_for_frames: bool = False
+    # `generate_audio` is rejected by models without audio output (1.0 pro).
+    supports_audio: bool = True
+    # Draft mode: a 480p preview first, then the final video from its task ID.
+    supports_draft: bool = False
     known: bool = True
     provider: str = "modelark"
 
@@ -128,6 +132,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         output_formats=("mp4", "mov"),
         task_types=TASK_TYPES,
         adaptive_ratio_for_frames=True,
+        supports_draft=True,
     ),
     "dreamina-seedance-2-0": _SEEDANCE_2_0,
     "dreamina-seedance-2-0-fast": _SEEDANCE_2_0_LIGHT,
@@ -137,6 +142,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_resolution="720p",
         durations=(-1, *range(4, 13)),
         default_duration=5,
+        supports_draft=True,
     ),
     "seedance-1-0-pro": ModelSpec(
         resolutions=("480p", "720p", "1080p"),
@@ -145,6 +151,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_duration=5,
         default_ratio="16:9",
         supports_frames=True,
+        supports_audio=False,
     ),
     "seedance-1-0-pro-fast": ModelSpec(
         resolutions=("480p", "720p", "1080p"),
@@ -154,6 +161,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_ratio="16:9",
         supports_frames=True,
         supports_last_frame_role=False,
+        supports_audio=False,
     ),
 }
 
@@ -206,6 +214,8 @@ SEEDANCE_NATIVE_FIELDS = (
     "callback_url",
     "content",
     "input_reference_task_id",
+    "draft",
+    "draft_task_id",
 )
 
 
@@ -217,11 +227,12 @@ def seedance_capabilities(model: str) -> ModelCapabilities:
         "seconds": Param(values=durations, default=spec.default_duration),
         "resolution": Param(values=spec.resolutions, default=spec.default_resolution),
         "aspect_ratio": Param(values=spec.ratios, default=spec.default_ratio),
-        "generate_audio": Param(default=True),
-        "seed": Param(minimum=-1, maximum=4_294_967_295),
+        "seed": Param(minimum=-1, maximum=2_147_483_647),
         "watermark": Param(default=False),
         "return_last_frame": Param(default=False),
     }
+    if spec.supports_audio:
+        parameters["generate_audio"] = Param(default=True)
     if len(spec.output_formats) > 1:
         parameters["output_format"] = Param(
             values=spec.output_formats, default=spec.output_formats[0]
@@ -323,6 +334,7 @@ def seedance_capabilities(model: str) -> ModelCapabilities:
             "last_frame_output": True,
             "watermark": True,
             "callback": True,
+            "draft": spec.supports_draft,
         },
         native_fields=SEEDANCE_NATIVE_FIELDS,
     )
