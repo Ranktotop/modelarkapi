@@ -33,7 +33,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T18: Kling Lip Sync (mehrstufig) und Avatar (M)
 - [x] T19: Kling Audio: TTS (`/v1/audio/speech`), Text→Audio, Video→Audio (M)
 - [x] T20: Kling-Effekte (219) und Multi-Element-Bearbeitung (M)
-- [ ] T21: Kling Video-Commerce (Talking Agent, Goods Studio, Apparel) (M)
+- [x] T21: Kling Video-Commerce (Talking Agent, Goods Studio, Apparel) (M)
 - [ ] **Checkpoint 3:** Kling komplett; Live-Tests nur mit Freigabe
 
 ## Phase 4: Seedance vollständig

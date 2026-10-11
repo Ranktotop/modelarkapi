@@ -209,8 +209,9 @@ async def parse_create_request(
     return normalize_fields(body), None
 
 
-# SPEC 11.7; `last_frame` is handled separately, thumbnails do not exist.
-CONTENT_VARIANTS = ("video", "audio", "watermarked")
+# SPEC 11.7: no provider renders thumbnails or sprite sheets. Other variant
+# names (video, audio, watermarked, product_image_1 …) are resolved per job.
+UNSUPPORTED_VARIANTS = ("thumbnail", "spritesheet")
 
 
 def with_public_id(video: VideoObject, model: str | None = None) -> VideoObject:
@@ -911,10 +912,9 @@ def create_app(
     ):
         if variant == "last_frame":
             return await stream_task_output(video_id, "last_frame_url", "image/png")
-        if variant not in CONTENT_VARIANTS:
+        if variant in UNSUPPORTED_VARIANTS:
             return openai_error(
-                f"Unsupported variant '{variant}'; supported: "
-                f"{', '.join([*CONTENT_VARIANTS, 'last_frame'])}",
+                f"Unsupported variant '{variant}'; no provider renders it",
                 400,
                 "unsupported_parameter",
                 "variant",

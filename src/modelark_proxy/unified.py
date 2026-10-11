@@ -266,6 +266,12 @@ def _infer_task(references: list[dict[str, Any]], params: dict[str, Any]) -> str
 def _default_role(reference: dict[str, Any], task: str, frames_taken: list[str]) -> str:
     """Role for a reference without one; `frames_taken` tracks single-use roles."""
     kind = reference["type"]
+    if task.startswith("commerce_"):
+        # Commerce inputs are products, the source clip, and background music;
+        # avatar and model images must be named explicitly.
+        return {"image": "product", "video": "base_video", "audio": "bgm"}.get(
+            kind, "reference"
+        )
     if kind == "image":
         if task == "image_to_video":
             return "first_frame"

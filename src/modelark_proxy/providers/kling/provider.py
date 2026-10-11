@@ -29,7 +29,11 @@ from ..base import ProviderUnavailable, strip_model_namespace
 from .assets import KlingAssets, native_id, parse_asset_id
 from .client import KlingClient
 from .models import (
+    APPAREL_VOICES,
+    COMMERCE_IMAGE_FORMATS,
     EFFECT_IMAGES,
+    TALKING_AGENT_AVATARS,
+    TALKING_AGENT_VOICES,
     MODELS,
     VIRTUAL_MODELS,
     KlingModel,
@@ -131,13 +135,14 @@ class KlingProvider:
                 param="input_reference",
             )
         model_id = canonical_model(strip_model_namespace(str(data.get("model", ""))))
-        if model_id in VIRTUAL_MODELS:
-            # A virtual model does exactly one task.
-            data = {
-                **data,
-                "task": data.get("task")
-                or next(iter(kling_capabilities(model_id).tasks)),
-            }
+        virtual_tasks = (
+            list(kling_capabilities(model_id).tasks)
+            if model_id in VIRTUAL_MODELS
+            else []
+        )
+        if len(virtual_tasks) == 1:
+            # A single-purpose virtual model implies its task.
+            data = {**data, "task": data.get("task") or virtual_tasks[0]}
         request = normalize_request(data)
         if model_id is None:
             raise ProviderUnavailable(
@@ -236,6 +241,8 @@ class KlingProvider:
         request, adjustments = validate(caps, request)
         if request.task in {"text_to_audio", "video_to_audio"}:
             return await self._create_audio(request, adjustments)
+        if request.task.startswith("commerce_"):
+            return await self._create_commerce(request, adjustments)
         if request.task == "effect":
             return await self._create_effect(request, adjustments)
         if request.task == "multi_element_edit":
@@ -354,6 +361,242 @@ class KlingProvider:
                 "Kling text-to-speech returned no audio", 502, "upstream_error"
             )
         return str(clip["id"]), int(float(clip.get("duration") or 0) * 1000)
+
+    async def _create_commerce(
+        self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
+    ) -> VideoObject:
+        """Kling's video-commerce solutions; each has its own content types."""
+        builders = {
+            "commerce_talking_agent": ("/solutions/talking_agent", self._talking_agent),
+            "commerce_goods_studio": (
+                "/solutions/e-commerce/goods_studio",
+                self._goods_studio,
+            ),
+            "commerce_apparel": ("/solutions/e-commerce/clothing_dupe", self._apparel),
+        }
+        path, build = builders[request.task]
+        commerce = request.params.get("commerce") or {}
+        if not isinstance(commerce, dict):
+            raise ContractError("commerce must be an object", param="commerce")
+        body = await build(request, commerce)
+        if request.params.get("watermark"):
+            # The apparel solution names the option differently.
+            key = (
+                "watermark_info" if request.task == "commerce_apparel" else "watermark"
+            )
+            body["options"] = {key: {"enabled": True}}
+        created = await self.client.call("POST", path, json=body)
+        upstream = {"api": "solutions", "task_id": created["id"]}
+        return self._register(request.model, request, upstream, adjustments)
+
+    def _by_role(self, request: UnifiedRequest, role: str) -> list[dict[str, Any]]:
+        return [r for r in request.references if r["role"] == role]
+
+    @staticmethod
+    def _text(value: Any, field: str, limit: int) -> str:
+        if not isinstance(value, str) or not value.strip() or len(value) > limit:
+            raise ContractError(
+                f"commerce.{field} must be text of at most {limit} characters",
+                param="commerce",
+            )
+        return value
+
+    def _voice(
+        self,
+        request: UnifiedRequest,
+        commerce: dict[str, Any],
+        allowed: tuple[str, ...],
+    ) -> str | None:
+        voice = (request.params.get("speech") or {}).get("voice") or commerce.get(
+            "voice"
+        )
+        if voice is not None and voice not in allowed:
+            raise ContractError(
+                f"Unsupported voice '{voice}'; allowed: {', '.join(allowed)}",
+                code="unsupported_parameter",
+                param="speech",
+            )
+        return voice
+
+    async def _talking_agent(
+        self, request: UnifiedRequest, commerce: dict[str, Any]
+    ) -> dict[str, Any]:
+        avatar_images = self._by_role(request, "avatar")
+        avatar_id = commerce.get("avatar_id")
+        voice = self._voice(request, commerce, TALKING_AGENT_VOICES)
+        if bool(avatar_images) == bool(avatar_id):
+            raise ContractError(
+                "The talking agent needs either an avatar image or commerce.avatar_id",
+                code="reference_limit",
+                param="references",
+            )
+        if avatar_id and avatar_id not in TALKING_AGENT_AVATARS:
+            raise ContractError(
+                f"Unknown avatar_id '{avatar_id}'",
+                code="unsupported_parameter",
+                param="commerce",
+            )
+        if avatar_images and not voice:
+            raise ContractError(
+                "An avatar image needs a voice (speech.voice)", param="speech"
+            )
+        if avatar_id and voice:
+            raise ContractError(
+                "A preset avatar brings its own voice; omit speech.voice",
+                param="speech",
+            )
+        products = self._by_role(request, "product")
+        product_mode = bool(
+            products
+            or commerce.get("title")
+            or commerce.get("price")
+            or commerce.get("audience")
+            or commerce.get("selling_points")
+        )
+        if product_mode and (not products or not commerce.get("title")):
+            raise ContractError(
+                "Product mode needs at least one product image and commerce.title",
+                code="reference_limit",
+                param="references",
+            )
+        rate = commerce.get("speech_rate")
+        if rate is not None and (product_mode or rate not in (0.8, 1.0, 1.2)):
+            raise ContractError(
+                "commerce.speech_rate (0.8, 1.0 or 1.2) is only allowed without product details",
+                code="unsupported_parameter",
+                param="commerce",
+            )
+        script = self._text(commerce.get("script"), "script", 2000)
+        contents: list[dict[str, Any]] = []
+        if avatar_images:
+            contents.append(
+                {
+                    "type": "avatar_image",
+                    "url": await self._image(avatar_images[0], COMMERCE_IMAGE_FORMATS),
+                }
+            )
+        else:
+            contents.append({"type": "avatar_id", "text": avatar_id})
+        for product in products:
+            contents.append(
+                {
+                    "type": "ref_image",
+                    "url": await self._image(product, COMMERCE_IMAGE_FORMATS),
+                }
+            )
+        if product_mode:
+            contents.append(
+                {
+                    "type": "goods_title",
+                    "text": self._text(commerce["title"], "title", 500),
+                }
+            )
+        if commerce.get("price"):
+            contents.append(
+                {
+                    "type": "goods_price",
+                    "text": self._text(commerce["price"], "price", 256),
+                }
+            )
+        for audience in commerce.get("audience") or []:
+            contents.append(
+                {
+                    "type": "goods_target_audience",
+                    "text": self._text(audience, "audience", 200),
+                }
+            )
+        for point in commerce.get("selling_points") or []:
+            contents.append(
+                {
+                    "type": "goods_selling_point",
+                    "text": self._text(point, "selling_points", 500),
+                }
+            )
+        contents.append({"type": "speech_script", "text": script})
+        settings: dict[str, Any] = {
+            "resolution": request.params.get("resolution", "720p"),
+            "aspect_ratio": request.params.get("aspect_ratio", "9:16"),
+        }
+        if voice:
+            settings["voice_id"] = voice
+        if rate is not None:
+            settings["speech_rate"] = rate
+        if request.prompt:
+            settings["action_prompt"] = request.prompt
+        if "allow_polish" in commerce:
+            settings["allow_polish"] = bool(commerce["allow_polish"])
+        if "bgm" in commerce:
+            settings["bgm_enabled"] = bool(commerce["bgm"])
+        return {"contents": contents, "settings": settings}
+
+    async def _goods_studio(
+        self, request: UnifiedRequest, commerce: dict[str, Any]
+    ) -> dict[str, Any]:
+        contents: list[dict[str, Any]] = [
+            {
+                "type": "ref_image",
+                "url": await self._image(product, COMMERCE_IMAGE_FORMATS),
+            }
+            for product in self._by_role(request, "product")
+        ]
+        contents.append(
+            {
+                "type": "goods_title",
+                "text": self._text(commerce.get("title"), "title", 200),
+            }
+        )
+        if commerce.get("description"):
+            contents.append(
+                {
+                    "type": "goods_description",
+                    "text": self._text(commerce["description"], "description", 2000),
+                }
+            )
+        return {
+            "contents": contents,
+            "settings": {
+                "resolution": request.params.get("resolution", "720p"),
+                "aspect_ratio": request.params.get("aspect_ratio", "9:16"),
+                "duration": int(request.params.get("seconds", 15)),
+            },
+        }
+
+    async def _apparel(
+        self, request: UnifiedRequest, commerce: dict[str, Any]
+    ) -> dict[str, Any]:
+        contents: list[dict[str, Any]] = []
+        if commerce.get("product_info"):
+            contents.append(
+                {
+                    "type": "product_info",
+                    "text": self._text(commerce["product_info"], "product_info", 2500),
+                }
+            )
+        source = self._by_role(request, "base_video")[0]
+        contents.append(
+            {"type": "source_video", "url": await self.references.public_url(source)}
+        )
+        for kind, role in (("product_image", "product"), ("model_image", "model")):
+            for image in self._by_role(request, role):
+                contents.append(
+                    {
+                        "type": kind,
+                        "url": await self._image(image, COMMERCE_IMAGE_FORMATS),
+                    }
+                )
+        for bgm in self._by_role(request, "bgm"):
+            contents.append(
+                {"type": "bgm", "url": await self.references.public_url(bgm)}
+            )
+        voice = self._voice(request, commerce, APPAREL_VOICES)
+        if voice:
+            contents.append({"type": "voice", "voice_id": voice})
+        settings: dict[str, Any] = {
+            "resolution": request.params.get("resolution", "720p")
+        }
+        if "aspect_ratio" in request.params:
+            settings["aspect_ratio"] = request.params["aspect_ratio"]
+        return {"contents": contents, "settings": settings}
 
     async def _create_effect(
         self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
@@ -732,7 +975,11 @@ class KlingProvider:
                 param="shots",
             )
 
-    async def _image(self, reference: dict[str, Any]) -> str:
+    async def _image(
+        self,
+        reference: dict[str, Any],
+        formats: tuple[str, ...] = ("image/jpeg", "image/png"),
+    ) -> str:
         """Kling fetches public https URLs itself; everything else goes as raw base64."""
         url = reference.get("url")
         if (
@@ -742,9 +989,9 @@ class KlingProvider:
         ):
             return url
         media = await self.references.fetch(reference)
-        if media.mime_type not in ("image/jpeg", "image/png"):
+        if media.mime_type not in formats:
             raise ContractError(
-                f"Kling accepts JPEG or PNG images, not {media.mime_type}",
+                f"Kling accepts {', '.join(formats)} here, not {media.mime_type}",
                 code="reference_limit",
                 param="references",
             )
@@ -881,8 +1128,9 @@ class KlingProvider:
                 "videos": result.get("videos") or [],
                 "audios": result.get("audios") or [],
             }
+        query = "/solutions" if upstream["api"] == "solutions" else "/tasks"
         data = await self.client.call(
-            "GET", "/tasks", params={"task_ids": upstream["task_id"]}
+            "GET", query, params={"task_ids": upstream["task_id"]}
         )
         tasks = data.get("result") if isinstance(data, dict) else data
         task = next(
@@ -899,7 +1147,18 @@ class KlingProvider:
         return {
             "status": task.get("status"),
             "message": task.get("message"),
-            "videos": [item for item in outputs if item.get("type") == "video"],
+            # The apparel solution calls its video `product_video`.
+            "videos": [
+                item
+                for item in outputs
+                if item.get("type") in {"video", "product_video"}
+            ],
+            # It also returns product and model images.
+            "images": [
+                item
+                for item in outputs
+                if item.get("type") in {"product_image", "model_image", "model_images"}
+            ],
             "audios": [
                 {
                     "id": item.get("id"),
@@ -932,7 +1191,9 @@ class KlingProvider:
         if status in RUNNING:
             self.jobs.update(video_id, status="in_progress", provider_status=status)
         elif status in SUCCEEDED and (task["videos"] or task["audios"]):
-            await self._complete(job, task["videos"], task["audios"])
+            await self._complete(
+                job, task["videos"], task["audios"], task.get("images") or []
+            )
         else:
             self.jobs.update(
                 video_id,
@@ -980,6 +1241,7 @@ class KlingProvider:
         job: dict[str, Any],
         videos: list[dict[str, Any]],
         audios: list[dict[str, Any]],
+        images: list[dict[str, Any]] | None = None,
     ) -> None:
         """Kling URLs are hotlink-protected and expire after 30 days, so keep copies.
 
@@ -1018,6 +1280,25 @@ class KlingProvider:
                         "kling_video_id": video.get("id"),
                     }
                 )
+            # Extra result images (apparel) become numbered variants of output 0.
+            counts: dict[str, int] = {}
+            for image in images or []:
+                kind = (
+                    "model_image"
+                    if image["type"].startswith("model_image")
+                    else "product_image"
+                )
+                counts[kind] = counts.get(kind, 0) + 1
+                variant = f"{kind}_{counts[kind]}"
+                if not await self._store(
+                    video_id, 0, variant, image["url"], "image/jpeg"
+                ):
+                    self.jobs.update(
+                        video_id, status="in_progress", provider_status="finalizing"
+                    )
+                    return
+                if outputs:
+                    outputs[0]["variants"].append(variant)
         except ApiError as exc:
             self.jobs.update(video_id, status="failed", error=exc.to_error())
             return
@@ -1067,6 +1348,8 @@ class KlingProvider:
         path = self.outputs.path(video_id, output, variant)
         if path is None:
             return openai_error("Stored result has expired", 410, "output_expired")
+        if variant.startswith(("product_image", "model_image")):
+            return FileResponse(path)
         media = {"audio": "audio/mpeg", "audio_wav": "audio/wav"}.get(
             variant, "video/mp4"
         )

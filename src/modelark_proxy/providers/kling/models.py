@@ -368,6 +368,7 @@ VIRTUAL_MODELS = {
     "kling-text-to-audio": "Kling Text to Audio",
     "kling-effects": "Kling Effects",
     "kling-multi-elements": "Kling Multi-Element Edit",
+    "kling-commerce": "Kling Video Commerce",
     "kling-video-to-audio": "Kling Video to Audio",
     # Only for POST /v1/audio/speech. Kling TTS voice IDs (e.g. oversea_male1)
     # are a separate namespace from custom voices.
@@ -397,6 +398,8 @@ def _video_slot(role: str, min_seconds: int, max_seconds: int) -> ReferenceSlot:
 
 
 def virtual_capabilities(model_id: str) -> ModelCapabilities:
+    if model_id == "kling-commerce":
+        return commerce_capabilities()
     if model_id == "kling-tts":
         return ModelCapabilities(
             provider="kling",
@@ -514,4 +517,116 @@ def virtual_capabilities(model_id: str) -> ModelCapabilities:
         tasks={task: spec},
         output_types=output_types,
         features={"watermark": "watermark" in parameters},
+    )
+
+
+# Video commerce (tasks/research/kling.md 8.9 and the official solution pages).
+COMMERCE_IMAGE_FORMATS = ("image/jpeg", "image/png", "image/webp")
+COMMERCE_IMAGE_BYTES = 50 * 1024 * 1024
+TALKING_AGENT_AVATARS = (
+    "avatar_eva_female",
+    "avatar_oliver_male",
+    "avatar_elena_female",
+    "avatar_adam_male",
+    "avatar_anna_female",
+    "avatar_rajput_male",
+    "avatar_mia_female",
+    "avatar_river_male",
+    "avatar_marcus_male",
+    "avatar_vivian_female",
+    "avatar_lee_male",
+    "avatar_toto_cartoon",
+)
+TALKING_AGENT_VOICES = (
+    "male_calm_informative",
+    "female_clear_rational",
+    "female_gentle_soothing",
+    "female_bright_engaging",
+    "male_crisp_persuasive",
+    "female_intelligent_narrative",
+    "male_clear_professional",
+    "male_energetic_sporty",
+    "female_warm_rich",
+)
+APPAREL_VOICES = (
+    "energetic_sales_girl",
+    "gentle_sales_woman",
+    "crisp_sales_girl",
+    "mature_sales_woman",
+    "calm_sales_woman",
+    "soft_sales_woman",
+    "energetic_sales_boy",
+    "enthusiastic_sales_man",
+    "steady_sales_man",
+    "calm_sales_man",
+)
+COMMERCE_RATIOS = ("9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9")
+
+
+def commerce_capabilities() -> ModelCapabilities:
+    def images(role: str, minimum: int, maximum: int) -> ReferenceSlot:
+        return ReferenceSlot(
+            role,
+            ("image",),
+            minimum,
+            maximum,
+            max_bytes=COMMERCE_IMAGE_BYTES,
+            formats=COMMERCE_IMAGE_FORMATS,
+        )
+
+    return ModelCapabilities(
+        provider="kling",
+        family="kling-commerce",
+        launch_stage="ga",
+        prompt_max_chars=2500,
+        prompt_required=False,
+        parameters={
+            "commerce": Param(),
+            "speech": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "aspect_ratio": Param(values=COMMERCE_RATIOS, default="9:16"),
+            "watermark": Param(default=False),
+        },
+        tasks={
+            "commerce_talking_agent": TaskSpec(
+                references=(images("avatar", 0, 1), images("product", 0, 5)),
+                prompt_required=False,
+            ),
+            "commerce_goods_studio": TaskSpec(
+                references=(images("product", 1, 5),),
+                parameters={"seconds": Param(values=(15, 30, 60), default=15)},
+                prompt_required=False,
+            ),
+            "commerce_apparel": TaskSpec(
+                references=(
+                    ReferenceSlot(
+                        "base_video",
+                        ("video",),
+                        1,
+                        1,
+                        max_bytes=100 * 1024 * 1024,
+                        formats=VIDEO_FORMATS,
+                        min_seconds=5,
+                        max_seconds=180,
+                    ),
+                    images("product", 1, 5),
+                    images("model", 0, 5),
+                    ReferenceSlot("bgm", ("audio",), 0, 1, max_bytes=50 * 1024 * 1024),
+                ),
+                prompt_required=False,
+            ),
+        },
+        constraints=(
+            Constraint(
+                when={"task": ("commerce_talking_agent",)},
+                then={"aspect_ratio": ("9:16", "16:9")},
+                message="The talking agent renders 9:16 or 16:9",
+            ),
+            Constraint(
+                when={"task": ("commerce_goods_studio",)},
+                then={"aspect_ratio": ("9:16", "1:1", "16:9")},
+                message="Goods Studio renders 9:16, 1:1 or 16:9",
+            ),
+        ),
+        features={"watermark": True},
     )
