@@ -6,6 +6,7 @@ assets, and BytePlus download hosts lives here, so the HTTP layer only routes.
 
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import re
 import time
@@ -21,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..asset_jobs import AssetJobManager
 from ..client import ModelArkClient
 from ..config import Settings
-from ..errors import openai_error
+from ..errors import ApiError, openai_error
 from ..ids import decode_video_id
 from ..media import MediaStore, upload_chunks
 from ..models import (
@@ -222,8 +223,13 @@ def _append_internal_asset_references(
 
 
 def _reference_counts(content: list[dict[str, Any]]) -> dict[str, int]:
+    # First and last frames are inputs of their own, not reference assets.
     return {
-        kind: sum(item.get("type") == f"{kind}_url" for item in content)
+        kind: sum(
+            item.get("type") == f"{kind}_url"
+            and item.get("role") not in {"first_frame", "last_frame"}
+            for item in content
+        )
         for kind in ASSET_KINDS
     }
 
@@ -353,9 +359,63 @@ def _apply_model_constraints(
         payload["duration"] = -1
 
 
+def _validate_native_fields(
+    payload: dict[str, Any], content: list[dict[str, Any]], model: str, spec: ModelSpec
+) -> None:
+    """Check the ModelArk-only fields against the model (research/seedance.md §13)."""
+    roles = {item.get("role") for item in content}
+    if spec.known and payload.get("camera_fixed") is not None:
+        if not spec.first_generation:
+            raise TranslationError(f"{model} does not support camera_fixed")
+        if "reference_image" in roles:
+            raise TranslationError(
+                "camera_fixed cannot be combined with reference images"
+            )
+    tier = payload.get("service_tier")
+    if tier is not None:
+        if tier not in {"default", "flex"}:
+            raise TranslationError("service_tier must be default or flex")
+        if tier == "flex" and spec.known and not spec.first_generation:
+            raise TranslationError(f"{model} does not support service_tier=flex")
+    priority = payload.get("priority")
+    if priority is not None:
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise TranslationError("priority must be an integer from 0 to 9")
+        if not 0 <= priority <= 9:
+            raise TranslationError("priority must be an integer from 0 to 9")
+        if spec.known and spec.first_generation:
+            raise TranslationError(f"{model} does not support priority")
+        if tier == "flex":
+            raise TranslationError("priority cannot be combined with service_tier=flex")
+    expires = payload.get("execution_expires_after")
+    if expires is not None and (
+        isinstance(expires, bool)
+        or not isinstance(expires, int)
+        or not 3600 <= expires <= 259_200
+    ):
+        raise TranslationError(
+            "execution_expires_after must be between 3600 and 259200 seconds"
+        )
+    frames = payload.get("frames")
+    if frames is not None and (not 29 <= frames <= 289 or (frames - 25) % 4):
+        raise TranslationError("frames must be 25 + 4n between 29 and 289")
+    if (
+        spec.adaptive_needs_image
+        and payload.get("ratio") == "adaptive"
+        and not roles & {"first_frame", "last_frame"}
+    ):
+        raise TranslationError(
+            f"{model} supports ratio=adaptive only with an input image"
+        )
+    identifier = payload.get("safety_identifier")
+    if isinstance(identifier, str) and len(identifier) > 64:
+        # ModelArk caps the identifier at 64 characters; a hash keeps it stable.
+        payload["safety_identifier"] = hashlib.sha256(identifier.encode()).hexdigest()
+
+
 def _normalize_passthrough(payload: dict[str, Any]) -> None:
     """Accept the spellings clients send and hand ModelArk its own."""
-    for field in ("duration", "frames"):
+    for field in ("duration", "frames", "priority", "execution_expires_after"):
         value = payload.get(field)
         if isinstance(value, str):
             try:
@@ -486,6 +546,7 @@ def build_task_payload(
     elif "generate_audio" in payload and spec.known:
         raise TranslationError(f"{model} does not generate audio")
     apply_openai_format(payload, data.get("size"))
+    _validate_native_fields(payload, content, model, spec)
     _apply_model_constraints(
         payload,
         content,
@@ -778,6 +839,7 @@ class SeedanceProvider:
             "filter.status",
             "filter.task_ids",
             "filter.model",
+            "filter.service_tier",
         }
         params: list[tuple[str, str]] = []
         for key, value in request.query_params.multi_items():
@@ -793,8 +855,8 @@ class SeedanceProvider:
             )
         except ValueError as exc:
             raise TranslationError("page_num and page_size must be integers") from exc
-        if page_num is not None and page_num < 1:
-            raise TranslationError("page_num must be at least 1")
+        if page_num is not None and not 1 <= page_num <= 500:
+            raise TranslationError("page_num must be between 1 and 500")
         if page_size is not None and not 1 <= page_size <= 500:
             raise TranslationError("page_size must be between 1 and 500")
         result = await self.ark.list_tasks(params)
@@ -826,10 +888,21 @@ class SeedanceProvider:
     async def delete_video(self, video_id: str) -> VideoObject:
         if self.asset_jobs.get_video(video_id):
             return await self.asset_jobs.cancel(video_id)
-        result = await self.ark.delete_task(video_id)
-        result.setdefault("id", video_id)
-        result.setdefault("status", "cancelled")
-        return byteplus_to_openai(result)
+        task = await self.ark.get_task(video_id)
+        status = task.get("status")
+        if status == "running":
+            raise ApiError(
+                "A running ModelArk task can neither be cancelled nor deleted",
+                409,
+                "video_running",
+            )
+        await self.ark.delete_task(video_id)
+        if status == "queued":
+            # A queued task is cancelled; any finished task is deleted.
+            return byteplus_to_openai({**task, "id": video_id, "status": "cancelled"})
+        video = byteplus_to_openai({**task, "id": video_id})
+        video.deleted = True
+        return video
 
     async def stream_output(
         self,

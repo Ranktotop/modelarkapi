@@ -164,6 +164,7 @@ async def test_models_are_discovered_from_available_activations(settings: Settin
         "continuation",
         "features",
         "provider_options",
+        "native_fields",
     ):
         capabilities.pop(v2_field)
     # Guide links are additive as well (SPEC 13/14).

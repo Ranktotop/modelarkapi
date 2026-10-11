@@ -61,6 +61,23 @@ def apply_openai_format(payload: dict[str, Any], size: str | None) -> None:
     payload.setdefault("ratio", ratio)
 
 
+# Task settings ModelArk echoes back; passed on so clients see what ran.
+TASK_SETTING_FIELDS = (
+    "seed",
+    "resolution",
+    "ratio",
+    "frames",
+    "framespersecond",
+    "output_format",
+    "generate_audio",
+    "draft",
+    "draft_task_id",
+    "priority",
+    "execution_expires_after",
+    "safety_identifier",
+)
+
+
 def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
     provider_status = str(data.get("status", "queued"))
     status = STATUS_MAP.get(provider_status, provider_status)
@@ -102,4 +119,9 @@ def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
             (data.get("content") or {}).get("last_frame_url"), str
         ),
         service_tier=data.get("service_tier"),
+        **{
+            name: data[name]
+            for name in TASK_SETTING_FIELDS
+            if data.get(name) is not None
+        },
     )

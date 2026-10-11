@@ -37,7 +37,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [ ] **Checkpoint 3:** Kling komplett; Live-Tests nur mit Freigabe
 
 ## Phase 4: Seedance vollständig
-- [ ] T22: Seedance-Lückenanalyse und Abbildung auf den Vertrag (M)
+- [x] T22: Seedance-Lückenanalyse und Abbildung auf den Vertrag (M)
 
 ## Phase 5: Prompt Guides (parallel ab Checkpoint 1)
 - [ ] T23: Guide Gemini Omni Flash (M)

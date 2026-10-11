@@ -68,6 +68,13 @@ class ModelSpec:
     supports_audio: bool = True
     # Draft mode: a 480p preview first, then the final video from its task ID.
     supports_draft: bool = False
+    # Seedance 1.x: camera_fixed, service_tier=flex, no priority, and (1.0)
+    # no adaptive ratio without an input image.
+    first_generation: bool = False
+    adaptive_needs_image: bool = False
+    # Shortest video an edit accepts, when it differs from reference_media.
+    edit_min_seconds: int | None = None
+    deprecation: tuple[str, str] | None = None
     known: bool = True
     provider: str = "modelark"
 
@@ -125,7 +132,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         resolutions=("480p", "720p", "1080p"),
         default_resolution="720p",
         durations=(-1, *range(4, 31)),
-        default_duration=5,
+        default_duration=-1,
         reference_limits={"image": 30, "video": 10, "audio": 10},
         reference_audio_requires_visual=False,
         reference_media=ReferenceMediaLimits(2, 30, 30),
@@ -133,6 +140,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         task_types=TASK_TYPES,
         adaptive_ratio_for_frames=True,
         supports_draft=True,
+        edit_min_seconds=4,
     ),
     "dreamina-seedance-2-0": _SEEDANCE_2_0,
     "dreamina-seedance-2-0-fast": _SEEDANCE_2_0_LIGHT,
@@ -143,6 +151,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         durations=(-1, *range(4, 13)),
         default_duration=5,
         supports_draft=True,
+        first_generation=True,
+        # Retired by BytePlus; shutdown 2026-11-11 17:00 UTC+8.
+        deprecation=("2026-11-11T09:00:00Z", "dreamina-seedance-2-0-mini"),
     ),
     "seedance-1-0-pro": ModelSpec(
         resolutions=("480p", "720p", "1080p"),
@@ -152,6 +163,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_ratio="16:9",
         supports_frames=True,
         supports_audio=False,
+        first_generation=True,
+        adaptive_needs_image=True,
     ),
     "seedance-1-0-pro-fast": ModelSpec(
         resolutions=("480p", "720p", "1080p"),
@@ -162,6 +175,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         supports_frames=True,
         supports_last_frame_role=False,
         supports_audio=False,
+        first_generation=True,
+        adaptive_needs_image=True,
     ),
 }
 
@@ -205,11 +220,8 @@ def spec_for(model: str) -> ModelSpec:
 
 # Seedance fields accepted as-is next to the unified parameters (SPEC 17).
 SEEDANCE_NATIVE_FIELDS = (
-    "frames",
-    "camera_fixed",
     "service_tier",
     "execution_expires_after",
-    "priority",
     "safety_identifier",
     "callback_url",
     "content",
@@ -223,8 +235,9 @@ def seedance_capabilities(model: str) -> ModelCapabilities:
     """Capability document v2 derived from the Seedance ModelSpec."""
     spec = spec_for(model)
     durations = tuple("auto" if value == -1 else value for value in spec.durations)
+    default_seconds = "auto" if spec.default_duration == -1 else spec.default_duration
     parameters: dict[str, Param] = {
-        "seconds": Param(values=durations, default=spec.default_duration),
+        "seconds": Param(values=durations, default=default_seconds),
         "resolution": Param(values=spec.resolutions, default=spec.default_resolution),
         "aspect_ratio": Param(values=spec.ratios, default=spec.default_ratio),
         "seed": Param(minimum=-1, maximum=2_147_483_647),
@@ -284,10 +297,21 @@ def seedance_capabilities(model: str) -> ModelCapabilities:
         )
         if limits["video"]:
             base_video = ReferenceSlot("base_video", ("video",), 1, 1, **timing)
+            edit_video = (
+                ReferenceSlot(
+                    "base_video",
+                    ("video",),
+                    1,
+                    1,
+                    **(timing | {"min_seconds": spec.edit_min_seconds}),
+                )
+                if spec.edit_min_seconds
+                else base_video
+            )
             extra = ReferenceSlot(
                 "reference", kinds, 0, sum(limits.values()) - 1, **timing
             )
-            tasks["edit"] = TaskSpec(references=(base_video, extra), limits=per_kind)
+            tasks["edit"] = TaskSpec(references=(edit_video, extra), limits=per_kind)
             tasks["extend"] = TaskSpec(references=(base_video, extra), limits=per_kind)
         if limits["video"] >= 2:
             tasks["stitch"] = TaskSpec(
@@ -336,7 +360,15 @@ def seedance_capabilities(model: str) -> ModelCapabilities:
             "callback": True,
             "draft": spec.supports_draft,
         },
-        native_fields=SEEDANCE_NATIVE_FIELDS,
+        native_fields=SEEDANCE_NATIVE_FIELDS
+        + (("frames",) if spec.supports_frames else ())
+        + (("camera_fixed",) if spec.first_generation else ("priority",)),
+        launch_stage="deprecated" if spec.deprecation else None,
+        deprecation=(
+            {"shutdown_at": spec.deprecation[0], "replacement": spec.deprecation[1]}
+            if spec.deprecation
+            else None
+        ),
     )
 
 

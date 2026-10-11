@@ -154,6 +154,8 @@ class ModelCapabilities:
     # Request fields that are valid for this provider but are not unified
     # parameters (e.g. ModelArk's legacy passthrough fields).
     native_fields: tuple[str, ...] = ()
+    # Announced retirement: {"shutdown_at": ISO timestamp, "replacement": model}.
+    deprecation: dict[str, str] | None = None
 
     def task_parameters(self, task: str) -> dict[str, Param]:
         parameters = dict(self.parameters)
@@ -182,4 +184,6 @@ class ModelCapabilities:
             "continuation": self.continuation,
             "features": dict(self.features),
             "provider_options": list(self.provider_options),
+            "native_fields": list(self.native_fields),
+            **({"deprecation": dict(self.deprecation)} if self.deprecation else {}),
         }
