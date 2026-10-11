@@ -147,7 +147,26 @@ async def test_models_are_discovered_from_available_activations(settings: Settin
         cached = await client.get("/v1/models")
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    capabilities = body["data"][0]["capabilities"]
+    # v2 (SPEC 13) is additive; the v1 fields below must stay exactly as before.
+    assert capabilities.pop("schema_version") == 2
+    assert capabilities.pop("provider") == "modelark"
+    for v2_field in (
+        "backend",
+        "family",
+        "launch_stage",
+        "prompt",
+        "outputs",
+        "parameters",
+        "tasks",
+        "constraints",
+        "continuation",
+        "features",
+        "provider_options",
+    ):
+        capabilities.pop(v2_field)
+    assert body == {
         "object": "list",
         "data": [
             {

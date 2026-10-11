@@ -13,6 +13,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .capabilities import (
+    Constraint,
+    GroupLimit,
+    ModelCapabilities,
+    Param,
+    ReferenceSlot,
+    TaskSpec,
+)
+
 logger = logging.getLogger(__name__)
 
 VIDEO_RATIOS = ("adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
@@ -186,5 +195,139 @@ def spec_for(model: str) -> ModelSpec:
     return FALLBACK_SPEC
 
 
+# Seedance fields accepted as-is next to the unified parameters (SPEC 17).
+SEEDANCE_NATIVE_FIELDS = (
+    "frames",
+    "camera_fixed",
+    "service_tier",
+    "execution_expires_after",
+    "priority",
+    "safety_identifier",
+    "callback_url",
+    "content",
+    "input_reference_task_id",
+)
+
+
+def seedance_capabilities(model: str) -> ModelCapabilities:
+    """Capability document v2 derived from the Seedance ModelSpec."""
+    spec = spec_for(model)
+    durations = tuple("auto" if value == -1 else value for value in spec.durations)
+    parameters: dict[str, Param] = {
+        "seconds": Param(values=durations, default=spec.default_duration),
+        "resolution": Param(values=spec.resolutions, default=spec.default_resolution),
+        "aspect_ratio": Param(values=spec.ratios, default=spec.default_ratio),
+        "generate_audio": Param(default=True),
+        "seed": Param(minimum=-1, maximum=4_294_967_295),
+        "watermark": Param(default=False),
+        "return_last_frame": Param(default=False),
+    }
+    if len(spec.output_formats) > 1:
+        parameters["output_format"] = Param(
+            values=spec.output_formats, default=spec.output_formats[0]
+        )
+    media = spec.reference_media
+    timing = (
+        {
+            "min_seconds": media.min_seconds,
+            "max_seconds": media.max_seconds,
+            "total_max_seconds": media.total_seconds,
+        }
+        if media
+        else {}
+    )
+    first_frame = ReferenceSlot("first_frame", ("image",), 1, 1)
+    tasks: dict[str, TaskSpec] = {
+        "text_to_video": TaskSpec(),
+        "image_to_video": TaskSpec(references=(first_frame,), prompt_required=False),
+    }
+    if spec.supports_last_frame_role:
+        tasks["first_last_frame"] = TaskSpec(
+            references=(first_frame, ReferenceSlot("last_frame", ("image",), 1, 1)),
+            prompt_required=False,
+        )
+    limits = spec.reference_limits
+    if spec.supports_references:
+        kinds = tuple(kind for kind in ("image", "video", "audio") if limits[kind])
+        per_kind = tuple(
+            GroupLimit(roles=("reference",), types=(kind,), maximum=limits[kind])
+            for kind in kinds
+        )
+        audio_needs_visual = (
+            (
+                GroupLimit(
+                    roles=("reference",),
+                    types=("audio",),
+                    maximum=0,
+                    when_lacks=("image", "video"),
+                ),
+            )
+            if spec.reference_audio_requires_visual
+            else ()
+        )
+        tasks["reference_to_video"] = TaskSpec(
+            references=(
+                ReferenceSlot("reference", kinds, 1, sum(limits.values()), **timing),
+            ),
+            limits=per_kind + audio_needs_visual,
+        )
+        if limits["video"]:
+            base_video = ReferenceSlot("base_video", ("video",), 1, 1, **timing)
+            extra = ReferenceSlot(
+                "reference", kinds, 0, sum(limits.values()) - 1, **timing
+            )
+            tasks["edit"] = TaskSpec(references=(base_video, extra), limits=per_kind)
+            tasks["extend"] = TaskSpec(references=(base_video, extra), limits=per_kind)
+        if limits["video"] >= 2:
+            tasks["stitch"] = TaskSpec(
+                references=(
+                    ReferenceSlot(
+                        "reference", ("video",), 2, limits["video"], **timing
+                    ),
+                )
+            )
+    constraints: list[Constraint] = []
+    if spec.adaptive_ratio_for_frames:
+        constraints.append(
+            Constraint(
+                when={"task": ("image_to_video", "first_last_frame")},
+                then={"aspect_ratio": ("adaptive",)},
+                message="First/last-frame generation keeps the input aspect ratio",
+            )
+        )
+    if "edit" in spec.task_types:
+        constraints.append(
+            Constraint(
+                when={"task": ("edit",)},
+                then={"aspect_ratio": ("adaptive",), "seconds": ("auto",)},
+                message="Editing keeps the aspect ratio and duration of the input video",
+            )
+        )
+    if "extend" in spec.task_types:
+        constraints.append(
+            Constraint(
+                when={"task": ("extend",)},
+                then={"aspect_ratio": ("adaptive",)},
+                message="Extending keeps the aspect ratio of the input video",
+            )
+        )
+    return ModelCapabilities(
+        provider=spec.provider,
+        family=family_name(model),
+        parameters=parameters,
+        tasks=tasks,
+        constraints=tuple(constraints),
+        continuation="last_frame",
+        features={
+            "real_human": True,
+            "last_frame_output": True,
+            "watermark": True,
+            "callback": True,
+        },
+        native_fields=SEEDANCE_NATIVE_FIELDS,
+    )
+
+
 def capabilities_for(model: str) -> dict[str, Any]:
-    return spec_for(model).to_capabilities()
+    """v1 fields (kept for existing clients) plus the v2 document."""
+    return spec_for(model).to_capabilities() | seedance_capabilities(model).to_dict()
