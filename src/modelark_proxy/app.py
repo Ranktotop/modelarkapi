@@ -24,6 +24,8 @@ from .config import Settings
 from .errors import openai_error
 from .ids import decode_video_id, encode_video_id
 from .media import MediaStore, UploadTooLarge, upload_chunks
+from .outputs import OutputStore
+from .provider_jobs import ProviderJobStore, purge_expired
 from .providers import (
     DEFAULT_PROVIDER,
     ProviderRegistry,
@@ -34,6 +36,7 @@ from .providers import seedance
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
+from .workers import JobRunner
 
 logger = logging.getLogger(__name__)
 # Seedance 2.5 accepts 30 images + 10 videos + 10 audio clips in one request.
@@ -226,6 +229,17 @@ def create_app(
     providers = ProviderRegistry(
         [SeedanceProvider(settings, ark, asset_jobs, media, download_transport)]
     )
+    provider_jobs = ProviderJobStore(
+        settings.provider_job_db, settings.provider_job_ttl_seconds
+    )
+    outputs = OutputStore(settings.output_dir)
+    job_runner = JobRunner(
+        provider_jobs,
+        settings.provider_worker_concurrency,
+        poll_interval_seconds=settings.provider_poll_interval_seconds,
+        retry_base_seconds=settings.asset_transient_retry_seconds,
+        retry_max_seconds=settings.asset_transient_retry_max_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -233,6 +247,7 @@ def create_app(
             while True:
                 await asyncio.sleep(settings.media_cleanup_interval_seconds)
                 media.cleanup()
+                purge_expired(provider_jobs, outputs)
 
         async def maintain_asset_jobs() -> None:
             while True:
@@ -352,6 +367,8 @@ def create_app(
             if validate_startup_credentials:
                 await refresh_credential_state()
             media.cleanup()
+            purge_expired(provider_jobs, outputs)
+            job_runner.resume()
             cleanup_task = asyncio.create_task(cleanup_media())
             asset_task = asyncio.create_task(maintain_asset_jobs())
             if validate_startup_credentials:
@@ -370,6 +387,8 @@ def create_app(
                 credential_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await credential_task
+            await job_runner.close()
+            provider_jobs.close()
             await asset_jobs.close()
             await assets.close()
             await ark.close()
@@ -383,6 +402,9 @@ def create_app(
     app.state.asset_jobs = asset_jobs
     app.state.credential_state = credential_state
     app.state.providers = providers
+    app.state.provider_jobs = provider_jobs
+    app.state.outputs = outputs
+    app.state.job_runner = job_runner
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     asset_transient_retry_max_seconds: float = Field(default=60.0, gt=0)
     asset_orphan_cleanup_interval_seconds: int = 900
     asset_orphan_ttl_seconds: int = 86_400
+    provider_job_db: Path = Path("./data/provider-jobs.db")
+    provider_job_ttl_seconds: int = Field(default=172_800, gt=0)
+    provider_worker_concurrency: int = Field(default=10, ge=1)
+    provider_poll_interval_seconds: float = Field(default=5.0, gt=0)
+    output_dir: Path = Path("./data/outputs")
 
     @field_validator("allowed_download_host_suffixes", mode="before")
     @classmethod
