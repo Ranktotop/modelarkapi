@@ -162,7 +162,7 @@ async def test_proxy_starts_without_modelark(tmp_path: Path):
 
     assert health.json()["providers"]["modelark"]["status"] == "disabled"
     assert models.status_code == 200
-    assert models.json()["data"] == []
+    assert {model["owned_by"] for model in models.json()["data"]} == {"kling"}
     assert seedance_video.status_code == 404
     assert seedance_video.json()["error"]["code"] == "model_unavailable"
 

@@ -55,6 +55,8 @@ from .providers import (
 from .providers import seedance
 from .providers.google import GoogleProvider
 from .providers.google_backends import GeminiBackend, GoogleBackend, VertexBackend
+from .providers.kling import KlingProvider
+from .providers.kling.client import KlingClient
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
@@ -322,6 +324,25 @@ def create_app(
                 download_transport or google_transport,
             )
         )
+    kling_api = httpx.AsyncClient(
+        timeout=settings.request_timeout_seconds,
+        transport=kling_transport,
+        limits=httpx.Limits(
+            max_connections=settings.max_upstream_connections,
+            max_keepalive_connections=settings.max_keepalive_connections,
+        ),
+    )
+    if settings.kling_configured:
+        enabled_providers.append(
+            KlingProvider(
+                settings,
+                KlingClient(settings, kling_api),
+                provider_jobs,
+                outputs,
+                references,
+                download_transport or kling_transport,
+            )
+        )
     providers = ProviderRegistry(enabled_providers)
     webhooks = WebhookDispatcher(
         settings.provider_job_db,
@@ -426,6 +447,7 @@ def create_app(
             await ark.close()
             await google_http.aclose()
             await google_api.aclose()
+            await kling_api.aclose()
             await kling_http.aclose()
 
     app = FastAPI(
@@ -517,6 +539,7 @@ def create_app(
             for name, loader in (
                 ("modelark", modelark_models),
                 ("google", lambda: providers.providers["google"].list_models()),
+                ("kling", lambda: providers.providers["kling"].list_models()),
             )
             if credentials.enabled(name) and name in providers.providers
         ]

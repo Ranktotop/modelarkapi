@@ -66,6 +66,9 @@ class ReferenceResolver:
         prefix = f"{self.settings.public_base_url.rstrip('/')}/media/reference/"
         return url[len(prefix) :] if url.startswith(prefix) else None
 
+    def is_own_media(self, url: str) -> bool:
+        return self._own_media_name(url) is not None
+
     def _read_upload(self, name: str) -> bytes:
         path = self.media.resolve(name) or self.media.resolve(name.removeprefix("ref-"))
         if path is None:
