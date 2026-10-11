@@ -11,13 +11,28 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       BYTEPLUS_ASSET_GROUP_ID: ${BYTEPLUS_ASSET_GROUP_ID}
       PROXY_API_KEY: ${PROXY_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VERTEX_PROJECT: ${VERTEX_PROJECT:-}
+      # Service-account JSON placed in ./secrets; unset means Application
+      # Default Credentials (or no Vertex AI at all).
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_CREDENTIALS_FILE:+/app/secrets/}${GOOGLE_CREDENTIALS_FILE:-}
+      GOOGLE_VEO_BACKEND: ${GOOGLE_VEO_BACKEND:-vertex}
+      GOOGLE_VEO_LOCATION: ${GOOGLE_VEO_LOCATION:-us-central1}
+      GOOGLE_OMNI_BACKEND: ${GOOGLE_OMNI_BACKEND:-vertex}
+      GOOGLE_OMNI_LOCATION: ${GOOGLE_OMNI_LOCATION:-global}
+      KLING_API_KEY: ${KLING_API_KEY:-}
+      KLING_BASE_URL: ${KLING_BASE_URL:-https://api-singapore.klingai.com}
       ASSET_JOB_DB: /app/state/proxy-jobs.db
+      PROVIDER_JOB_DB: /app/state/provider-jobs.db
+      OUTPUT_DIR: /app/state/outputs
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       REQUIRE_PROXY_API_KEY: "true"
     ports:
       - "5192:8080"
     volumes:
       - reference_media:/app/data/references
       - server_state:/app/state
+      - ./secrets:/app/secrets:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 15s

@@ -12,3 +12,5 @@ node_modules/
 ui/frontend/dist/
 *.tsbuildinfo
 temp/
+ui/frontend/.test-build/
+secrets/

@@ -2,8 +2,23 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
 from pathlib import Path
+
+from fastapi import UploadFile
+
+
+async def upload_chunks(upload: UploadFile) -> AsyncIterator[bytes]:
+    while chunk := await upload.read(1024 * 1024):
+        yield chunk
+
+
+# Per-type ceilings for reference files (the largest any provider accepts).
+REFERENCE_SIZE_LIMITS = {
+    "image": 30 * 1024 * 1024,
+    "video": 200 * 1024 * 1024,
+    "audio": 15 * 1024 * 1024,
+}
 
 
 class UploadTooLarge(ValueError):

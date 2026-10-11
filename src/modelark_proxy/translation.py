@@ -32,6 +32,25 @@ SIZE_TO_FORMAT: dict[str, tuple[str, str]] = {
 }
 
 FORMAT_TO_SIZE = {value: key for key, value in SIZE_TO_FORMAT.items()}
+# Pixel sizes that differ from the 2.0 table above (research/seedance.md §2.4,
+# landscape listed; portrait is the same size turned).
+FAMILY_SIZES: dict[str, dict[str, tuple[int, int]]] = {
+    "dreamina-seedance-2-5": {"480p": (854, 480)},
+    "seedance-1-0": {"480p": (864, 480), "720p": (1248, 704), "1080p": (1920, 1088)},
+}
+
+
+def size_for(model: str | None, resolution: Any, ratio: Any) -> str | None:
+    """`WIDTHxHEIGHT` of a Seedance task, using the family's own pixel table."""
+    family = next(
+        (name for name in FAMILY_SIZES if str(model or "").startswith(name)), None
+    )
+    landscape = FAMILY_SIZES.get(family or "", {}).get(str(resolution))
+    if landscape and ratio in {"16:9", "9:16"}:
+        width, height = landscape if ratio == "16:9" else landscape[::-1]
+        return f"{width}x{height}"
+    return FORMAT_TO_SIZE.get((resolution, ratio))
+
 
 STATUS_MAP = {
     "queued": "queued",
@@ -61,6 +80,23 @@ def apply_openai_format(payload: dict[str, Any], size: str | None) -> None:
     payload.setdefault("ratio", ratio)
 
 
+# Task settings ModelArk echoes back; passed on so clients see what ran.
+TASK_SETTING_FIELDS = (
+    "seed",
+    "resolution",
+    "ratio",
+    "frames",
+    "framespersecond",
+    "output_format",
+    "generate_audio",
+    "draft",
+    "draft_task_id",
+    "priority",
+    "execution_expires_after",
+    "safety_identifier",
+)
+
+
 def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
     provider_status = str(data.get("status", "queued"))
     status = STATUS_MAP.get(provider_status, provider_status)
@@ -79,7 +115,7 @@ def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
 
     resolution = data.get("resolution")
     ratio = data.get("ratio")
-    size = FORMAT_TO_SIZE.get((resolution, ratio))
+    size = size_for(data.get("model"), resolution, ratio)
     created_at = data.get("created_at")
     updated_at = data.get("updated_at")
     completed_at = updated_at if status == "completed" else None
@@ -102,4 +138,9 @@ def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
             (data.get("content") or {}).get("last_frame_url"), str
         ),
         service_tier=data.get("service_tier"),
+        **{
+            name: data[name]
+            for name in TASK_SETTING_FIELDS
+            if data.get(name) is not None
+        },
     )

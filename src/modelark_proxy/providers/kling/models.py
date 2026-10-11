@@ -1,0 +1,609 @@
+"""Kling model catalogue and capabilities (tasks/research/kling.md, section 3)."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from ...capabilities import (
+    Constraint,
+    GroupLimit,
+    ModelCapabilities,
+    Param,
+    ReferenceSlot,
+    TaskSpec,
+)
+
+IMAGE_FORMATS = ("image/jpeg", "image/png")
+# Legacy endpoints accept images up to 10 MB, the new API up to 50 MB.
+LEGACY_IMAGE_BYTES = 10 * 1024 * 1024
+NEW_IMAGE_BYTES = 50 * 1024 * 1024
+RESOLUTION_MODES = {"720p": "std", "1080p": "pro", "4k": "4k"}
+QUALITY_RESOLUTIONS = {"standard": "720p", "pro": "1080p"}
+TEXT_RATIOS = ("16:9", "9:16", "1:1")
+
+
+@dataclass(frozen=True)
+class KlingModel:
+    id: str
+    label: str
+    # Legacy `model_name`; None means the model only exists in the new API.
+    legacy_name: str | None
+    seconds: tuple[int, ...]
+    resolutions: tuple[str, ...]
+    audio: bool = False
+    audio_needs_1080p: bool = False
+    first_last: bool = True
+    first_last_needs_1080p: bool = False
+    multi_shot: bool = False
+    elements: bool = False
+    voices: bool = False
+    # Served by /v1/videos/omni-video (references, video edits).
+    omni: bool = False
+    motion: bool = False
+
+
+MODELS: dict[str, KlingModel] = {
+    model.id: model
+    for model in (
+        KlingModel(
+            "kling-3.0-turbo",
+            "Kling 3.0 Turbo",
+            None,
+            tuple(range(3, 16)),
+            ("720p", "1080p"),
+            first_last=False,
+            multi_shot=True,
+        ),
+        KlingModel(
+            "kling-3.0",
+            "Kling 3.0",
+            "kling-v3",
+            tuple(range(3, 16)),
+            ("720p", "1080p", "4k"),
+            audio=True,
+            multi_shot=True,
+            elements=True,
+            motion=True,
+        ),
+        KlingModel(
+            "kling-2.6",
+            "Kling 2.6",
+            "kling-v2-6",
+            (5, 10),
+            ("720p", "1080p"),
+            audio=True,
+            audio_needs_1080p=True,
+            first_last_needs_1080p=True,
+            voices=True,
+            motion=True,
+        ),
+        KlingModel(
+            "kling-2.5-turbo",
+            "Kling 2.5 Turbo",
+            "kling-v2-5-turbo",
+            (5, 10),
+            ("720p", "1080p"),
+            first_last_needs_1080p=True,
+        ),
+        KlingModel(
+            "kling-3.0-omni",
+            "Kling 3.0 Omni",
+            "kling-v3-omni",
+            tuple(range(3, 16)),
+            ("720p", "1080p", "4k"),
+            audio=True,
+            multi_shot=True,
+            elements=True,
+            omni=True,
+        ),
+        KlingModel(
+            "kling-o1",
+            "Kling O1",
+            "kling-video-o1",
+            tuple(range(3, 11)),
+            ("720p", "1080p"),
+            elements=True,
+            omni=True,
+        ),
+    )
+}
+VIDEO_FORMATS = ("video/mp4", "video/quicktime")
+OMNI_OPTIONS = ("keep_original_sound",)
+MOTION_OPTIONS = ("character_orientation", "keep_original_sound")
+ALIASES = {
+    model.legacy_name: model.id for model in MODELS.values() if model.legacy_name
+}
+
+
+def canonical_model(model: str) -> str | None:
+    model = ALIASES.get(model, model)
+    return model if model in MODELS or model in VIRTUAL_MODELS else None
+
+
+def kling_capabilities(model_id: str) -> ModelCapabilities:
+    if model_id in VIRTUAL_MODELS:
+        return virtual_capabilities(model_id)
+    model = MODELS[model_id]
+    if model.omni:
+        return omni_capabilities(model)
+    legacy = model.legacy_name is not None
+    image_bytes = LEGACY_IMAGE_BYTES if legacy else NEW_IMAGE_BYTES
+
+    def frame(role: str, minimum: int = 1) -> ReferenceSlot:
+        return ReferenceSlot(
+            role, ("image",), minimum, 1, max_bytes=image_bytes, formats=IMAGE_FORMATS
+        )
+
+    parameters: dict[str, Param] = {
+        "seconds": Param(values=model.seconds, default=5),
+        "resolution": Param(values=model.resolutions, default="720p"),
+        # Image-based tasks take the aspect ratio from the image ("adaptive").
+        "aspect_ratio": Param(values=(*TEXT_RATIOS, "adaptive"), default="16:9"),
+        "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+        "watermark": Param(default=False),
+    }
+    if legacy:
+        parameters["negative_prompt"] = Param()
+    if model.audio:
+        parameters["generate_audio"] = Param(default=False)
+    # Elements (Kling 3.0, up to 3) and voices (Kling 2.6, up to 2) ride along
+    # with an image-to-video request; Kling allows only one of the two.
+    steering: tuple[ReferenceSlot, ...] = ()
+    if model.elements:
+        steering = (ReferenceSlot("reference", ("element",), 0, 3),)
+    elif model.voices:
+        steering = (ReferenceSlot("reference", ("voice",), 0, 2),)
+    tasks: dict[str, TaskSpec] = {
+        "text_to_video": TaskSpec(),
+        "image_to_video": TaskSpec(
+            references=(frame("first_frame"), *steering), prompt_required=False
+        ),
+    }
+    if model.first_last:
+        tasks["first_last_frame"] = TaskSpec(
+            references=(
+                frame("first_frame"),
+                frame("last_frame"),
+                *(steering if model.elements else ()),
+            ),
+            prompt_required=False,
+        )
+    if model.multi_shot:
+        parameters["shot_mode"] = Param(
+            values=("customize", "intelligence"), default="customize"
+        )
+        parameters["shots"] = Param()
+        tasks["multi_shot"] = TaskSpec(
+            references=(frame("first_frame", 0), *steering) if legacy else (),
+            prompt_required=False,
+        )
+    if model.motion:
+        # The output follows the motion video's length; 4K is not offered.
+        tasks["motion_control"] = TaskSpec(
+            references=(
+                frame("subject", 0),
+                ReferenceSlot(
+                    "motion",
+                    ("video",),
+                    1,
+                    1,
+                    max_bytes=100 * 1024 * 1024,
+                    formats=VIDEO_FORMATS,
+                    min_seconds=3,
+                    max_seconds=30,
+                ),
+                *(
+                    (ReferenceSlot("reference", ("element",), 0, 1),)
+                    if model.elements
+                    else ()
+                ),
+            ),
+            parameters={
+                "seconds": Param(values=("auto",), default="auto"),
+                "resolution": Param(values=("720p", "1080p"), default="720p"),
+            },
+            prompt_required=False,
+        )
+    constraints = [
+        Constraint(
+            when={"task": ("text_to_video", "multi_shot")},
+            then={"aspect_ratio": TEXT_RATIOS},
+            message="Text-based Kling tasks support 16:9, 9:16 and 1:1",
+        ),
+        Constraint(
+            when={"task": ("image_to_video", "first_last_frame", "motion_control")},
+            then={"aspect_ratio": ("adaptive",)},
+            message="Kling takes the aspect ratio from the input image",
+        ),
+    ]
+    if model.audio_needs_1080p:
+        constraints.append(
+            Constraint(
+                when={"generate_audio": (True,)},
+                then={"resolution": ("1080p",)},
+                message=f"{model.label} generates native audio only at 1080p",
+            )
+        )
+    if model.first_last_needs_1080p:
+        then: dict[str, tuple[object, ...]] = {"resolution": ("1080p",)}
+        if model.audio:
+            then["generate_audio"] = (False,)
+        constraints.append(
+            Constraint(
+                when={"task": ("first_last_frame",)},
+                then=then,
+                message=f"{model.label} renders first and last frames only at 1080p without audio",
+            )
+        )
+    return ModelCapabilities(
+        provider="kling",
+        family=model.id,
+        launch_stage="ga",
+        prompt_max_chars=2500 if legacy else 3072,
+        parameters=parameters,
+        tasks=tasks,
+        constraints=tuple(constraints),
+        features={"watermark": True},
+        provider_options=MOTION_OPTIONS if model.motion else (),
+    )
+
+
+def omni_capabilities(model: KlingModel) -> ModelCapabilities:
+    """Kling 3.0 Omni and O1 (tasks/research/kling.md, section 4.3 and 5.3)."""
+
+    def image(role: str, minimum: int = 1, maximum: int = 1) -> ReferenceSlot:
+        return ReferenceSlot(
+            role,
+            ("image",),
+            minimum,
+            maximum,
+            max_bytes=LEGACY_IMAGE_BYTES,
+            formats=IMAGE_FORMATS,
+        )
+
+    max_video_seconds = 15 if model.multi_shot else 10
+    video = ReferenceSlot(
+        "base_video",
+        ("video",),
+        1,
+        1,
+        max_bytes=200 * 1024 * 1024,
+        formats=VIDEO_FORMATS,
+        min_seconds=3,
+        max_seconds=max_video_seconds,
+    )
+    elements = ReferenceSlot("reference", ("element",), 0, 3)
+    # Images plus elements: at most 7 without a reference video, 4 with one.
+    mix_limits = (
+        GroupLimit(
+            roles=("reference",),
+            types=("image", "element"),
+            maximum=7,
+            when_lacks=("video",),
+        ),
+        GroupLimit(
+            roles=("reference",),
+            types=("image", "element"),
+            maximum=4,
+            when_has=("video",),
+        ),
+        GroupLimit(roles=("reference",), types=("video",), maximum=1),
+    )
+    parameters: dict[str, Param] = {
+        "seconds": Param(values=model.seconds, default=5),
+        "resolution": Param(values=model.resolutions, default="720p"),
+        "aspect_ratio": Param(values=(*TEXT_RATIOS, "adaptive"), default="16:9"),
+        "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+        "watermark": Param(default=False),
+    }
+    if model.audio:
+        parameters["generate_audio"] = Param(default=False)
+    first_frame_only: dict[str, Param] = {}
+    if not model.multi_shot:
+        # O1 renders a plain first frame only with 5 or 10 seconds.
+        first_frame_only = {"seconds": Param(values=(5, 10), default=5)}
+    tasks: dict[str, TaskSpec] = {
+        "text_to_video": TaskSpec(),
+        "image_to_video": TaskSpec(
+            references=(image("first_frame"), elements),
+            parameters=first_frame_only,
+            prompt_required=False,
+        ),
+        "first_last_frame": TaskSpec(
+            references=(image("first_frame"), image("last_frame"))
+            + ((elements,) if model.multi_shot else ()),
+            prompt_required=False,
+        ),
+        "reference_to_video": TaskSpec(
+            references=(
+                ReferenceSlot("reference", ("image", "element", "video"), 1, 8),
+            ),
+            limits=mix_limits,
+        ),
+        "edit": TaskSpec(
+            references=(video, ReferenceSlot("reference", ("image", "element"), 0, 4)),
+            # The edited video keeps the length of the input.
+            parameters={"seconds": Param(values=("auto",), default="auto")},
+        ),
+    }
+    if model.multi_shot:
+        parameters["shot_mode"] = Param(
+            values=("customize", "intelligence"), default="customize"
+        )
+        parameters["shots"] = Param()
+        tasks["multi_shot"] = TaskSpec(
+            references=(image("first_frame", 0), elements), prompt_required=False
+        )
+    return ModelCapabilities(
+        provider="kling",
+        family=model.id,
+        launch_stage="ga",
+        prompt_max_chars=2500,
+        parameters=parameters,
+        tasks=tasks,
+        constraints=(
+            Constraint(
+                when={"task": ("text_to_video", "multi_shot", "reference_to_video")},
+                then={"aspect_ratio": TEXT_RATIOS},
+                message="Kling Omni needs 16:9, 9:16 or 1:1 without a first frame",
+            ),
+            Constraint(
+                when={"task": ("image_to_video", "first_last_frame", "edit")},
+                then={"aspect_ratio": ("adaptive",)},
+                message="The aspect ratio follows the first frame or the edited video",
+            ),
+        ),
+        features={"watermark": True},
+        provider_options=OMNI_OPTIONS,
+    )
+
+
+AUDIO_FORMATS = ("audio/mpeg", "audio/wav")
+# Kling functions without a model choice, exposed as models (SPEC 12.2).
+VIRTUAL_MODELS = {
+    "kling-lip-sync": "Kling Lip Sync",
+    "kling-avatar": "Kling Avatar",
+    "kling-effects": "Kling Effects",
+    "kling-multi-elements": "Kling Multi-Element Edit",
+    "kling-commerce": "Kling Video Commerce",
+    "kling-video-to-audio": "Kling Video to Audio",
+}
+
+
+# Effect templates and how many images each takes (tasks/research/kling.md, appendix A).
+EFFECTS: list[dict[str, object]] = json.loads(
+    (Path(__file__).with_name("effects.json")).read_text(encoding="utf-8")
+)["effects"]
+EFFECT_IMAGES = {str(effect["id"]): int(effect["images"]) for effect in EFFECTS}  # type: ignore[call-overload]
+MULTI_ELEMENT_MODES = ("addition", "swap", "removal")
+
+
+def _video_slot(role: str, min_seconds: int, max_seconds: int) -> ReferenceSlot:
+    return ReferenceSlot(
+        role,
+        ("video",),
+        1,
+        1,
+        max_bytes=100 * 1024 * 1024,
+        formats=VIDEO_FORMATS,
+        min_seconds=min_seconds,
+        max_seconds=max_seconds,
+    )
+
+
+def virtual_capabilities(model_id: str) -> ModelCapabilities:
+    if model_id == "kling-commerce":
+        return commerce_capabilities()
+    speech = ReferenceSlot(
+        "speech",
+        ("audio",),
+        0,
+        1,
+        max_bytes=5 * 1024 * 1024,
+        formats=AUDIO_FORMATS,
+        min_seconds=2,
+    )
+    watermark = {"watermark": Param(default=False)}
+    prompt_max = 2500
+    output_types: tuple[str, ...] = ("video",)
+    parameters: dict[str, Param]
+    if model_id == "kling-lip-sync":
+        task = "lip_sync"
+        spec = TaskSpec(
+            references=(_video_slot("base_video", 2, 60), speech),
+            prompt_required=False,
+        )
+        parameters = {"speech": Param(), "audio": Param(), **watermark}
+    elif model_id == "kling-avatar":
+        task = "avatar"
+        spec = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "subject",
+                    ("image",),
+                    1,
+                    1,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+                speech,
+            ),
+            prompt_required=False,
+        )
+        parameters = {
+            "speech": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+            **watermark,
+        }
+    elif model_id == "kling-effects":
+        task = "effect"
+        spec = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "subject",
+                    ("image",),
+                    1,
+                    2,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+            ),
+            prompt_required=False,
+        )
+        parameters = {"effect": Param(values=tuple(EFFECT_IMAGES))}
+    elif model_id == "kling-multi-elements":
+        task = "multi_element_edit"
+        spec = TaskSpec(
+            references=(
+                _video_slot("base_video", 2, 10),
+                ReferenceSlot(
+                    "reference",
+                    ("image",),
+                    0,
+                    2,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+            ),
+        )
+        parameters = {
+            "selections": Param(),
+            "edit_mode": Param(values=MULTI_ELEMENT_MODES),
+            "negative_prompt": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+            **watermark,
+        }
+    else:
+        task = "video_to_audio"
+        spec = TaskSpec(
+            references=(_video_slot("base_video", 3, 20),), prompt_required=False
+        )
+        parameters = {"audio": Param()}
+        output_types = ("video", "audio")
+        prompt_max = 200
+    return ModelCapabilities(
+        provider="kling",
+        family=model_id,
+        launch_stage="ga",
+        prompt_max_chars=prompt_max,
+        parameters=parameters,
+        tasks={task: spec},
+        output_types=output_types,
+        features={"watermark": "watermark" in parameters},
+    )
+
+
+# Video commerce (tasks/research/kling.md 8.9 and the official solution pages).
+COMMERCE_IMAGE_FORMATS = ("image/jpeg", "image/png", "image/webp")
+COMMERCE_IMAGE_BYTES = 50 * 1024 * 1024
+TALKING_AGENT_AVATARS = (
+    "avatar_eva_female",
+    "avatar_oliver_male",
+    "avatar_elena_female",
+    "avatar_adam_male",
+    "avatar_anna_female",
+    "avatar_rajput_male",
+    "avatar_mia_female",
+    "avatar_river_male",
+    "avatar_marcus_male",
+    "avatar_vivian_female",
+    "avatar_lee_male",
+    "avatar_toto_cartoon",
+)
+TALKING_AGENT_VOICES = (
+    "male_calm_informative",
+    "female_clear_rational",
+    "female_gentle_soothing",
+    "female_bright_engaging",
+    "male_crisp_persuasive",
+    "female_intelligent_narrative",
+    "male_clear_professional",
+    "male_energetic_sporty",
+    "female_warm_rich",
+)
+APPAREL_VOICES = (
+    "energetic_sales_girl",
+    "gentle_sales_woman",
+    "crisp_sales_girl",
+    "mature_sales_woman",
+    "calm_sales_woman",
+    "soft_sales_woman",
+    "energetic_sales_boy",
+    "enthusiastic_sales_man",
+    "steady_sales_man",
+    "calm_sales_man",
+)
+COMMERCE_RATIOS = ("9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9")
+
+
+def commerce_capabilities() -> ModelCapabilities:
+    def images(role: str, minimum: int, maximum: int) -> ReferenceSlot:
+        return ReferenceSlot(
+            role,
+            ("image",),
+            minimum,
+            maximum,
+            max_bytes=COMMERCE_IMAGE_BYTES,
+            formats=COMMERCE_IMAGE_FORMATS,
+        )
+
+    return ModelCapabilities(
+        provider="kling",
+        family="kling-commerce",
+        launch_stage="ga",
+        prompt_max_chars=2500,
+        prompt_required=False,
+        parameters={
+            "commerce": Param(),
+            "speech": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "aspect_ratio": Param(values=COMMERCE_RATIOS, default="9:16"),
+            "watermark": Param(default=False),
+        },
+        tasks={
+            "commerce_talking_agent": TaskSpec(
+                references=(images("avatar", 0, 1), images("product", 0, 5)),
+                prompt_required=False,
+            ),
+            "commerce_goods_studio": TaskSpec(
+                references=(images("product", 1, 5),),
+                parameters={"seconds": Param(values=(15, 30, 60), default=15)},
+                prompt_required=False,
+            ),
+            "commerce_apparel": TaskSpec(
+                references=(
+                    ReferenceSlot(
+                        "base_video",
+                        ("video",),
+                        1,
+                        1,
+                        max_bytes=100 * 1024 * 1024,
+                        formats=VIDEO_FORMATS,
+                        min_seconds=5,
+                        max_seconds=180,
+                    ),
+                    images("product", 1, 5),
+                    images("model", 0, 5),
+                    ReferenceSlot("bgm", ("audio",), 0, 1, max_bytes=50 * 1024 * 1024),
+                ),
+                prompt_required=False,
+            ),
+        },
+        constraints=(
+            Constraint(
+                when={"task": ("commerce_talking_agent",)},
+                then={"aspect_ratio": ("9:16", "16:9")},
+                message="The talking agent renders 9:16 or 16:9",
+            ),
+            Constraint(
+                when={"task": ("commerce_goods_studio",)},
+                then={"aspect_ratio": ("9:16", "1:1", "16:9")},
+                message="Goods Studio renders 9:16, 1:1 or 16:9",
+            ),
+        ),
+        features={"watermark": True},
+    )

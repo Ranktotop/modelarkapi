@@ -1,0 +1,59 @@
+# Prompt guides served by /v1/prompt-guides and embedded in the LiteLLM export.
+# `models` lists model ID prefixes; the longest matching prefix wins.
+guides:
+  - id: seedance_2_5
+    file: seedance_2_5.md
+    title: Seedance 2.5 Prompting Guide
+    language: de
+    updated: 2026-08-21
+    models: [dreamina-seedance-2-5]
+  - id: seedance_2_0_fast
+    file: seedance_2_0_fast.md
+    title: Seedance 2.0 Fast Prompting Guide
+    language: de
+    updated: 2026-08-21
+    # The guide covers the whole 2.0 series (2.0, Fast, Mini).
+    models: [dreamina-seedance-2-0]
+  - id: veo_3_1
+    file: veo_3_1.md
+    title: Veo 3.1 Prompting Guide
+    language: de
+    updated: 2026-10-11
+    models: [veo-3.1-]
+  - id: gemini_omni_flash
+    file: gemini_omni_flash.md
+    title: Gemini Omni Flash Prompting Guide
+    language: de
+    updated: 2026-10-11
+    models: [gemini-omni-]
+  - id: kling_3_0
+    file: kling_3_0.md
+    title: Kling 3.0 Prompting Guide
+    language: de
+    updated: 2026-10-11
+    # Covers 3.0 and 3.0 Turbo; 3.0 Omni has its own guide (longer prefix).
+    models: [kling-3.0]
+  - id: kling_omni
+    file: kling_omni.md
+    title: Kling Omni Prompting Guide
+    language: de
+    updated: 2026-10-11
+    models: [kling-3.0-omni, kling-o1]
+  - id: kling_2_x
+    file: kling_2_x.md
+    title: Kling 2.x Prompting Guide
+    language: de
+    updated: 2026-10-11
+    models: [kling-2.]
+  - id: kling_tools
+    file: kling_tools.md
+    title: Kling Tools Prompting Guide
+    language: de
+    updated: 2026-10-11
+    models:
+      - kling-lip-sync
+      - kling-avatar
+      - kling-effects
+      - kling-multi-elements
+      - kling-video-to-audio
+      - kling-commerce

@@ -295,6 +295,11 @@ def _valid_session(token: str | None, settings: UISettings) -> bool:
         return False
 
 
+def _guide_id(model: dict[str, Any]) -> str | None:
+    link = (model.get("links") or {}).get("prompt_guide")
+    return link.rstrip("/").rsplit("/", 1)[-1] if isinstance(link, str) and link else None
+
+
 def create_app(
     settings: UISettings | None = None,
     *,
@@ -381,7 +386,7 @@ def create_app(
             await proxy.aclose()
             store.close()
 
-    app = FastAPI(title="Seedance Studio UI", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AI Video Studio UI", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.proxy = proxy
@@ -521,6 +526,7 @@ def create_app(
                 "id": str(model["id"]),
                 "label": str(model.get("name") or model["id"]),
                 "capabilities": model.get("capabilities", {}),
+                "prompt_guide": _guide_id(model),
             }
             for model in models
             if isinstance(model, dict) and model.get("id")
@@ -529,6 +535,15 @@ def create_app(
             "models": selectable_models,
             "job_ttl_seconds": settings.job_ttl_seconds,
         }
+
+    @app.get("/api/prompt-guides/{guide_id}")
+    async def prompt_guide(guide_id: str) -> JSONResponse:
+        status, body = await proxy_json(
+            "GET",
+            f"/prompt-guides/{quote(guide_id, safe='')}",
+            headers={"accept": "application/json"},
+        )
+        return JSONResponse(body, status_code=status)
 
     @app.post("/api/references")
     async def upload_references(request: Request) -> JSONResponse:
@@ -571,7 +586,8 @@ def create_app(
         upstream = {
             key: value for key, value in data.items() if not key.startswith("ui_")
         }
-        status, body = await proxy_json("POST", "/videos", json=upstream)
+        # Longer than the proxy's Omni create timeout, so a slow create is kept.
+        status, body = await proxy_json("POST", "/videos", json=upstream, timeout=660)
         if status < 400:
             body = store.add(body, data)
         return JSONResponse(body, status_code=status)
@@ -596,10 +612,14 @@ def create_app(
         return JSONResponse(body, status_code=status)
 
     async def stream_proxy_file(
-        task_id: str, suffix: str, stem: str, default_extension: str
+        task_id: str,
+        suffix: str,
+        stem: str,
+        default_extension: str,
+        params: dict[str, str] | None = None,
     ) -> StreamingResponse | JSONResponse:
         url = f"/videos/{quote(task_id, safe='')}/{suffix}"
-        request = proxy.build_request("GET", url)
+        request = proxy.build_request("GET", url, params=params or None)
         response = await proxy.send(request, stream=True)
         if response.is_error:
             content = await response.aread()
@@ -633,8 +653,40 @@ def create_app(
         )
 
     @app.get("/api/videos/{task_id}/content")
-    async def video_content(task_id: str):
-        return await stream_proxy_file(task_id, "content", task_id, ".mp4")
+    async def video_content(task_id: str, request: Request):
+        # variant (video, audio, watermarked, product_image_1 …), output, format
+        params = {
+            key: value
+            for key, value in request.query_params.items()
+            if key in {"variant", "output", "format"}
+        }
+        return await stream_proxy_file(task_id, "content", "result", ".mp4", params)
+
+    @app.get("/api/kling/effects")
+    async def kling_effects() -> JSONResponse:
+        status, body = await proxy_json("GET", "/providers/kling/effects")
+        return JSONResponse(body, status_code=status)
+
+    @app.get("/api/assets")
+    async def list_assets(request: Request) -> JSONResponse:
+        params = {"provider": "kling", **dict(request.query_params)}
+        status, body = await proxy_json("GET", "/assets", params=params)
+        return JSONResponse(body, status_code=status)
+
+    @app.post("/api/assets")
+    async def create_asset(request: Request) -> JSONResponse:
+        status, body = await proxy_json("POST", "/assets", json=await request.json())
+        return JSONResponse(body, status_code=status)
+
+    @app.get("/api/assets/{asset_id}")
+    async def get_asset(asset_id: str) -> JSONResponse:
+        status, body = await proxy_json("GET", f"/assets/{quote(asset_id, safe='')}")
+        return JSONResponse(body, status_code=status)
+
+    @app.delete("/api/assets/{asset_id}")
+    async def delete_asset(asset_id: str) -> JSONResponse:
+        status, body = await proxy_json("DELETE", f"/assets/{quote(asset_id, safe='')}")
+        return JSONResponse(body, status_code=status)
 
     @app.get("/api/videos/{task_id}/last-frame")
     async def last_frame(task_id: str):

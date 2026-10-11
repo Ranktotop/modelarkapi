@@ -11,6 +11,7 @@ import pytest
 from modelark_proxy.app import create_app as create_proxy_app
 from modelark_proxy.client import ModelArkClient
 from modelark_proxy.config import Settings
+from modelark_proxy.ids import decode_video_id
 from modelark_proxy.main import _SuccessfulHealthCheckFilter
 
 
@@ -146,7 +147,29 @@ async def test_models_are_discovered_from_available_activations(settings: Settin
         cached = await client.get("/v1/models")
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    capabilities = body["data"][0]["capabilities"]
+    # v2 (SPEC 13) is additive; the v1 fields below must stay exactly as before.
+    assert capabilities.pop("schema_version") == 2
+    assert capabilities.pop("provider") == "modelark"
+    for v2_field in (
+        "backend",
+        "family",
+        "launch_stage",
+        "prompt",
+        "outputs",
+        "parameters",
+        "tasks",
+        "constraints",
+        "continuation",
+        "features",
+        "provider_options",
+        "native_fields",
+    ):
+        capabilities.pop(v2_field)
+    # Guide links are additive as well (SPEC 13/14).
+    assert "prompt_guide" in body["data"][0].pop("links")
+    assert body == {
         "object": "list",
         "data": [
             {
@@ -347,7 +370,7 @@ async def test_text_to_video_translation(settings: Settings):
             },
         )
     assert response.status_code == 200
-    assert response.json()["id"] == "cgt-123"
+    assert decode_video_id(response.json()["id"]) == "cgt-123"
     upstream = json.loads(captured[0].content)
     assert upstream == {
         "model": "dreamina-seedance-2-0-260128",
@@ -872,7 +895,7 @@ async def test_real_human_reference_is_registered_used_and_deleted(settings: Set
         )
         assert created.status_code == 200
         local_id = created.json()["id"]
-        assert local_id.startswith("video-rh-")
+        assert decode_video_id(local_id).startswith("video-rh-")
 
         for _ in range(100):
             status = await client.get(f"/v1/videos/{local_id}")
