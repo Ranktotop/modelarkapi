@@ -326,3 +326,19 @@ def test_edits_and_extensions_reach_the_provider(stack: Stack, route, body, task
     upstream = stack.fake.created("ark.")[-1]
     assert upstream["omni_reference_task_type"] == task
     assert upstream["content"][-1]["video_url"]["url"] == SEEDANCE_VIDEO_URL
+
+
+def test_characters_pass_through(stack: Stack):
+    created = stack.client.post(
+        "/v1/videos/characters",
+        data={"name": "Mia", "model": stack.name("kling")},
+        files={"video": ("mia.mp4", VIDEO, "video/mp4")},
+    )
+
+    assert created.status_code == 200, created.text
+    assert created.json()["id"].startswith("character_")
+    fetched = stack.client.get(
+        f"/v1/videos/characters/{created.json()['id']}",
+        params={"model": stack.name("kling")},
+    )
+    assert fetched.status_code == 200, fetched.text

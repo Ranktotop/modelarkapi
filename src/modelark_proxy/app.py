@@ -40,7 +40,12 @@ from .credentials import (
 from .downloads import host_is_public, system_resolver
 from .errors import ApiError, openai_error
 from .google_auth import TokenSource, VertexTokenSource
-from .ids import decode_video_id, encode_video_id
+from .ids import (
+    decode_character_id,
+    decode_video_id,
+    encode_character_id,
+    encode_video_id,
+)
 from .litellm_export import export_model_list
 from .media import REFERENCE_SIZE_LIMITS, MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
@@ -63,6 +68,10 @@ from .providers.seedance import SeedanceProvider
 from .references import ReferenceResolver
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError, byteplus_to_openai
+from .unified import CHARACTER_PREFIX
+
+# Model that LiteLLM uses to route character lookups back to this proxy.
+CHARACTER_MODEL = "kling-3.0-omni"
 from .validation import ContractError
 from .webhooks import WebhookDispatcher, validate_webhook_url
 from .workers import JobRunner
@@ -1184,6 +1193,61 @@ def create_app(
                 "proxy": {"id": public_id, "status_url": f"/v1/videos/{public_id}"},
             }
         return raw
+
+    def character(asset: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+        plain = CHARACTER_PREFIX + str(asset["id"]).removeprefix("asset-")
+        return {
+            # Routed by LiteLLM through any Kling deployment of this proxy.
+            "id": encode_character_id(plain, CHARACTER_MODEL),
+            "object": "character",
+            "created_at": int(time.time()),
+            # LiteLLM's CharacterObject requires a string, even while processing.
+            "name": asset.get("name") or name or "",
+            "status": asset.get("status"),
+            "error": asset.get("error"),
+        }
+
+    @app.post("/v1/videos/characters")
+    @app.post("/videos/characters", include_in_schema=False)
+    async def create_character(request: Request) -> dict[str, Any]:
+        """OpenAI character from a short video, stored as a Kling video element."""
+        if not settings.public_base_url:
+            raise TranslationError("PUBLIC_BASE_URL is required to create characters")
+        form = await request.form()
+        name = form.get("name")
+        video = form.get("video")
+        if not isinstance(name, str) or not isinstance(video, StarletteUploadFile):
+            raise TranslationError("A character needs a name and a video file")
+        saved, _ = await media.save(
+            upload_chunks(video),
+            filename=video.filename,
+            declared_type=video.content_type,
+        )
+        description = form.get("description")
+        asset = await kling_provider().assets.create(
+            {
+                "type": "element",
+                "name": name,
+                "description": description if isinstance(description, str) else name,
+                "references": [
+                    {
+                        "type": "video",
+                        "url": f"{settings.public_base_url.rstrip('/')}"
+                        f"/media/reference/{saved}",
+                    }
+                ],
+            }
+        )
+        return character(asset, name)
+
+    @app.get("/v1/videos/characters/{character_id}")
+    @app.get("/videos/characters/{character_id}", include_in_schema=False)
+    async def get_character(character_id: str) -> dict[str, Any]:
+        character_id = decode_character_id(character_id)
+        if not character_id.startswith(CHARACTER_PREFIX):
+            raise ApiError(f"Character '{character_id}' not found", 404, "not_found")
+        asset_id = "asset-" + character_id.removeprefix(CHARACTER_PREFIX)
+        return character(await kling_provider().assets.get(asset_id))
 
     def asset_provider(provider: str) -> Any:
         if provider != "kling":

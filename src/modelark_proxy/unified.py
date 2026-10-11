@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ids import decode_character_id
 from .translation import SIZE_TO_FORMAT
 from .validation import ContractError
 
@@ -85,6 +86,7 @@ LEGACY_TASKS = {
     "edit": "edit",
     "extend": "extend",
 }
+CHARACTER_PREFIX = "char-"
 ASSET_TYPES = {
     "asset-kling-element-": "element",
     "asset-kling-voice-": "voice",
@@ -177,6 +179,12 @@ def _reference(item: Any) -> dict[str, Any]:
     reference = dict(item)
     if "media_type" in reference and "type" not in reference:
         reference["type"] = str(reference.pop("media_type")).split("/", 1)[0]
+    asset_id = reference.get("asset_id")
+    if isinstance(asset_id, str):
+        asset_id = decode_character_id(asset_id)
+    if isinstance(asset_id, str) and asset_id.startswith(CHARACTER_PREFIX):
+        # OpenAI characters are aliases of Kling video elements (SPEC 3.3).
+        reference["asset_id"] = "asset-" + asset_id.removeprefix(CHARACTER_PREFIX)
     sources = [key for key in SOURCES if reference.get(key)]
     if len(sources) != 1:
         raise ContractError(

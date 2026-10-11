@@ -46,3 +46,35 @@ def decode_video_id(value: str) -> str:
         if part.startswith("video_id:"):
             return part[len("video_id:") :]
     return value
+
+
+CHARACTER_ID_PREFIX = "character_"
+_CHARACTER_TEMPLATE = (
+    "litellm:custom_llm_provider:openai;model_id:{model};character_id:{character_id}"
+)
+
+
+def encode_character_id(character_id: str, model: str) -> str:
+    """Character IDs in LiteLLM's format, so it routes GETs back to this proxy.
+
+    Without the encoding LiteLLM sends character lookups to api.openai.com.
+    An ID whose encoding would contain "/" stays plain to remain path-safe.
+    """
+    raw = _CHARACTER_TEMPLATE.format(model=model, character_id=character_id)
+    encoded = base64.b64encode(raw.encode()).decode()
+    return character_id if "/" in encoded else CHARACTER_ID_PREFIX + encoded
+
+
+def decode_character_id(value: str) -> str:
+    if not value.startswith(CHARACTER_ID_PREFIX):
+        return value
+    encoded = value[len(CHARACTER_ID_PREFIX) :]
+    encoded += "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.b64decode(encoded, validate=True).decode()
+    except (binascii.Error, UnicodeDecodeError):
+        return value
+    for part in decoded.split(";"):
+        if part.startswith("character_id:"):
+            return part[len("character_id:") :]
+    return value
