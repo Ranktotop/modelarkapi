@@ -282,3 +282,9 @@ textarea::placeholder, input::placeholder { color: #555761; }
   .footer-inner { align-items: stretch; flex-direction: column; }
   .social-links { display: grid; grid-template-columns: repeat(2, 1fr); }
 }
+
+.guide-button { align-self: flex-end; white-space: nowrap; }
+.details-modal.guide-modal { width: min(860px, 100%); }
+.guide-header { display: flex; align-items: center; justify-content: space-between; }
+.guide-modal h2 { margin: 4px 0 16px; font-size: 22px; letter-spacing: -.03em; }
+.guide-body { color: #d6d8de; font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }

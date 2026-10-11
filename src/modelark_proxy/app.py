@@ -13,8 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .asset_jobs import AssetJobManager
@@ -31,8 +37,10 @@ from .credentials import (
 from .errors import openai_error
 from .google_auth import TokenSource, VertexTokenSource
 from .ids import decode_video_id, encode_video_id
+from .litellm_export import export_model_list
 from .media import MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
+from .prompt_guides import PromptGuides
 from .provider_jobs import ProviderJobStore, purge_expired
 from .providers import (
     DEFAULT_PROVIDER,
@@ -267,6 +275,7 @@ def create_app(
         settings.provider_job_db, settings.provider_job_ttl_seconds
     )
     outputs = OutputStore(settings.output_dir)
+    prompt_guides = PromptGuides(settings.prompt_guides_dir)
     webhooks = WebhookDispatcher(
         settings.provider_job_db,
         settings.webhook_secret,
@@ -421,12 +430,10 @@ def create_app(
             "providers": credentials.snapshot(),
         }
 
-    @app.get("/v1/models")
-    @app.get("/models", include_in_schema=False)
-    async def list_models() -> dict[str, Any]:
+    async def collect_models() -> list[dict[str, Any]]:
         nonlocal model_cache, model_cache_expires_at
         if not credentials.enabled("modelark"):
-            return {"object": "list", "data": []}
+            return []
         credentials.require("modelark")
         if not settings.model_management_configured:
             raise HTTPException(
@@ -440,19 +447,94 @@ def create_app(
                 if model_cache is None or now >= model_cache_expires_at:
                     model_cache = await assets.list_available_seedance_models()
                     model_cache_expires_at = now + settings.model_cache_ttl_seconds
-        return {
-            "object": "list",
-            "data": [
+        models = []
+        for model in model_cache:
+            guide = prompt_guides.for_model(model["id"])
+            models.append(
                 {
                     "id": model["id"],
                     "object": "model",
                     "owned_by": "modelark",
                     "name": model["label"],
                     "capabilities": model["capabilities"],
+                    "links": {
+                        "prompt_guide": guide.summary()["url"] if guide else None
+                    },
                 }
-                for model in model_cache
-            ],
+            )
+        return models
+
+    @app.get("/v1/models")
+    @app.get("/models", include_in_schema=False)
+    async def list_models() -> dict[str, Any]:
+        return {"object": "list", "data": await collect_models()}
+
+    @app.get("/v1/models/{model_id:path}")
+    @app.get("/models/{model_id:path}", include_in_schema=False)
+    async def get_model(model_id: str) -> dict[str, Any]:
+        bare = strip_model_namespace(model_id)
+        model = next((m for m in await collect_models() if m["id"] == bare), None)
+        if model is None:
+            raise ProviderUnavailable(f"Model '{bare}' is not available on this proxy")
+        guide = prompt_guides.for_model(bare)
+        return {
+            **model,
+            "prompt_guide": {**guide.summary(), "markdown": guide.markdown()}
+            if guide
+            else None,
         }
+
+    @app.get("/v1/prompt-guides")
+    @app.get("/prompt-guides", include_in_schema=False)
+    async def list_prompt_guides() -> dict[str, Any]:
+        return {
+            "object": "list",
+            "data": [guide.summary() for guide in prompt_guides.all()],
+        }
+
+    @app.get("/v1/prompt-guides/{guide_id}")
+    @app.get("/prompt-guides/{guide_id}", include_in_schema=False)
+    async def get_prompt_guide(guide_id: str, request: Request):
+        guide = prompt_guides.get(guide_id)
+        if guide is None:
+            return openai_error(
+                f"Prompt guide '{guide_id}' not found", 404, "not_found"
+            )
+        if "application/json" in request.headers.get("accept", ""):
+            return {**guide.summary(), "markdown": guide.markdown()}
+        return PlainTextResponse(
+            guide.markdown(), media_type="text/markdown; charset=utf-8"
+        )
+
+    @app.get("/v1/litellm/config")
+    async def litellm_config(
+        format: str = "yaml",
+        api_base: str | None = None,
+        name_template: str = "{family_slug}_api",
+    ):
+        base = api_base or (
+            f"{settings.public_base_url.rstrip('/')}/v1"
+            if settings.public_base_url
+            else "http://modelarkapi_server:8080/v1"
+        )
+        try:
+            config = export_model_list(
+                await collect_models(),
+                prompt_guides,
+                api_base=base,
+                public_base_url=settings.public_base_url,
+                name_template=name_template,
+            )
+        except (KeyError, IndexError) as exc:
+            raise TranslationError(
+                "name_template may only use {family_slug} and {model}"
+            ) from exc
+        if format == "json":
+            return config
+        return PlainTextResponse(
+            yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=1000),
+            media_type="application/yaml",
+        )
 
     @app.get("/v1/real-human/configuration")
     @app.get("/real-human/configuration", include_in_schema=False)

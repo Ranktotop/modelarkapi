@@ -166,6 +166,8 @@ async def test_models_are_discovered_from_available_activations(settings: Settin
         "provider_options",
     ):
         capabilities.pop(v2_field)
+    # Guide links are additive as well (SPEC 13/14).
+    assert "prompt_guide" in body["data"][0].pop("links")
     assert body == {
         "object": "list",
         "data": [

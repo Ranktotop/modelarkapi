@@ -739,20 +739,21 @@ Regeln:
       title: Veo 3.1 Prompting Guide
       language: de
       updated: 2026-09-04
-      families: [veo-3.1, veo-3.1-fast, veo-3.1-lite]
+      models: [veo-3.1-]      # Modell-ID-Präfixe
   ```
-- `GET /v1/prompt-guides` → `{object:"list", data:[{id, title, language, updated, families, url}]}`
+- `GET /v1/prompt-guides` → `{object:"list", data:[{id, title, language, updated, models, url}]}`
 - `GET /v1/prompt-guides/{id}` → `text/markdown; charset=utf-8`; mit
   `Accept: application/json` → `{id, title, …, markdown}`.
-- Zuordnung Modell → Guide über `families`; ein Modell hat höchstens einen
-  Guide. Modelle ohne Guide: `links.prompt_guide = null`.
+- Zuordnung Modell → Guide über die Präfixe in `models`; der längste passende
+  Präfix gewinnt, ein Modell hat höchstens einen Guide. Modelle ohne Guide:
+  `links.prompt_guide = null`.
 - Authentifizierung wie alle anderen Routen (Proxy-Key).
 
 ---
 
 ## 15. LiteLLM-Export
 
-`GET /v1/litellm/config?format=yaml|json&name_template=&api_base=&models=`
+`GET /v1/litellm/config?format=yaml|json&name_template=&api_base=`
 
 - Erzeugt für jedes aktive Modell (inkl. virtueller Modelle) einen
   `model_list`-Eintrag:

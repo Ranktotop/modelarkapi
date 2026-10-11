@@ -14,7 +14,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T6b: Ausgehende Webhooks (`webhook_url`, Standard Webhooks) (S)
 - [x] T7a: Capability-Schema v2 und Validierungs-Engine (M)
 - [x] T7b: UI-Formular-Engine aus Capabilities (M)
-- [ ] T8: Prompt-Guide-Registry, Endpunkte, UI-Panel und LiteLLM-Config-Export (M)
+- [x] T8: Prompt-Guide-Registry, Endpunkte, UI-Panel und LiteLLM-Config-Export (M)
 - [ ] **Checkpoint 1:** Tests und Build grün, Seedance unverändert, Vertrag abgenommen
 
 ## Phase 2: Google

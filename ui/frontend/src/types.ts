@@ -79,7 +79,7 @@ export type ModelCapabilities = {
 };
 
 export type StudioConfig = {
-  models: { id: string; label: string; capabilities: ModelCapabilities }[];
+  models: { id: string; label: string; capabilities: ModelCapabilities; prompt_guide?: string | null }[];
   job_ttl_seconds: number;
 };
 

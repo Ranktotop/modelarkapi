@@ -295,6 +295,11 @@ def _valid_session(token: str | None, settings: UISettings) -> bool:
         return False
 
 
+def _guide_id(model: dict[str, Any]) -> str | None:
+    link = (model.get("links") or {}).get("prompt_guide")
+    return link.rstrip("/").rsplit("/", 1)[-1] if isinstance(link, str) and link else None
+
+
 def create_app(
     settings: UISettings | None = None,
     *,
@@ -521,6 +526,7 @@ def create_app(
                 "id": str(model["id"]),
                 "label": str(model.get("name") or model["id"]),
                 "capabilities": model.get("capabilities", {}),
+                "prompt_guide": _guide_id(model),
             }
             for model in models
             if isinstance(model, dict) and model.get("id")
@@ -529,6 +535,15 @@ def create_app(
             "models": selectable_models,
             "job_ttl_seconds": settings.job_ttl_seconds,
         }
+
+    @app.get("/api/prompt-guides/{guide_id}")
+    async def prompt_guide(guide_id: str) -> JSONResponse:
+        status, body = await proxy_json(
+            "GET",
+            f"/prompt-guides/{quote(guide_id, safe='')}",
+            headers={"accept": "application/json"},
+        )
+        return JSONResponse(body, status_code=status)
 
     @app.post("/api/references")
     async def upload_references(request: Request) -> JSONResponse:

@@ -522,3 +522,53 @@ async def test_ui_tracks_litellm_style_video_ids(ui_settings: UISettings):
     assert status.json()["provider"]["status"] == "completed"
     assert jobs.json()["data"][0]["id"] == video_id
     assert captured[-1].url.path == f"/v1/videos/{video_id}"
+
+
+@pytest.mark.asyncio
+async def test_ui_exposes_prompt_guides(ui_settings: UISettings):
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "veo-3.1-generate-001",
+                            "name": "Veo 3.1",
+                            "capabilities": {},
+                            "links": {"prompt_guide": "/v1/prompt-guides/veo_3_1"},
+                        },
+                        {"id": "kling-3.0", "name": "Kling 3.0", "capabilities": {}},
+                    ],
+                },
+            )
+        if request.url.path.endswith("/prompt-guides/veo_3_1"):
+            return httpx.Response(
+                200,
+                json={"id": "veo_3_1", "title": "Veo 3.1 Guide", "markdown": "# Veo"},
+            )
+        return httpx.Response(404, json={"error": {"message": "missing"}})
+
+    app = create_app(
+        ui_settings,
+        proxy_transport=httpx.MockTransport(handler),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        config = await client.get("/api/config")
+        guide = await client.get("/api/prompt-guides/veo_3_1")
+        missing = await client.get("/api/prompt-guides/unknown")
+
+    assert [m["prompt_guide"] for m in config.json()["models"]] == ["veo_3_1", None]
+    assert guide.json() == {"id": "veo_3_1", "title": "Veo 3.1 Guide", "markdown": "# Veo"}
+    assert captured[-2].headers["accept"] == "application/json"
+    assert missing.status_code == 404

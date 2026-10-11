@@ -192,6 +192,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [previewRatio, setPreviewRatio] = useState<number | null>(null);
+  const [guide, setGuide] = useState<{ title: string; markdown: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
@@ -229,6 +230,12 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }, [loadJobs]);
 
   useEffect(() => { setPreviewRatio(null); }, [selected?.id]);
+  useEffect(() => {
+    if (!guide) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setGuide(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [guide]);
   useEffect(() => {
     if (detailsId && jobs.length && !jobs.some(job => job.id === detailsId)) setDetailsId(null);
   }, [detailsId, jobs]);
@@ -412,6 +419,15 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  async function openGuide() {
+    if (!selectedModel?.prompt_guide) return;
+    try {
+      setGuide(await api<{ title: string; markdown: string }>(`/api/prompt-guides/${encodeURIComponent(selectedModel.prompt_guide)}`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Prompt Guide konnte nicht geladen werden");
+    }
+  }
+
   async function logout() {
     await api("/api/session", { method: "DELETE" });
     onLogout();
@@ -425,7 +441,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
     <main className="studio-grid">
       <section className="composer panel">
-        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label></div>
+        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label><button className="action guide-button" onClick={openGuide} disabled={!selectedModel?.prompt_guide} title={selectedModel?.prompt_guide ? "Prompt Guide für dieses Modell öffnen" : "Für dieses Modell gibt es noch keinen Prompt Guide"}><Icon name="info" /> Prompt Guide</button></div>
 
         <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
@@ -485,6 +501,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       <div className="footer-meta"><span>Seedance Studio</span><span className="footer-version">Version {APP_VERSION}</span></div>
     </footer>
 
+    {guide && <div className="modal-backdrop" onMouseDown={() => setGuide(null)}><div className="details-modal guide-modal" role="dialog" aria-modal="true" aria-label={guide.title} onMouseDown={event => event.stopPropagation()}><div className="guide-header"><p className="eyebrow">PROMPT GUIDE</p><button className="icon-button" onClick={() => setGuide(null)} aria-label="Schließen" title="Schließen">✕</button></div><h2>{guide.title}</h2><div className="guide-body">{guide.markdown}</div></div></div>}
     {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
     {detailsJob && <JobDetails job={detailsJob} config={config} onClose={() => setDetailsId(null)} />}
   </div>;
