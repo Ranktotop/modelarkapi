@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -483,3 +484,41 @@ async def test_background_status_polling_is_bounded_and_parallel(
 
     assert max_active_status == 8
     assert all(job["provider"]["status"] == "completed" for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_ui_tracks_litellm_style_video_ids(ui_settings: UISettings):
+    # Proxy IDs are base64 and may end in "=" padding.
+    video_id = "video_bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVyOm9wZW5haTttb2RlbF9pZDpzZWVkYW5jZTt2aWRlb19pZDpjZ3QtMQ=="
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        status = "queued" if request.method == "POST" else "completed"
+        return httpx.Response(
+            200, json={"id": video_id, "status": status, "created_at": 100}
+        )
+
+    app = create_app(
+        ui_settings,
+        proxy_transport=httpx.MockTransport(handler),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        created = await client.post(
+            "/api/videos",
+            headers={"X-UI-Request": "1"},
+            json={"model": "seedance", "ui_mode": "text", "prompt": "Scene"},
+        )
+        status = await client.get(f"/api/videos/{quote(video_id, safe='')}")
+        jobs = await client.get("/api/videos")
+
+    assert created.json()["id"] == video_id
+    assert status.json()["provider"]["status"] == "completed"
+    assert jobs.json()["data"][0]["id"] == video_id
+    assert captured[-1].url.path == f"/v1/videos/{video_id}"

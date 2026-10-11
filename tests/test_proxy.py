@@ -11,6 +11,7 @@ import pytest
 from modelark_proxy.app import create_app as create_proxy_app
 from modelark_proxy.client import ModelArkClient
 from modelark_proxy.config import Settings
+from modelark_proxy.ids import decode_video_id
 from modelark_proxy.main import _SuccessfulHealthCheckFilter
 
 
@@ -347,7 +348,7 @@ async def test_text_to_video_translation(settings: Settings):
             },
         )
     assert response.status_code == 200
-    assert response.json()["id"] == "cgt-123"
+    assert decode_video_id(response.json()["id"]) == "cgt-123"
     upstream = json.loads(captured[0].content)
     assert upstream == {
         "model": "dreamina-seedance-2-0-260128",
@@ -872,7 +873,7 @@ async def test_real_human_reference_is_registered_used_and_deleted(settings: Set
         )
         assert created.status_code == 200
         local_id = created.json()["id"]
-        assert local_id.startswith("video-rh-")
+        assert decode_video_id(local_id).startswith("video-rh-")
 
         for _ in range(100):
             status = await client.get(f"/v1/videos/{local_id}")

@@ -81,15 +81,19 @@ Jede Antwort mit Video-Objekt (Create, Status, Remix, Edit, Extension, Liste)
 **muss** die ID im LiteLLM-Format enthalten:
 
 ```
-video_<base64url_ohne_padding("litellm:custom_llm_provider:openai;model_id:<upstream-modell>;video_id:<interne-id>")>
+video_<base64("litellm:custom_llm_provider:openai;model_id:<upstream-modell>;video_id:<interne-id>")>
 ```
 
 - `<upstream-modell>` ist exakt der `model`-Wert, den der Proxy im Create
   empfangen hat. LiteLLM hat ihn bereits auf `litellm_params.model` ohne
   `openai/` umgeschrieben; bei direkten Aufrufen ist es der vom Client
   gesendete Wert ohne `openai/`.
+- Kodierung: **Standard-Base64 mit Padding**, exakt wie LiteLLMs Dekodierer
+  (`litellm/types/videos/utils.py`). Bei ASCII-IDs ohne `?`, `>`, `~` und `;`
+  entstehen dabei nie `/` oder `+`; IDs mit diesen Zeichen bleiben unkodiert,
+  damit sie im URL-Pfad sicher sind.
 - Eingehend akzeptiert jeder Endpunkt **beide Formen**: die kodierte ID und die
-  interne ID. Unbekanntes Padding wird ergänzt.
+  interne ID. Fehlendes Padding wird ergänzt.
 - Für Remix, Edit und Extension ist `model_id` das Modell des **neuen** Jobs.
 
 ### 3.2 Interne IDs

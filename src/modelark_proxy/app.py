@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 import mimetypes
 import time
 from contextlib import asynccontextmanager, suppress
@@ -21,8 +22,14 @@ from .assets import AssetAPIError, AssetClient
 from .client import ModelArkClient, ModelArkError
 from .config import Settings
 from .errors import openai_error
+from .ids import decode_video_id, encode_video_id
 from .media import MediaStore, UploadTooLarge, upload_chunks
-from .providers import DEFAULT_PROVIDER, ProviderRegistry, ProviderUnavailable
+from .providers import (
+    DEFAULT_PROVIDER,
+    ProviderRegistry,
+    ProviderUnavailable,
+    strip_model_namespace,
+)
 from .providers import seedance
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
@@ -45,13 +52,116 @@ def modelark_error_code(error: ModelArkError) -> str:
     return str(code) if code else "modelark_error"
 
 
+INTEGER_FIELDS = {
+    "duration",
+    "frames",
+    "seed",
+    "execution_expires_after",
+    "priority",
+    "n",
+}
+BOOLEAN_FIELDS = {
+    "generate_audio",
+    "watermark",
+    "camera_fixed",
+    "return_last_frame",
+    "real_human",
+    "enhance_prompt",
+}
+# Object or array fields; clients may send each as a JSON string, which is the
+# one encoding every LiteLLM version forwards unchanged.
+STRUCTURED_FIELDS = {
+    "reference_urls",
+    "content",
+    "references",
+    "shots",
+    "provider_options",
+    "speech",
+    "audio",
+    "commerce",
+    "selections",
+    "metadata",
+    "extra_body",
+    "video",
+}
+_BRACKETS = re.compile(r"\[([^\[\]]*)\]")
+
+
+def _coerce(key: str, value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if key in INTEGER_FIELDS:
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    if key in BOOLEAN_FIELDS:
+        return value.lower() in {"1", "true", "yes", "on"}
+    return value
+
+
+def _set_path(container: Any, tokens: list[str], key: str, value: Any) -> Any:
+    """Apply one `name[a][]`-style form field the way LiteLLM serializes it.
+
+    An empty token appends to an array; within an array of objects a new object
+    starts as soon as a key repeats.
+    """
+    if not tokens:
+        return _coerce(key, value)
+    token, rest = tokens[0], tokens[1:]
+    if token == "":
+        items = container if isinstance(container, list) else []
+        if not rest:
+            items.append(value)
+            return items
+        last = items[-1] if items else None
+        if not isinstance(last, dict) or (len(rest) == 1 and rest[0] in last):
+            last = {}
+            items.append(last)
+        _set_path(last, rest, key, value)
+        return items
+    mapping = container if isinstance(container, dict) else {}
+    mapping[token] = _set_path(mapping.get(token), rest, token, value)
+    return mapping
+
+
+def normalize_fields(data: dict[str, Any]) -> dict[str, Any]:
+    for key in STRUCTURED_FIELDS.intersection(data):
+        value = data[key]
+        if isinstance(value, str) and value.strip()[:1] in {"[", "{"}:
+            try:
+                data[key] = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+    extra = data.pop("extra_body", None)
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            data.setdefault(key, value)
+        normalize_fields(data)
+    return data
+
+
+def form_to_data(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Rebuild a request body from multipart fields (plain or bracket notation)."""
+    data: dict[str, Any] = {}
+    for name, value in items:
+        bracket = name.find("[")
+        if bracket <= 0:
+            data[name] = _coerce(name, value)
+            continue
+        base = name[:bracket]
+        tokens = _BRACKETS.findall(name[bracket:])
+        data[base] = _set_path(data.get(base), tokens, base, value)
+    return normalize_fields(data)
+
+
 async def parse_create_request(
     request: Request,
 ) -> tuple[dict[str, Any], UploadFile | None]:
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
-        data: dict[str, Any] = {}
+        fields: list[tuple[str, Any]] = []
         upload: UploadFile | None = None
         for key, value in form.multi_items():
             if key == "input_reference" and isinstance(value, StarletteUploadFile):
@@ -59,36 +169,8 @@ async def parse_create_request(
                 continue
             if isinstance(value, StarletteUploadFile):
                 continue
-            if key in {
-                "duration",
-                "frames",
-                "seed",
-                "execution_expires_after",
-                "priority",
-            }:
-                try:
-                    data[key] = int(value)
-                except ValueError:
-                    data[key] = value
-            elif key in {
-                "generate_audio",
-                "watermark",
-                "camera_fixed",
-                "return_last_frame",
-                "real_human",
-            }:
-                data[key] = str(value).lower() in {"1", "true", "yes", "on"}
-            elif key in {
-                "reference_urls",
-                "content",
-            }:
-                try:
-                    data[key] = json.loads(value)
-                except json.JSONDecodeError:
-                    data[key] = value
-            else:
-                data[key] = value
-        return data, upload
+            fields.append((key, value))
+        return form_to_data(fields), upload
     try:
         body = await request.json()
     except Exception as exc:
@@ -99,7 +181,13 @@ async def parse_create_request(
         raise HTTPException(
             status_code=400, detail="Request body must be a JSON object"
         )
-    return body, None
+    return normalize_fields(body), None
+
+
+def with_public_id(video: VideoObject, model: str | None = None) -> VideoObject:
+    """Expose the LiteLLM-routable ID; see ids.py for why."""
+    video.id = encode_video_id(video.id, model or video.model)
+    return video
 
 
 def create_app(
@@ -479,7 +567,11 @@ def create_app(
         model = data.get("model")
         if not isinstance(model, str) or not model.strip():
             raise TranslationError("model is required")
-        return await providers.for_model(model).create_video(data, upload)
+        source_id = data.get("input_reference_task_id")
+        if isinstance(source_id, str):
+            data["input_reference_task_id"] = decode_video_id(source_id)
+        video = await providers.for_model(model).create_video(data, upload)
+        return with_public_id(video, strip_model_namespace(model))
 
     app.add_api_route(
         "/v1/videos", create_video, methods=["POST"], response_model=VideoObject
@@ -493,7 +585,9 @@ def create_app(
     )
 
     async def list_videos(request: Request) -> VideoList:
-        return await providers.providers[DEFAULT_PROVIDER].list_videos(request)
+        videos = await providers.providers[DEFAULT_PROVIDER].list_videos(request)
+        videos.data = [with_public_id(video) for video in videos.data]
+        return videos
 
     app.add_api_route(
         "/v1/videos", list_videos, methods=["GET"], response_model=VideoList
@@ -507,7 +601,8 @@ def create_app(
     )
 
     async def get_video(video_id: str) -> VideoObject:
-        return await providers.for_video(video_id).get_video(video_id)
+        video_id = decode_video_id(video_id)
+        return with_public_id(await providers.for_video(video_id).get_video(video_id))
 
     app.add_api_route(
         "/v1/videos/{video_id}", get_video, methods=["GET"], response_model=VideoObject
@@ -521,7 +616,9 @@ def create_app(
     )
 
     async def delete_video(video_id: str) -> VideoObject:
-        return await providers.for_video(video_id).delete_video(video_id)
+        video_id = decode_video_id(video_id)
+        video = await providers.for_video(video_id).delete_video(video_id)
+        return with_public_id(video)
 
     app.add_api_route(
         "/v1/videos/{video_id}",
@@ -540,6 +637,7 @@ def create_app(
     async def stream_task_output(
         video_id: str, field: str, media_type: str
     ) -> StreamingResponse | JSONResponse:
+        video_id = decode_video_id(video_id)
         return await providers.for_video(video_id).stream_output(
             video_id, field, media_type
         )
