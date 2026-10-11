@@ -233,6 +233,8 @@ class KlingProvider:
         if quality in QUALITY_RESOLUTIONS:
             request.params.setdefault("resolution", QUALITY_RESOLUTIONS[quality])
         request, adjustments = validate(caps, request)
+        if request.task in {"text_to_audio", "video_to_audio"}:
+            return await self._create_audio(request, adjustments)
         speech = request.params.get("speech") or {}
         audio = next((r for r in request.references if r["role"] == "speech"), None)
         if audio is None and not speech.get("text"):
@@ -273,6 +275,31 @@ class KlingProvider:
         if request.params.get("watermark"):
             body["watermark_info"] = {"enabled": True}
         path = "/v1/videos/avatar/image2video"
+        created = await self.client.call("POST", path, json=body)
+        upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
+        return self._register(request.model, request, upstream, adjustments)
+
+    async def _create_audio(
+        self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
+    ) -> VideoObject:
+        """Text-to-audio (sound effects, music) and video-to-audio (a soundtrack)."""
+        if request.task == "text_to_audio":
+            path = "/v1/audio/text-to-audio"
+            body: dict[str, Any] = {
+                "prompt": request.prompt,
+                "duration": float(request.params.get("seconds", 5)),
+            }
+        else:
+            path = "/v1/audio/video-to-audio"
+            options = request.params.get("audio") or {}
+            video = next(r for r in request.references if r["role"] == "base_video")
+            body = await self._video_source(video)
+            if request.prompt:
+                body["sound_effect_prompt"] = request.prompt
+            if options.get("bgm_prompt"):
+                body["bgm_prompt"] = options["bgm_prompt"]
+            if "asmr" in options:
+                body["asmr_mode"] = bool(options["asmr"])
         created = await self.client.call("POST", path, json=body)
         upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         return self._register(request.model, request, upstream, adjustments)
@@ -675,18 +702,16 @@ class KlingProvider:
         return job
 
     async def _task(self, upstream: dict[str, Any]) -> dict[str, Any]:
-        """Normalized task state: status, message, and result videos."""
+        """Normalized task state: status, message, result videos and audios."""
         if upstream["api"] == "legacy":
-            data = await self.client.call(
-                "GET",
-                f"{upstream.get('path') or '/v1/videos/' + upstream['endpoint']}"
-                f"/{upstream['task_id']}",
-            )
+            path = upstream.get("path") or "/v1/videos/" + upstream["endpoint"]
+            data = await self.client.call("GET", f"{path}/{upstream['task_id']}")
             result = data.get("task_result") or {}
             return {
                 "status": data.get("task_status"),
                 "message": data.get("task_status_msg"),
                 "videos": result.get("videos") or [],
+                "audios": result.get("audios") or [],
             }
         data = await self.client.call(
             "GET", "/tasks", params={"task_ids": upstream["task_id"]}
@@ -701,14 +726,20 @@ class KlingProvider:
             None,
         )
         if task is None:
-            return {"status": "processing", "message": None, "videos": []}
+            return {"status": "processing", "message": None, "videos": [], "audios": []}
+        outputs = task.get("outputs") or []
         return {
             "status": task.get("status"),
             "message": task.get("message"),
-            "videos": [
-                item
-                for item in task.get("outputs") or []
-                if item.get("type") == "video"
+            "videos": [item for item in outputs if item.get("type") == "video"],
+            "audios": [
+                {
+                    "id": item.get("id"),
+                    "url_mp3": item.get("mp3_url"),
+                    "url_wav": item.get("wav_url"),
+                }
+                for item in outputs
+                if item.get("type") == "audio"
             ],
         }
 
@@ -732,8 +763,8 @@ class KlingProvider:
         status = str(task["status"] or "processing")
         if status in RUNNING:
             self.jobs.update(video_id, status="in_progress", provider_status=status)
-        elif status in SUCCEEDED and task["videos"]:
-            await self._complete(job, task["videos"])
+        elif status in SUCCEEDED and (task["videos"] or task["audios"]):
+            await self._complete(job, task["videos"], task["audios"])
         else:
             self.jobs.update(
                 video_id,
@@ -747,63 +778,81 @@ class KlingProvider:
             )
         return self._job(video_id)
 
-    async def _complete(
-        self, job: dict[str, Any], videos: list[dict[str, Any]]
-    ) -> None:
-        """Kling URLs are hotlink-protected and expire after 30 days, so keep copies."""
-        video_id = job["id"]
-        outputs = []
-        for index, video in enumerate(videos):
-            variants = ["video"]
-            for variant, url in (
-                ("video", video.get("url")),
-                ("watermarked", video.get("watermark_url")),
-            ):
-                if not url:
-                    continue
-                if not host_allowed(url, self.settings.kling_download_host_suffixes):
-                    self.jobs.update(
-                        video_id,
-                        status="failed",
-                        error={
-                            "code": "upstream_error",
-                            "message": f"Kling returned a result on an unexpected host: {url}",
-                        },
-                    )
-                    return
-                try:
-                    response = await stream_remote(
-                        url,
-                        headers={},
-                        allowed_host_suffixes=self.settings.kling_download_host_suffixes,
-                        transport=self.download_transport,
-                        timeout=self.settings.download_timeout_seconds,
-                        media_type="video/mp4",
-                    )
-                    await self.outputs.save(
-                        video_id, index, variant, response.body_iterator, "video/mp4"
-                    )
-                except (HTTPException, httpx.HTTPError) as exc:
-                    logger.info(
-                        "Kling result for %s is not downloadable yet: %s", video_id, exc
-                    )
-                    self.jobs.update(
-                        video_id, status="in_progress", provider_status="finalizing"
-                    )
-                    return
-                if variant == "watermarked":
-                    variants.append("watermarked")
-            outputs.append(
-                {
-                    "index": index,
-                    "variants": variants,
-                    "mime_type": "video/mp4",
-                    "stored": True,
-                    "seconds": video.get("duration"),
-                    # Voices and lip sync refer to Kling's own video ID.
-                    "kling_video_id": video.get("id"),
-                }
+    async def _store(
+        self, video_id: str, index: int, variant: str, url: str, mime_type: str
+    ) -> bool:
+        """Copy one result file; False while Kling cannot serve it yet."""
+        if not host_allowed(url, self.settings.kling_download_host_suffixes):
+            raise ApiError(
+                f"Kling returned a result on an unexpected host: {url}",
+                502,
+                "upstream_error",
             )
+        try:
+            response = await stream_remote(
+                url,
+                headers={},
+                allowed_host_suffixes=self.settings.kling_download_host_suffixes,
+                transport=self.download_transport,
+                timeout=self.settings.download_timeout_seconds,
+                media_type=mime_type,
+            )
+            await self.outputs.save(
+                video_id, index, variant, response.body_iterator, mime_type
+            )
+        except (HTTPException, httpx.HTTPError) as exc:
+            logger.info(
+                "Kling result for %s is not downloadable yet: %s", video_id, exc
+            )
+            return False
+        return True
+
+    async def _complete(
+        self,
+        job: dict[str, Any],
+        videos: list[dict[str, Any]],
+        audios: list[dict[str, Any]],
+    ) -> None:
+        """Kling URLs are hotlink-protected and expire after 30 days, so keep copies.
+
+        Video-to-audio returns a video and its soundtrack; text-to-audio only audio.
+        """
+        video_id = job["id"]
+        outputs: list[dict[str, Any]] = []
+        try:
+            for index in range(max(len(videos), len(audios))):
+                video = videos[index] if index < len(videos) else {}
+                audio = audios[index] if index < len(audios) else {}
+                files = [
+                    ("video", video.get("url"), "video/mp4"),
+                    ("watermarked", video.get("watermark_url"), "video/mp4"),
+                    ("audio", audio.get("url_mp3"), "audio/mpeg"),
+                    ("audio_wav", audio.get("url_wav"), "audio/wav"),
+                ]
+                variants = []
+                for variant, url, mime_type in files:
+                    if not url:
+                        continue
+                    if not await self._store(video_id, index, variant, url, mime_type):
+                        self.jobs.update(
+                            video_id, status="in_progress", provider_status="finalizing"
+                        )
+                        return
+                    variants.append(variant)
+                outputs.append(
+                    {
+                        "index": index,
+                        "variants": variants,
+                        "mime_type": "video/mp4" if video else "audio/mpeg",
+                        "stored": True,
+                        "seconds": video.get("duration") or audio.get("duration_mp3"),
+                        # Voices, lip sync and video-to-audio refer to Kling's video ID.
+                        "kling_video_id": video.get("id"),
+                    }
+                )
+        except ApiError as exc:
+            self.jobs.update(video_id, status="failed", error=exc.to_error())
+            return
         self.jobs.update(
             video_id,
             status="completed",
@@ -824,7 +873,12 @@ class KlingProvider:
         return self.jobs.to_video(job)
 
     async def stream_output(
-        self, video_id: str, field: str, media_type: str, output: int = 0
+        self,
+        video_id: str,
+        field: str,
+        media_type: str,
+        output: int = 0,
+        variant: str = "video",
     ) -> StreamingResponse | JSONResponse | FileResponse:
         job = await self.refresh(video_id)
         if field != "video_url":
@@ -835,7 +889,76 @@ class KlingProvider:
             return openai_error(
                 f"Video is not ready (status: {job['status']})", 409, "video_not_ready"
             )
-        path = self.outputs.path(video_id, output, "video")
+        outputs = job["outputs"] or []
+        if not 0 <= output < len(outputs) or variant not in outputs[output].get(
+            "variants", ["video"]
+        ):
+            return openai_error(
+                f"Output {output} has no {variant} variant", 404, "not_found"
+            )
+        path = self.outputs.path(video_id, output, variant)
         if path is None:
-            return openai_error(f"Video has no output {output}", 404, "not_found")
-        return FileResponse(path, media_type="video/mp4")
+            return openai_error("Stored result has expired", 410, "output_expired")
+        media = {"audio": "audio/mpeg", "audio_wav": "audio/wav"}.get(
+            variant, "video/mp4"
+        )
+        return FileResponse(path, media_type=media)
+
+    # --- text-to-speech (OpenAI /v1/audio/speech) -------------------------------
+
+    async def speech(self, body: dict[str, Any]) -> tuple[bytes, str]:
+        model = canonical_model(strip_model_namespace(str(body.get("model", ""))))
+        if model != "kling-tts":
+            raise ContractError(
+                f"{body.get('model')} cannot synthesize speech", param="model"
+            )
+        text = body.get("input")
+        voice = body.get("voice")
+        speed = float(body.get("speed", 1.0))
+        language = body.get("language", "en")
+        if not isinstance(text, str) or not 1 <= len(text) <= 1000:
+            raise ContractError("input must have 1 to 1000 characters", param="input")
+        if not isinstance(voice, str) or not voice:
+            raise ContractError(
+                "voice is required (a Kling TTS voice ID)", param="voice"
+            )
+        if not 0.8 <= speed <= 2.0:
+            raise ContractError(
+                "speed must be between 0.8 and 2.0",
+                code="unsupported_parameter",
+                param="speed",
+            )
+        if language not in {"zh", "en"}:
+            raise ContractError(
+                "language must be zh or en",
+                code="unsupported_parameter",
+                param="language",
+            )
+        data = await self.client.call(
+            "POST",
+            "/v1/audio/tts",
+            json={
+                "text": text,
+                "voice_id": voice,
+                "voice_language": language,
+                "voice_speed": speed,
+            },
+        )
+        clip = ((data.get("task_result") or {}).get("audios") or [{}])[0]
+        url = clip.get("url")
+        if not url or not host_allowed(url, self.settings.kling_download_host_suffixes):
+            raise ApiError(
+                "Kling text-to-speech returned no downloadable audio",
+                502,
+                "upstream_error",
+            )
+        async with httpx.AsyncClient(
+            timeout=self.settings.download_timeout_seconds,
+            transport=self.download_transport,
+        ) as client:
+            response = await client.get(url)
+        if response.is_error:
+            raise ApiError(
+                "Kling audio download failed", 502, "upstream_error", retryable=True
+            )
+        return response.content, "audio/mpeg"

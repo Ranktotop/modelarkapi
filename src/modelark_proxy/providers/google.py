@@ -430,8 +430,17 @@ class GoogleProvider:
         return self.jobs.to_video(job)
 
     async def stream_output(
-        self, video_id: str, field: str, media_type: str, output: int = 0
+        self,
+        video_id: str,
+        field: str,
+        media_type: str,
+        output: int = 0,
+        variant: str = "video",
     ) -> StreamingResponse | JSONResponse | FileResponse:
+        if variant != "video":
+            return openai_error(
+                f"Google videos have no {variant} variant", 404, "not_found"
+            )
         job = await self.refresh(video_id)
         if field != "video_url":
             return openai_error(

@@ -31,7 +31,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T16: Kling Motion Control (S)
 - [x] T17: Kling Elements und Voices, einheitliche Asset-Übersicht (M)
 - [x] T18: Kling Lip Sync (mehrstufig) und Avatar (M)
-- [ ] T19: Kling Audio: TTS (`/v1/audio/speech`), Text→Audio, Video→Audio (M)
+- [x] T19: Kling Audio: TTS (`/v1/audio/speech`), Text→Audio, Video→Audio (M)
 - [ ] T20: Kling-Effekte (219) und Multi-Element-Bearbeitung (M)
 - [ ] T21: Kling Video-Commerce (Talking Agent, Goods Studio, Apparel) (M)
 - [ ] **Checkpoint 3:** Kling komplett; Live-Tests nur mit Freigabe

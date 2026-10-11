@@ -363,10 +363,41 @@ AUDIO_FORMATS = ("audio/mpeg", "audio/wav")
 VIRTUAL_MODELS = {
     "kling-lip-sync": "Kling Lip Sync",
     "kling-avatar": "Kling Avatar",
+    "kling-text-to-audio": "Kling Text to Audio",
+    "kling-video-to-audio": "Kling Video to Audio",
+    # Only for POST /v1/audio/speech. Kling TTS voice IDs (e.g. oversea_male1)
+    # are a separate namespace from custom voices.
+    "kling-tts": "Kling Text to Speech",
 }
 
 
+def _video_slot(role: str, min_seconds: int, max_seconds: int) -> ReferenceSlot:
+    return ReferenceSlot(
+        role,
+        ("video",),
+        1,
+        1,
+        max_bytes=100 * 1024 * 1024,
+        formats=VIDEO_FORMATS,
+        min_seconds=min_seconds,
+        max_seconds=max_seconds,
+    )
+
+
 def virtual_capabilities(model_id: str) -> ModelCapabilities:
+    if model_id == "kling-tts":
+        return ModelCapabilities(
+            provider="kling",
+            family=model_id,
+            launch_stage="ga",
+            prompt_max_chars=1000,
+            parameters={
+                "speed": Param(minimum=0.8, maximum=2.0, default=1.0),
+                "language": Param(values=("en", "zh"), default="en"),
+            },
+            tasks={},
+            output_types=("audio",),
+        )
     speech = ReferenceSlot(
         "speech",
         ("audio",),
@@ -376,30 +407,18 @@ def virtual_capabilities(model_id: str) -> ModelCapabilities:
         formats=AUDIO_FORMATS,
         min_seconds=2,
     )
+    watermark = {"watermark": Param(default=False)}
+    prompt_max = 2500
+    output_types: tuple[str, ...] = ("video",)
+    parameters: dict[str, Param]
     if model_id == "kling-lip-sync":
         task = "lip_sync"
         spec = TaskSpec(
-            references=(
-                ReferenceSlot(
-                    "base_video",
-                    ("video",),
-                    1,
-                    1,
-                    max_bytes=100 * 1024 * 1024,
-                    formats=VIDEO_FORMATS,
-                    min_seconds=2,
-                    max_seconds=60,
-                ),
-                speech,
-            ),
+            references=(_video_slot("base_video", 2, 60), speech),
             prompt_required=False,
         )
-        parameters: dict[str, Param] = {
-            "speech": Param(),
-            "audio": Param(),
-            "watermark": Param(default=False),
-        }
-    else:
+        parameters = {"speech": Param(), "audio": Param(), **watermark}
+    elif model_id == "kling-avatar":
         task = "avatar"
         spec = TaskSpec(
             references=(
@@ -419,14 +438,29 @@ def virtual_capabilities(model_id: str) -> ModelCapabilities:
             "speech": Param(),
             "resolution": Param(values=("720p", "1080p"), default="720p"),
             "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
-            "watermark": Param(default=False),
+            **watermark,
         }
+    elif model_id == "kling-text-to-audio":
+        task = "text_to_audio"
+        spec = TaskSpec()
+        parameters = {"seconds": Param(minimum=3.0, maximum=10.0, default=5)}
+        output_types = ("audio",)
+        prompt_max = 200
+    else:
+        task = "video_to_audio"
+        spec = TaskSpec(
+            references=(_video_slot("base_video", 3, 20),), prompt_required=False
+        )
+        parameters = {"audio": Param()}
+        output_types = ("video", "audio")
+        prompt_max = 200
     return ModelCapabilities(
         provider="kling",
         family=model_id,
         launch_stage="ga",
-        prompt_max_chars=2500,
+        prompt_max_chars=prompt_max,
         parameters=parameters,
         tasks={task: spec},
-        features={"watermark": True},
+        output_types=output_types,
+        features={"watermark": "watermark" in parameters},
     )

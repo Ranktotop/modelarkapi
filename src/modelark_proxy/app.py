@@ -18,6 +18,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
+    Response,
     JSONResponse,
     PlainTextResponse,
     StreamingResponse,
@@ -205,6 +206,10 @@ async def parse_create_request(
             status_code=400, detail="Request body must be a JSON object"
         )
     return normalize_fields(body), None
+
+
+# SPEC 11.7; `last_frame` is handled separately, thumbnails do not exist.
+CONTENT_VARIANTS = ("video", "audio", "watermarked")
 
 
 def with_public_id(video: VideoObject, model: str | None = None) -> VideoObject:
@@ -884,16 +889,39 @@ def create_app(
     )
 
     async def stream_task_output(
-        video_id: str, field: str, media_type: str, output: int = 0
+        video_id: str,
+        field: str,
+        media_type: str,
+        output: int = 0,
+        variant: str = "video",
     ) -> StreamingResponse | JSONResponse:
         video_id = decode_video_id(video_id)
-        return await video_provider(video_id).stream_output(
-            video_id, field, media_type, output=output
+        provider = video_provider(video_id)
+        if variant == "video":
+            return await provider.stream_output(
+                video_id, field, media_type, output=output
+            )
+        return await provider.stream_output(
+            video_id, field, media_type, output=output, variant=variant
         )
 
-    async def video_content(video_id: str, output: int = 0):
+    async def video_content(
+        video_id: str, output: int = 0, variant: str = "video", format: str = "mp3"
+    ):
+        if variant == "last_frame":
+            return await stream_task_output(video_id, "last_frame_url", "image/png")
+        if variant not in CONTENT_VARIANTS:
+            return openai_error(
+                f"Unsupported variant '{variant}'; supported: "
+                f"{', '.join([*CONTENT_VARIANTS, 'last_frame'])}",
+                400,
+                "unsupported_parameter",
+                "variant",
+            )
+        if variant == "audio" and format == "wav":
+            variant = "audio_wav"
         return await stream_task_output(
-            video_id, "video_url", "video/mp4", output=output
+            video_id, "video_url", "video/mp4", output=output, variant=variant
         )
 
     async def last_frame_content(video_id: str):
@@ -992,5 +1020,17 @@ def create_app(
     @app.delete("/v1/assets/{asset_id}")
     async def delete_asset(asset_id: str) -> dict[str, Any]:
         return await asset_provider("kling").delete(asset_id)
+
+    @app.post("/v1/audio/speech")
+    @app.post("/audio/speech", include_in_schema=False)
+    async def audio_speech(request: Request) -> Response:
+        body = await json_body(request)
+        model = str(body.get("model") or "")
+        provider = providers.for_model(model)
+        credentials.require(provider.name)
+        if not hasattr(provider, "speech"):
+            raise TranslationError(f"{model} cannot synthesize speech")
+        content, media_type = await provider.speech(body)
+        return Response(content, media_type=media_type)
 
     return app
