@@ -21,7 +21,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T9: Gemini- und Vertex-Backend; Veo Text→Video mit allen Parametern (M)
 - [x] T10: Veo Bild→Video, Start+Ende und Referenzbilder (M)
 - [x] T11: Veo-Extension (beide Backends) (S)
-- [ ] T12: Omni Text→Video, Bild→Video und Start+Ende (Interactions, background) (M)
+- [x] T12: Omni Text→Video, Bild→Video und Start+Ende (Interactions, background) (M)
 - [ ] T13: Omni-Referenzen, Edit, Extend und Multi-Turn (M)
 - [ ] **Checkpoint 2:** Google komplett; Live-Tests nur mit Freigabe
 

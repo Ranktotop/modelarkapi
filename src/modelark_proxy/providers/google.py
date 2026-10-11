@@ -1,14 +1,15 @@
-"""Google video models (Veo 3.1; Omni follows in T12) behind the provider contract."""
+"""Google video models (Veo 3.1 and Gemini Omni) behind the provider contract."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import time
 from typing import Any
 
 import httpx
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..capabilities import ModelCapabilities
@@ -23,7 +24,14 @@ from ..unified import UnifiedRequest, normalize_request
 from ..validation import ContractError, validate
 from .base import ProviderUnavailable, strip_model_namespace
 from .google_backends import GoogleBackend
+from .omni import build_omni_body, omni_capabilities, omni_label, parse_interaction
 from .veo import build_veo_body, parse_operation, veo_capabilities, veo_label
+
+logger = logging.getLogger(__name__)
+
+
+def family_of(model: str) -> str:
+    return "omni" if model.startswith("gemini-omni-") else "veo"
 
 
 class GoogleProvider:
@@ -33,13 +41,14 @@ class GoogleProvider:
         self,
         settings: Settings,
         veo_backend: GoogleBackend | None,
+        omni_backend: GoogleBackend | None,
         jobs: ProviderJobStore,
         outputs: OutputStore,
         references: ReferenceResolver,
         download_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.settings = settings
-        self.veo_backend = veo_backend
+        self.backends = {"veo": veo_backend, "omni": omni_backend}
         self.jobs = jobs
         self.outputs = outputs
         self.references = references
@@ -52,57 +61,70 @@ class GoogleProvider:
     def owns_video(self, video_id: str) -> bool:
         return video_id.startswith(("vid-veo-", "vid-omni-"))
 
+    # --- models -----------------------------------------------------------
+
+    def _capabilities(self, model: str) -> ModelCapabilities:
+        family = family_of(model)
+        backend = self.backends[family]
+        assert backend is not None
+        if family == "omni":
+            return omni_capabilities(model, backend.name)
+        return veo_capabilities(model, backend.name)
+
     async def list_models(self) -> list[dict[str, Any]]:
-        now = time.monotonic()
-        if self.model_cache is None or now >= self.model_cache_expires_at:
+        if self.model_cache is None or time.monotonic() >= self.model_cache_expires_at:
             async with self.model_lock:
                 if (
                     self.model_cache is None
                     or time.monotonic() >= self.model_cache_expires_at
                 ):
                     models: list[dict[str, Any]] = []
-                    if self.veo_backend is not None:
-                        backend = self.veo_backend.name
-                        for model in await self.veo_backend.list_veo_models():
-                            models.append(
-                                {
-                                    "id": model,
-                                    "object": "model",
-                                    "owned_by": "google",
-                                    "name": veo_label(model),
-                                    "capabilities": veo_capabilities(
-                                        model, backend
-                                    ).to_dict(),
-                                }
-                            )
+                    veo, omni = self.backends["veo"], self.backends["omni"]
+                    ids = (await veo.list_veo_models() if veo else []) + (
+                        await omni.list_omni_models() if omni else []
+                    )
+                    for model in ids:
+                        label = (
+                            omni_label(model)
+                            if family_of(model) == "omni"
+                            else veo_label(model)
+                        )
+                        models.append(
+                            {
+                                "id": model,
+                                "object": "model",
+                                "owned_by": "google",
+                                "name": label,
+                                "capabilities": self._capabilities(model).to_dict(),
+                            }
+                        )
                     self.model_cache = models
                     self.model_cache_expires_at = (
                         time.monotonic() + self.settings.model_cache_ttl_seconds
                     )
         return self.model_cache or []
 
-    async def _veo_model(self, model: str) -> str:
+    async def _model(self, model: str) -> str:
         bare = strip_model_namespace(model)
-        if self.veo_backend is None or bare not in {
-            entry["id"] for entry in await self.list_models()
-        }:
+        if bare not in {entry["id"] for entry in await self.list_models()}:
             raise ProviderUnavailable(f"Model '{bare}' is not available on this proxy")
         return bare
+
+    # --- create -------------------------------------------------------------
 
     async def create_video(
         self, data: dict[str, Any], upload: UploadFile | None
     ) -> VideoObject:
         if upload is not None:
             raise ContractError(
-                "Google models do not accept input_reference uploads yet; "
-                "use references",
+                "Google models do not accept input_reference uploads; use references",
                 code="unsupported_parameter",
                 param="input_reference",
             )
         request = normalize_request(data)
-        model = await self._veo_model(request.model)
-        assert self.veo_backend is not None
-        caps = veo_capabilities(model, self.veo_backend.name)
+        model = await self._model(request.model)
+        request.model = model
+        caps = self._capabilities(model)
         request, adjustments = validate(caps, request)
         options = request.provider_options.get("google") or {}
         unknown = sorted(set(options) - set(caps.provider_options))
@@ -112,27 +134,50 @@ class GoogleProvider:
                 code="unsupported_parameter",
                 param="provider_options",
             )
-        images = await self._resolve_images(caps, request)
-        operation = await self.veo_backend.start_veo(
-            model, build_veo_body(request, caps, images)
-        )
+        family = family_of(model)
+        backend = self.backends[family]
+        assert backend is not None
+        media = await self._resolve(caps, request, family)
+        if family == "omni":
+            interaction = await backend.start_omni(
+                build_omni_body(
+                    request, caps, media, delivery_uri=backend.name == "gemini"
+                )
+            )
+            upstream = {
+                "kind": "omni",
+                "interaction": interaction["id"],
+                "backend": backend.name,
+            }
+        else:
+            operation = await backend.start_veo(
+                model, build_veo_body(request, caps, media)
+            )
+            upstream = {
+                "kind": "veo",
+                "operation": operation["name"],
+                "backend": backend.name,
+            }
         job = self._register(
-            model, request.task, request.prompt, request.params, operation
+            model, request.task, request.prompt, request.params, upstream
         )
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
 
-    async def _resolve_images(
-        self, caps: ModelCapabilities, request: UnifiedRequest
-    ) -> dict[str, list[dict[str, str]]]:
+    async def _resolve(
+        self, caps: ModelCapabilities, request: UnifiedRequest, family: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch every reference and shape it the way the model family expects."""
         slots = {slot.role: slot for slot in caps.tasks[request.task].references}
-        images: dict[str, list[dict[str, str]]] = {}
+        resolved: dict[str, list[dict[str, Any]]] = {}
         backend = caps.backend
         for reference in request.references:
+            role = reference["role"]
             if (
-                reference["role"] == "base_video"
+                role == "base_video"
                 and backend == "gemini"
+                and family == "veo"
                 and not reference.get("task_id")
             ):
                 raise ContractError(
@@ -142,22 +187,28 @@ class GoogleProvider:
                     param="references",
                 )
             media = await self.references.fetch(reference)
-            slot = slots[reference["role"]]
+            slot = slots[role]
             if slot.formats and media.mime_type not in slot.formats:
                 raise ContractError(
-                    f"{reference['role']} must be {' or '.join(slot.formats)}, "
-                    f"not {media.mime_type}",
+                    f"{role} must be {' or '.join(slot.formats)}, not {media.mime_type}",
                     code="reference_limit",
                     param="references",
                 )
             if slot.max_bytes and len(media.data) > slot.max_bytes:
                 raise ContractError(
-                    f"{reference['role']} may not exceed {slot.max_bytes} bytes",
+                    f"{role} may not exceed {slot.max_bytes} bytes",
                     code="reference_limit",
                     param="references",
                 )
-            if reference["role"] == "base_video" and backend == "gemini":
-                content: dict[str, Any] = {
+            content: dict[str, Any]
+            if family == "omni":
+                content = {
+                    "type": reference["type"],
+                    "mime_type": media.mime_type,
+                    "data": media.base64,
+                }
+            elif role == "base_video" and backend == "gemini":
+                content = {
                     "inlineData": {"mimeType": media.mime_type, "data": media.base64}
                 }
             else:
@@ -165,8 +216,8 @@ class GoogleProvider:
                     "bytesBase64Encoded": media.base64,
                     "mimeType": media.mime_type,
                 }
-            images.setdefault(reference["role"], []).append(content)
-        return images
+            resolved.setdefault(role, []).append(content)
+        return resolved
 
     def _register(
         self,
@@ -174,43 +225,50 @@ class GoogleProvider:
         task: str,
         prompt: str,
         params: dict[str, Any],
-        operation: dict[str, Any],
+        upstream: dict[str, Any],
     ) -> dict[str, Any]:
-        assert self.veo_backend is not None
         return self.jobs.create(
             "google",
             model,
             task,
             {"prompt": prompt, "seconds": params.get("seconds"), "params": params},
-            slug="veo",
-            upstream={
-                "kind": "veo",
-                "operation": operation["name"],
-                "backend": self.veo_backend.name,
-            },
+            slug=upstream["kind"],
+            upstream=upstream,
         )
 
     async def create_native_veo(
         self, model: str, body: dict[str, Any]
     ) -> dict[str, Any]:
-        model = await self._veo_model(model)
-        assert self.veo_backend is not None
-        operation = await self.veo_backend.start_veo(model, body)
+        model = await self._model(model)
+        backend = self.backends["veo"]
+        if family_of(model) != "veo" or backend is None:
+            raise ProviderUnavailable(f"Model '{model}' is not a Veo model")
+        operation = await backend.start_veo(model, body)
         instance = (body.get("instances") or [{}])[0]
         job = self._register(
             model,
             "native",
             str(instance.get("prompt") or ""),
             {"seconds": (body.get("parameters") or {}).get("durationSeconds")},
-            operation,
+            {"kind": "veo", "operation": operation["name"], "backend": backend.name},
         )
         return {**operation, "proxy_job_id": job["id"]}
+
+    # --- status -------------------------------------------------------------
 
     def _job(self, video_id: str) -> dict[str, Any]:
         job = self.jobs.get(video_id)
         if job is None:
             raise ApiError(f"Video '{video_id}' not found", 404, "not_found")
         return job
+
+    def _backend_for(self, job: dict[str, Any]) -> GoogleBackend:
+        backend = self.backends[job["upstream"]["kind"]]
+        if backend is None:
+            raise ProviderUnavailable(
+                f"{job['upstream']['kind']} is not configured on this proxy"
+            )
+        return backend
 
     async def refresh(self, video_id: str) -> dict[str, Any]:
         job = self._job(video_id)
@@ -222,48 +280,61 @@ class GoogleProvider:
         if now - self.last_polled.get(video_id, float("-inf")) < min_interval:
             return job
         self.last_polled[video_id] = now
-        upstream = job["upstream"] or {}
-        if self.veo_backend is None:
-            raise ProviderUnavailable("Veo is not configured on this proxy")
-        operation = await self.veo_backend.poll_veo(job["model"], upstream["operation"])
-        result = parse_operation(operation)
+        upstream = job["upstream"]
+        backend = self._backend_for(job)
+        if upstream["kind"] == "omni":
+            result = parse_interaction(await backend.get_omni(upstream["interaction"]))
+        else:
+            result = parse_operation(
+                await backend.poll_veo(job["model"], upstream["operation"])
+            )
         if result["status"] == "in_progress":
             self.jobs.update(
                 video_id,
                 status="in_progress",
-                provider_status="running",
+                provider_status=result.get("provider_status", "running"),
                 progress=result.get("progress"),
             )
         elif result["status"] == "failed":
             self.jobs.update(
-                video_id, status="failed", provider_status="done", error=result["error"]
+                video_id,
+                status="failed",
+                provider_status=result.get("provider_status", "done"),
+                error=result["error"],
             )
         else:
-            outputs = []
-            expires_at = job["expires_at"]
-            for index, output in enumerate(result["outputs"]):
-                entry = {
-                    "index": index,
-                    "variants": ["video"],
-                    "mime_type": output["mime_type"],
-                }
-                if output["bytes"]:
-                    data = base64.b64decode(output["bytes"])
+            await self._complete(job, backend, result)
+        return self._job(video_id)
 
-                    async def chunks(payload: bytes = data):
-                        yield payload
+    async def _complete(
+        self, job: dict[str, Any], backend: GoogleBackend, result: dict[str, Any]
+    ) -> None:
+        """Store every output locally; URIs are downloaded with the backend's auth."""
+        video_id = job["id"]
+        outputs = []
+        for index, output in enumerate(result["outputs"]):
+            entry: dict[str, Any] = {
+                "index": index,
+                "variants": ["video"],
+                "mime_type": output["mime_type"],
+                "stored": True,
+            }
+            if output["bytes"]:
+                data = base64.b64decode(output["bytes"])
 
-                    await self.outputs.save(
-                        video_id, index, "video", chunks(), output["mime_type"]
-                    )
-                    entry["stored"] = True
-                else:
-                    # Keep a copy: Gemini deletes files after two days, and
-                    # extensions need the bytes of the earlier video.
-                    assert self.veo_backend is not None
+                async def chunks(payload: bytes = data):
+                    yield payload
+
+                await self.outputs.save(
+                    video_id, index, "video", chunks(), output["mime_type"]
+                )
+            else:
+                # Keep a copy: Gemini deletes files after two days, and
+                # extensions need the bytes of the earlier video.
+                try:
                     response = await stream_remote(
                         output["uri"],
-                        headers=await self.veo_backend.headers(),
+                        headers=await backend.headers(),
                         allowed_host_suffixes=self.settings.google_download_host_suffixes,
                         transport=self.download_transport,
                         timeout=self.settings.download_timeout_seconds,
@@ -276,32 +347,48 @@ class GoogleProvider:
                         response.body_iterator,
                         output["mime_type"],
                     )
-                    entry["stored"] = True
-                    entry["uri"] = output["uri"]
-                outputs.append(entry)
-            self.jobs.update(
-                video_id,
-                status="completed",
-                provider_status="done",
-                progress=100,
-                outputs=outputs,
-                expires_at=expires_at,
-            )
-        return self._job(video_id)
+                except HTTPException as exc:
+                    # A freshly generated file may not be downloadable yet.
+                    logger.info(
+                        "Output of %s is not downloadable yet: %s", video_id, exc.detail
+                    )
+                    self.jobs.update(
+                        video_id, status="in_progress", provider_status="finalizing"
+                    )
+                    return
+                entry["uri"] = output["uri"]
+            outputs.append(entry)
+        usage = {
+            "provider": "google",
+            "backend": backend.name,
+            **(result.get("usage") or {}),
+        }
+        self.jobs.update(
+            video_id,
+            status="completed",
+            provider_status=result.get("provider_status", "done"),
+            progress=100,
+            outputs=outputs,
+            usage=usage,
+        )
 
     async def get_video(self, video_id: str) -> VideoObject:
         return self.jobs.to_video(await self.refresh(video_id))
 
     async def native_operation(self, video_id: str) -> dict[str, Any]:
         job = self._job(video_id)
-        if self.veo_backend is None:
-            raise ProviderUnavailable("Veo is not configured on this proxy")
-        return await self.veo_backend.poll_veo(
-            job["model"], job["upstream"]["operation"]
-        )
+        backend = self._backend_for(job)
+        if job["upstream"]["kind"] == "omni":
+            return await backend.get_omni(job["upstream"]["interaction"])
+        return await backend.poll_veo(job["model"], job["upstream"]["operation"])
 
     async def delete_video(self, video_id: str) -> VideoObject:
         job = self._job(video_id)
+        if job["upstream"]["kind"] == "omni" and job["status"] not in TERMINAL_STATUSES:
+            try:
+                await self._backend_for(job).cancel_omni(job["upstream"]["interaction"])
+            except (ApiError, ProviderUnavailable) as exc:
+                logger.warning("Could not cancel %s upstream: %s", video_id, exc)
         self.outputs.delete(video_id)
         self.jobs.delete(video_id)
         return self.jobs.to_video(job)
@@ -321,18 +408,7 @@ class GoogleProvider:
         outputs = job["outputs"] or []
         if not 0 <= output < len(outputs):
             return openai_error(f"Video has no output {output}", 404, "not_found")
-        entry = outputs[output]
-        if entry.get("stored"):
-            path = self.outputs.path(video_id, output, "video")
-            if path is None:
-                return openai_error("Stored video has expired", 410, "output_expired")
-            return FileResponse(path, media_type=entry["mime_type"])
-        assert self.veo_backend is not None
-        return await stream_remote(
-            entry["uri"],
-            headers=await self.veo_backend.headers(),
-            allowed_host_suffixes=self.settings.google_download_host_suffixes,
-            transport=self.download_transport,
-            timeout=self.settings.download_timeout_seconds,
-            media_type=entry["mime_type"],
-        )
+        path = self.outputs.path(video_id, output, "video")
+        if path is None:
+            return openai_error("Stored video has expired", 410, "output_expired")
+        return FileResponse(path, media_type=outputs[output]["mime_type"])

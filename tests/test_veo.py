@@ -106,6 +106,7 @@ def settings_for(tmp_path: Path, backend: str) -> Settings:
         "provider_job_db": tmp_path / "provider-jobs.db",
         "output_dir": tmp_path / "outputs",
         "google_veo_backend": backend,
+        "google_omni_backend": "none",
         "provider_status_min_interval_seconds": 0,
     }
     if backend == "vertex":

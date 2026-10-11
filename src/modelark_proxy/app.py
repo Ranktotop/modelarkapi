@@ -289,6 +289,14 @@ def create_app(
         )
     elif settings.google_veo_backend == "gemini" and settings.gemini_api_key:
         veo_backend = GeminiBackend(settings, google_api)
+    omni_backend: GoogleBackend | None = None
+    if settings.google_omni_backend == "vertex" and settings.vertex_project:
+        assert vertex_token_source is not None
+        omni_backend = VertexBackend(
+            settings, google_api, vertex_token_source, settings.google_omni_location
+        )
+    elif settings.google_omni_backend == "gemini" and settings.gemini_api_key:
+        omni_backend = GeminiBackend(settings, google_api)
     references = ReferenceResolver(
         settings,
         media,
@@ -307,6 +315,7 @@ def create_app(
             GoogleProvider(
                 settings,
                 veo_backend,
+                omni_backend,
                 provider_jobs,
                 outputs,
                 references,

@@ -20,6 +20,7 @@ VERTEX_VEO_MODELS = (
     "veo-3.1-fast-generate-001",
     "veo-3.1-lite-generate-001",
 )
+VERTEX_OMNI_MODELS = ("gemini-omni-1.1-flash-preview", "gemini-omni-flash-preview")
 
 
 class GoogleBackend(Protocol):
@@ -32,6 +33,14 @@ class GoogleBackend(Protocol):
     async def poll_veo(self, model: str, operation: str) -> dict[str, Any]: ...
 
     async def list_veo_models(self) -> list[str]: ...
+
+    async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def get_omni(self, interaction_id: str) -> dict[str, Any]: ...
+
+    async def cancel_omni(self, interaction_id: str) -> dict[str, Any]: ...
+
+    async def list_omni_models(self) -> list[str]: ...
 
 
 class _Base:
@@ -78,13 +87,34 @@ class GeminiBackend(_Base):
     async def poll_veo(self, model: str, operation: str) -> dict[str, Any]:
         return await self._call("GET", f"{self.base}/{operation}")
 
-    async def list_veo_models(self) -> list[str]:
+    async def _models(self) -> list[dict[str, Any]]:
         body = await self._call("GET", f"{self.base}/models", params={"pageSize": 1000})
+        return list(body.get("models", []))
+
+    async def list_veo_models(self) -> list[str]:
         return [
             str(model["name"]).removeprefix("models/")
-            for model in body.get("models", [])
+            for model in await self._models()
             if str(model.get("name", "")).startswith("models/veo-3.1-")
             and "predictLongRunning" in model.get("supportedGenerationMethods", [])
+        ]
+
+    async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._call("POST", f"{self.base}/interactions", json=body)
+
+    async def get_omni(self, interaction_id: str) -> dict[str, Any]:
+        return await self._call("GET", f"{self.base}/interactions/{interaction_id}")
+
+    async def cancel_omni(self, interaction_id: str) -> dict[str, Any]:
+        return await self._call(
+            "POST", f"{self.base}/interactions/{interaction_id}/cancel"
+        )
+
+    async def list_omni_models(self) -> list[str]:
+        return [
+            str(model["name"]).removeprefix("models/")
+            for model in await self._models()
+            if str(model.get("name", "")).startswith("models/gemini-omni-")
         ]
 
 
@@ -132,9 +162,33 @@ class VertexBackend(_Base):
             json={"operationName": operation},
         )
 
+    @property
+    def interactions_url(self) -> str:
+        return (
+            f"https://{self.host}/v1beta1/projects/{self.settings.vertex_project}"
+            f"/locations/{self.location}/interactions"
+        )
+
+    async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._call("POST", self.interactions_url, json=body)
+
+    async def get_omni(self, interaction_id: str) -> dict[str, Any]:
+        return await self._call("GET", f"{self.interactions_url}/{interaction_id}")
+
+    async def cancel_omni(self, interaction_id: str) -> dict[str, Any]:
+        return await self._call(
+            "POST", f"{self.interactions_url}/{interaction_id}/cancel"
+        )
+
+    async def list_omni_models(self) -> list[str]:
+        return await self._available(VERTEX_OMNI_MODELS)
+
     async def list_veo_models(self) -> list[str]:
+        return await self._available(VERTEX_VEO_MODELS)
+
+    async def _available(self, models: tuple[str, ...]) -> list[str]:
         available = []
-        for model in VERTEX_VEO_MODELS:
+        for model in models:
             try:
                 await self._call(
                     "GET",
