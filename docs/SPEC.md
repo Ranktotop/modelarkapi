@@ -302,8 +302,11 @@ Ableitung (Abschnitt 17).
   (bei `edit`, `extend`, `lip_sync`, `video_to_audio`: `base_video`), Audio →
   `reference` (bei `lip_sync` und `avatar`: `speech`).
 - `output` wählt bei `task_id` die Variante (Default 0).
-- `name` wird an Provider weitergegeben, die Namen im Prompt referenzieren
-  (Kling `@Name`); sonst ignoriert.
+- `name` dient nur der Anzeige und wird nicht an Provider weitergegeben. Kling
+  adressiert Referenzen im Prompt über die API-Platzhalter `<<<image_n>>>`,
+  `<<<video_n>>>`, `<<<element_n>>>` und `<<<voice_n>>>`; `n` zählt ab 1 in der
+  Reihenfolge des `references`-Arrays je Typ. Die `@Name`-Schreibweise der
+  Kling-App gilt für die API nicht.
 - `real_human=true` aktiviert die bestehende Seedance-Asset-Verifizierung. Bei
   anderen Providern führt das Flag zu `400 unsupported_parameter`.
 

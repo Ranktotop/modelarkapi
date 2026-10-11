@@ -30,7 +30,7 @@ class FakeKling:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
-        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})  # noqa: E731
+        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})
         if request.url.host == "v1-kling.klingai.com":
             return httpx.Response(
                 200, content=VIDEO, headers={"content-type": "video/mp4"}
@@ -223,6 +223,45 @@ async def test_lip_sync_with_uploaded_audio_and_external_video(tmp_path: Path):
         choice["sound_end_time"],
         choice["sound_insert_time"],
     ) == (0, 2500, 0)
+
+
+def wav_of(milliseconds: int) -> bytes:
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\x00\x00" * (8 * milliseconds))
+    return buffer.getvalue()
+
+
+async def test_lip_sync_ends_with_shorter_audio(tmp_path: Path):
+    fake = FakeKling()
+    clip = "data:audio/wav;base64," + base64.b64encode(wav_of(2000)).decode()
+
+    async def scenario(client, app):
+        created = await client.post(
+            "/v1/videos",
+            json={
+                "model": "kling-lip-sync",
+                "references": [
+                    {"type": "video", "url": "https://videos.example.com/talk.mp4"},
+                    {"type": "audio", "url": clip},
+                ],
+                "audio": {"face_id": "long"},
+            },
+        )
+        return await finished(client, created.json()["id"])
+
+    done = await run(tmp_path, fake, scenario)
+
+    assert done["status"] == "completed"
+    choice = fake.posted("/v1/videos/advanced-lip-sync")["face_choose"][0]
+    # The face is visible for 8 s, but the audio only lasts 2 s.
+    assert choice["sound_end_time"] == 2000
 
 
 async def test_lip_sync_needs_speech_or_audio(tmp_path: Path):

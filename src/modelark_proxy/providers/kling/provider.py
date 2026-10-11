@@ -15,6 +15,7 @@ import httpx
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from ...audio import audio_length_ms
 from ...config import Settings
 from ...downloads import host_allowed, stream_remote
 from ...errors import ApiError, openai_error
@@ -32,13 +33,13 @@ from .models import (
     APPAREL_VOICES,
     COMMERCE_IMAGE_FORMATS,
     EFFECT_IMAGES,
-    TALKING_AGENT_AVATARS,
-    TALKING_AGENT_VOICES,
     MODELS,
-    VIRTUAL_MODELS,
-    KlingModel,
     QUALITY_RESOLUTIONS,
     RESOLUTION_MODES,
+    TALKING_AGENT_AVATARS,
+    TALKING_AGENT_VOICES,
+    VIRTUAL_MODELS,
+    KlingModel,
     canonical_model,
     kling_capabilities,
 )
@@ -797,6 +798,11 @@ class KlingProvider:
         else:
             sound = await self._speech(audio, speech, max_seconds=60)
             length_ms = min(face_ms, 60_000)
+            if "end_ms" not in options:
+                # Kling rejects an end time past the audio, so cap it there.
+                audio_ms = audio_length_ms((await self.references.fetch(audio)).data)
+                if audio_ms:
+                    length_ms = min(length_ms, audio_ms)
         choice: dict[str, Any] = {
             "face_id": face["face_id"],
             **sound,
