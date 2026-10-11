@@ -27,7 +27,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 
 ## Phase 3: Kling (parallel zu Phase 2)
 - [x] T14: Kling-Client, Text→Video, Bild→Video, Multi-Shot und Audio (M)
-- [ ] T15: Kling Omni (3.0 Omni, O1): Referenzen und Video-Edit (M)
+- [x] T15: Kling Omni (3.0 Omni, O1): Referenzen und Video-Edit (M)
 - [ ] T16: Kling Motion Control (S)
 - [x] T17: Kling Elements und Voices, einheitliche Asset-Übersicht (M)
 - [ ] T18: Kling Lip Sync (mehrstufig) und Avatar (M)

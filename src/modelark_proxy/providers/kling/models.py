@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from ...capabilities import (
     Constraint,
+    GroupLimit,
     ModelCapabilities,
     Param,
     ReferenceSlot,
@@ -36,6 +37,8 @@ class KlingModel:
     multi_shot: bool = False
     elements: bool = False
     voices: bool = False
+    # Served by /v1/videos/omni-video (references, video edits).
+    omni: bool = False
 
 
 MODELS: dict[str, KlingModel] = {
@@ -79,8 +82,30 @@ MODELS: dict[str, KlingModel] = {
             ("720p", "1080p"),
             first_last_needs_1080p=True,
         ),
+        KlingModel(
+            "kling-3.0-omni",
+            "Kling 3.0 Omni",
+            "kling-v3-omni",
+            tuple(range(3, 16)),
+            ("720p", "1080p", "4k"),
+            audio=True,
+            multi_shot=True,
+            elements=True,
+            omni=True,
+        ),
+        KlingModel(
+            "kling-o1",
+            "Kling O1",
+            "kling-video-o1",
+            tuple(range(3, 11)),
+            ("720p", "1080p"),
+            elements=True,
+            omni=True,
+        ),
     )
 }
+VIDEO_FORMATS = ("video/mp4", "video/quicktime")
+OMNI_OPTIONS = ("keep_original_sound",)
 ALIASES = {
     model.legacy_name: model.id for model in MODELS.values() if model.legacy_name
 }
@@ -93,6 +118,8 @@ def canonical_model(model: str) -> str | None:
 
 def kling_capabilities(model_id: str) -> ModelCapabilities:
     model = MODELS[model_id]
+    if model.omni:
+        return omni_capabilities(model)
     legacy = model.legacy_name is not None
     image_bytes = LEGACY_IMAGE_BYTES if legacy else NEW_IMAGE_BYTES
 
@@ -184,4 +211,114 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
         tasks=tasks,
         constraints=tuple(constraints),
         features={"watermark": True},
+    )
+
+
+def omni_capabilities(model: KlingModel) -> ModelCapabilities:
+    """Kling 3.0 Omni and O1 (tasks/research/kling.md, section 4.3 and 5.3)."""
+
+    def image(role: str, minimum: int = 1, maximum: int = 1) -> ReferenceSlot:
+        return ReferenceSlot(
+            role,
+            ("image",),
+            minimum,
+            maximum,
+            max_bytes=LEGACY_IMAGE_BYTES,
+            formats=IMAGE_FORMATS,
+        )
+
+    max_video_seconds = 15 if model.multi_shot else 10
+    video = ReferenceSlot(
+        "base_video",
+        ("video",),
+        1,
+        1,
+        max_bytes=200 * 1024 * 1024,
+        formats=VIDEO_FORMATS,
+        min_seconds=3,
+        max_seconds=max_video_seconds,
+    )
+    elements = ReferenceSlot("reference", ("element",), 0, 3)
+    # Images plus elements: at most 7 without a reference video, 4 with one.
+    mix_limits = (
+        GroupLimit(
+            roles=("reference",),
+            types=("image", "element"),
+            maximum=7,
+            when_lacks=("video",),
+        ),
+        GroupLimit(
+            roles=("reference",),
+            types=("image", "element"),
+            maximum=4,
+            when_has=("video",),
+        ),
+        GroupLimit(roles=("reference",), types=("video",), maximum=1),
+    )
+    parameters: dict[str, Param] = {
+        "seconds": Param(values=model.seconds, default=5),
+        "resolution": Param(values=model.resolutions, default="720p"),
+        "aspect_ratio": Param(values=(*TEXT_RATIOS, "adaptive"), default="16:9"),
+        "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+        "watermark": Param(default=False),
+    }
+    if model.audio:
+        parameters["generate_audio"] = Param(default=False)
+    first_frame_only: dict[str, Param] = {}
+    if not model.multi_shot:
+        # O1 renders a plain first frame only with 5 or 10 seconds.
+        first_frame_only = {"seconds": Param(values=(5, 10), default=5)}
+    tasks: dict[str, TaskSpec] = {
+        "text_to_video": TaskSpec(),
+        "image_to_video": TaskSpec(
+            references=(image("first_frame"), elements),
+            parameters=first_frame_only,
+            prompt_required=False,
+        ),
+        "first_last_frame": TaskSpec(
+            references=(image("first_frame"), image("last_frame"))
+            + ((elements,) if model.multi_shot else ()),
+            prompt_required=False,
+        ),
+        "reference_to_video": TaskSpec(
+            references=(
+                ReferenceSlot("reference", ("image", "element", "video"), 1, 8),
+            ),
+            limits=mix_limits,
+        ),
+        "edit": TaskSpec(
+            references=(video, ReferenceSlot("reference", ("image", "element"), 0, 4)),
+            # The edited video keeps the length of the input.
+            parameters={"seconds": Param(values=("auto",), default="auto")},
+        ),
+    }
+    if model.multi_shot:
+        parameters["shot_mode"] = Param(
+            values=("customize", "intelligence"), default="customize"
+        )
+        parameters["shots"] = Param()
+        tasks["multi_shot"] = TaskSpec(
+            references=(image("first_frame", 0), elements), prompt_required=False
+        )
+    return ModelCapabilities(
+        provider="kling",
+        family=model.id,
+        launch_stage="ga",
+        prompt_max_chars=2500,
+        parameters=parameters,
+        tasks=tasks,
+        constraints=(
+            Constraint(
+                when={"task": ("text_to_video", "multi_shot", "reference_to_video")},
+                then={"aspect_ratio": TEXT_RATIOS},
+                message="Kling Omni needs 16:9, 9:16 or 1:1 without a first frame",
+            ),
+            Constraint(
+                when={"task": ("image_to_video", "first_last_frame", "edit")},
+                then={"aspect_ratio": ("adaptive",)},
+                message="The aspect ratio follows the first frame or the edited video",
+            ),
+        ),
+        features={"watermark": True},
+        provider_options=OMNI_OPTIONS,
     )

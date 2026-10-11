@@ -29,6 +29,7 @@ from .assets import KlingAssets, native_id, parse_asset_id
 from .client import KlingClient
 from .models import (
     MODELS,
+    KlingModel,
     QUALITY_RESOLUTIONS,
     RESOLUTION_MODES,
     canonical_model,
@@ -131,8 +132,22 @@ class KlingProvider:
         if any(r["type"] == "voice" for r in request.references):
             # Kling only speaks with a voice when sound is on.
             request.params.setdefault("generate_audio", True)
+        options = request.provider_options.get("kling") or {}
+        unknown = sorted(set(options) - set(caps.provider_options))
+        if unknown:
+            raise ContractError(
+                f"Unsupported provider_options.kling fields: {', '.join(unknown)}",
+                code="unsupported_parameter",
+                param="provider_options",
+            )
         request, adjustments = validate(caps, request)
         model = MODELS[model_id]
+        if model.omni:
+            path = "/v1/videos/omni-video"
+            body = await self._omni_body(request, model, options)
+            created = await self.client.call("POST", path, json=body)
+            upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
+            return self._register(model_id, request, upstream, adjustments)
         images = {
             reference["role"]: await self._image(reference)
             for reference in request.references
@@ -156,6 +171,15 @@ class KlingProvider:
                 "POST", f"/{path}/{model_id}", json=self._new_body(request, images)
             )
             upstream = {"api": "new", "task_id": created["id"]}
+        return self._register(model_id, request, upstream, adjustments)
+
+    def _register(
+        self,
+        model_id: str,
+        request: UnifiedRequest,
+        upstream: dict[str, Any],
+        adjustments: list[dict[str, Any]],
+    ) -> VideoObject:
         job = self.jobs.create(
             "kling",
             model_id,
@@ -171,8 +195,56 @@ class KlingProvider:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
 
+    async def _omni_body(
+        self, request: UnifiedRequest, model: KlingModel, options: dict[str, Any]
+    ) -> dict[str, Any]:
+        """`/v1/videos/omni-video` body: typed image, element and video lists."""
+        params = request.params
+        videos = [r for r in request.references if r["type"] == "video"]
+        if videos and params.get("generate_audio"):
+            raise ContractError(
+                "Kling Omni cannot generate audio together with a reference video; "
+                "use provider_options.kling.keep_original_sound",
+                code="unsupported_parameter",
+                param="generate_audio",
+            )
+        assert model.legacy_name is not None
+        body = self._legacy_body(request, model.legacy_name, {})
+        body.pop("aspect_ratio", None)
+        if request.task == "edit":
+            # The edit keeps the length of the input video.
+            body.pop("duration", None)
+        if request.task in {"text_to_video", "multi_shot", "reference_to_video"}:
+            body["aspect_ratio"] = params.get("aspect_ratio", "16:9")
+        frame_types = {"first_frame": "first_frame", "last_frame": "end_frame"}
+        image_list = []
+        for reference in request.references:
+            if reference["type"] != "image":
+                continue
+            item = {"image_url": await self._image(reference)}
+            if reference["role"] in frame_types:
+                item["type"] = frame_types[reference["role"]]
+            image_list.append(item)
+        if image_list:
+            body["image_list"] = image_list
+        body.update(self._steering(request, {}, require_frame=False))
+        if videos:
+            body["video_list"] = [
+                {
+                    "video_url": await self.references.public_url(video),
+                    "refer_type": "base"
+                    if video["role"] == "base_video"
+                    else "feature",
+                    "keep_original_sound": options.get("keep_original_sound", "no"),
+                }
+                for video in videos
+            ]
+        return body
+
     @staticmethod
-    def _steering(request: UnifiedRequest, images: dict[str, str]) -> dict[str, Any]:
+    def _steering(
+        request: UnifiedRequest, images: dict[str, str], *, require_frame: bool = True
+    ) -> dict[str, Any]:
         """Legacy `element_list` / `voice_list` from element and voice assets."""
         lists: dict[str, list[dict[str, Any]]] = {}
         for reference in request.references:
@@ -195,7 +267,7 @@ class KlingProvider:
                 code="reference_limit",
                 param="references",
             )
-        if lists and not images:
+        if lists and require_frame and not images:
             raise ContractError(
                 "Kling uses elements and voices only together with a first frame",
                 code="reference_limit",
