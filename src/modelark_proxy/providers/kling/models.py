@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from ...capabilities import (
     Constraint,
@@ -364,11 +366,21 @@ VIRTUAL_MODELS = {
     "kling-lip-sync": "Kling Lip Sync",
     "kling-avatar": "Kling Avatar",
     "kling-text-to-audio": "Kling Text to Audio",
+    "kling-effects": "Kling Effects",
+    "kling-multi-elements": "Kling Multi-Element Edit",
     "kling-video-to-audio": "Kling Video to Audio",
     # Only for POST /v1/audio/speech. Kling TTS voice IDs (e.g. oversea_male1)
     # are a separate namespace from custom voices.
     "kling-tts": "Kling Text to Speech",
 }
+
+
+# Effect templates and how many images each takes (tasks/research/kling.md, appendix A).
+EFFECTS: list[dict[str, object]] = json.loads(
+    (Path(__file__).with_name("effects.json")).read_text(encoding="utf-8")
+)["effects"]
+EFFECT_IMAGES = {str(effect["id"]): int(effect["images"]) for effect in EFFECTS}  # type: ignore[call-overload]
+MULTI_ELEMENT_MODES = ("addition", "swap", "removal")
 
 
 def _video_slot(role: str, min_seconds: int, max_seconds: int) -> ReferenceSlot:
@@ -436,6 +448,45 @@ def virtual_capabilities(model_id: str) -> ModelCapabilities:
         )
         parameters = {
             "speech": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+            **watermark,
+        }
+    elif model_id == "kling-effects":
+        task = "effect"
+        spec = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "subject",
+                    ("image",),
+                    1,
+                    2,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+            ),
+            prompt_required=False,
+        )
+        parameters = {"effect": Param(values=tuple(EFFECT_IMAGES))}
+    elif model_id == "kling-multi-elements":
+        task = "multi_element_edit"
+        spec = TaskSpec(
+            references=(
+                _video_slot("base_video", 2, 10),
+                ReferenceSlot(
+                    "reference",
+                    ("image",),
+                    0,
+                    2,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+            ),
+        )
+        parameters = {
+            "selections": Param(),
+            "edit_mode": Param(values=MULTI_ELEMENT_MODES),
+            "negative_prompt": Param(),
             "resolution": Param(values=("720p", "1080p"), default="720p"),
             "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
             **watermark,

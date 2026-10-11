@@ -58,6 +58,7 @@ from .providers.google import GoogleProvider
 from .providers.google_backends import GeminiBackend, GoogleBackend, VertexBackend
 from .providers.kling import KlingProvider
 from .providers.kling.client import KlingClient
+from .providers.kling.models import EFFECTS
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
@@ -972,6 +973,11 @@ def create_app(
         if kling is None:
             raise ProviderUnavailable("The 'kling' provider is not configured")
         return kling
+
+    @app.get("/v1/providers/kling/effects")
+    async def kling_effects() -> dict[str, Any]:
+        kling_provider()
+        return {"object": "list", "data": EFFECTS}
 
     @app.api_route("/v1/providers/kling/{path:path}", methods=["GET", "POST"])
     async def native_kling(path: str, request: Request) -> dict[str, Any]:

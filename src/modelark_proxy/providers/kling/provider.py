@@ -29,6 +29,7 @@ from ..base import ProviderUnavailable, strip_model_namespace
 from .assets import KlingAssets, native_id, parse_asset_id
 from .client import KlingClient
 from .models import (
+    EFFECT_IMAGES,
     MODELS,
     VIRTUAL_MODELS,
     KlingModel,
@@ -235,6 +236,10 @@ class KlingProvider:
         request, adjustments = validate(caps, request)
         if request.task in {"text_to_audio", "video_to_audio"}:
             return await self._create_audio(request, adjustments)
+        if request.task == "effect":
+            return await self._create_effect(request, adjustments)
+        if request.task == "multi_element_edit":
+            return self._create_multi_element(request, adjustments)
         speech = request.params.get("speech") or {}
         audio = next((r for r in request.references if r["role"] == "speech"), None)
         if audio is None and not speech.get("text"):
@@ -350,11 +355,174 @@ class KlingProvider:
             )
         return str(clip["id"]), int(float(clip.get("duration") or 0) * 1000)
 
+    async def _create_effect(
+        self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
+    ) -> VideoObject:
+        effect = str(request.params["effect"])
+        images = [r for r in request.references if r["type"] == "image"]
+        expected = EFFECT_IMAGES[effect]
+        if len(images) != expected:
+            raise ContractError(
+                f"Effect {effect} takes exactly {expected} image(s)",
+                code="reference_limit",
+                param="references",
+            )
+        encoded = [await self._image(image) for image in images]
+        body = {
+            "effect_scene": effect,
+            "input": {"image": encoded[0]} if expected == 1 else {"images": encoded},
+        }
+        path = "/v1/videos/effects"
+        created = await self.client.call("POST", path, json=body)
+        upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
+        return self._register(request.model, request, upstream, adjustments)
+
+    def _create_multi_element(
+        self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
+    ) -> VideoObject:
+        """Validate the selection up front; the session itself runs in the worker."""
+        mode = request.params.get("edit_mode")
+        images = [r for r in request.references if r["type"] == "image"]
+        allowed = {"addition": (1, 2), "swap": (1, 1), "removal": (0, 0)}
+        if mode not in allowed:
+            raise ContractError(
+                "edit_mode must be addition, swap or removal", param="edit_mode"
+            )
+        low, high = allowed[mode]
+        if not low <= len(images) <= high:
+            raise ContractError(
+                f"edit_mode={mode} takes {low} to {high} image(s)",
+                code="reference_limit",
+                param="references",
+            )
+        selections = request.params.get("selections")
+        if not isinstance(selections, list) or not 1 <= len(selections) <= 10:
+            raise ContractError("selections needs 1 to 10 frames", param="selections")
+        for selection in selections:
+            points = selection.get("points") if isinstance(selection, dict) else None
+            if (
+                not isinstance(selection.get("frame_index"), int)
+                or selection["frame_index"] < 0
+                or not isinstance(points, list)
+                or not 1 <= len(points) <= 10
+                or not all(
+                    isinstance(point, dict)
+                    and all(
+                        isinstance(point.get(axis), int | float)
+                        and 0 <= point[axis] <= 1
+                        for axis in ("x", "y")
+                    )
+                    for point in points
+                )
+            ):
+                raise ContractError(
+                    "Each selection needs a frame_index and 1 to 10 points with x, y in [0, 1]",
+                    param="selections",
+                )
+        job = self.jobs.create(
+            "kling",
+            request.model,
+            request.task,
+            {
+                "prompt": request.prompt,
+                "params": request.params,
+                "references": request.references,
+            },
+            worker=True,
+        )
+        self.jobs.update(
+            job["id"], state={"step": "init"}, adjustments=adjustments or None
+        )
+        if self.runner is not None:
+            self.runner.schedule(job["id"])
+        return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    async def _run_multi_element(self, job: dict[str, Any]) -> None:
+        """Init the selection session, mark the objects, then submit the edit.
+
+        Progress is stored after every call, so a restart resumes the session.
+        """
+        state = dict(job["state"] or {})
+        request = job["request"]
+        params = request["params"]
+        references = request["references"]
+        if state.get("step") == "init":
+            video = next(r for r in references if r["role"] == "base_video")
+            self.jobs.update(
+                job["id"], status="in_progress", provider_status="selection"
+            )
+            session = await self.client.call(
+                "POST",
+                "/v1/videos/multi-elements/init-selection",
+                json=await self._video_source(video),
+            )
+            state = {
+                "step": "select",
+                "session_id": session["session_id"],
+                "seconds": float(session.get("original_duration") or 0),
+                "selected": 0,
+            }
+            self.jobs.update(job["id"], state=state)
+        selections = params["selections"]
+        while state["selected"] < len(selections):
+            selection = selections[state["selected"]]
+            await self.client.call(
+                "POST",
+                "/v1/videos/multi-elements/add-selection",
+                json={
+                    "session_id": state["session_id"],
+                    "frame_index": selection["frame_index"],
+                    "points": selection["points"],
+                },
+            )
+            state["selected"] += 1
+            self.jobs.update(job["id"], state=state)
+        seconds = state["seconds"]
+        # Kling renders 5 s for 2-5 s inputs and 10 s for 7-10 s inputs.
+        if seconds <= 5.5:
+            duration = "5"
+        elif seconds >= 6.5:
+            duration = "10"
+        else:
+            raise ApiError(
+                "Multi-element editing needs a 2-5 s or 7-10 s video",
+                400,
+                "reference_limit",
+            )
+        body: dict[str, Any] = {
+            "session_id": state["session_id"],
+            "edit_mode": params["edit_mode"],
+        }
+        images = [r for r in references if r["type"] == "image"]
+        if images:
+            body["image_list"] = [
+                {"image": await self._image(image)} for image in images
+            ]
+        if request["prompt"]:
+            body["prompt"] = request["prompt"]
+        if params.get("negative_prompt"):
+            body["negative_prompt"] = params["negative_prompt"]
+        body["mode"] = RESOLUTION_MODES[params.get("resolution", "720p")]
+        body["duration"] = duration
+        if params.get("watermark"):
+            body["watermark_info"] = {"enabled": True}
+        path = "/v1/videos/multi-elements"
+        created = await self.client.call("POST", path, json=body)
+        self.jobs.update(
+            job["id"],
+            upstream={"api": "legacy", "path": path, "task_id": created["task_id"]},
+            state={**state, "step": "rendering"},
+            provider_status="submitted",
+        )
+
     async def run_job(self, job: dict[str, Any]) -> None:
-        """Worker step for multi-step jobs (lip sync)."""
+        """Worker step for multi-step jobs (lip sync, multi-element editing)."""
         state = job["state"] or {}
         if state.get("step") == "rendering":
             await self._poll(job)
+            return
+        if job["task"] == "multi_element_edit":
+            await self._run_multi_element(job)
             return
         request = job["request"]
         params = request["params"]
