@@ -1,4 +1,5 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
@@ -197,16 +198,19 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const detailsJob = detailsId ? jobs.find(job => job.id === detailsId) || null : null;
   const selectedModel = config.models.find(option => option.id === model);
   const capabilities = selectedModel?.capabilities;
-  const limits = capabilities?.reference_limits;
+  const task = MODE_TASKS[mode];
+  const provider = providerOf(capabilities);
   const taskTypes = capabilities?.task_types || [];
-  const frameMode = mode === "first_frame" || mode === "first_last";
-  const ratioLocked = Boolean(capabilities && (
-    (frameMode && capabilities.adaptive_ratio_for_frames)
-    || ((mode === "edit" || mode === "extend") && taskTypes.includes(mode))
-  ));
-  const durationLocked = Boolean(mode === "edit" && taskTypes.includes("edit"));
-  const effectiveRatio = ratioLocked ? "adaptive" : ratio;
-  const effectiveDuration = durationLocked ? -1 : duration;
+  const ratioLock = lockedValue(capabilities, task, "aspect_ratio");
+  const durationLock = lockedValue(capabilities, task, "seconds");
+  const ratioLocked = Boolean(ratioLock);
+  const durationLocked = Boolean(durationLock);
+  const effectiveRatio = ratioLock ? String(ratioLock.value) : ratio;
+  const effectiveDuration = durationLock ? Number(durationLock.value) : duration;
+  const durationOptions = parameterValues(capabilities, task, "seconds").map(Number);
+  const resolutionOptions = parameterValues(capabilities, task, "resolution").map(String);
+  const ratioOptions = parameterValues(capabilities, task, "aspect_ratio").map(String);
+  const outputFormats = parameterValues(capabilities, task, "output_format").map(String);
   const allKinds = useMemo(() => [
     ...references.map(item => item.kind),
     ...(continuationTaskId ? ["image" as MediaKind] : []),
@@ -265,21 +269,10 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }
 
   function modeUnavailableFor(caps: ModelCapabilities | undefined, id: string): string | null {
-    if (!caps) return null;
-    const allowed = caps.reference_limits;
-    if (id === "first_last" && !caps.supports_last_frame_role) {
-      return "Dieses Modell unterstützt kein Endframe.";
-    }
-    if (id === "multimodal" && !allowed.image && !allowed.video && !allowed.audio) {
-      return "Dieses Modell unterstützt keine Referenzen.";
-    }
-    if ((id === "edit" || id === "extend" || id === "stitch") && !allowed.video) {
-      return "Dieses Modell unterstützt keine Videoreferenzen.";
-    }
-    return null;
+    return modeUnavailable(caps, id);
   }
 
-  function modeUnavailable(id: string): string | null {
+  function isModeUnavailable(id: string): string | null {
     return modeUnavailableFor(capabilities, id);
   }
 
@@ -287,21 +280,23 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     setModel(modelId);
     const next = config.models.find(option => option.id === modelId);
     if (!next) return;
-    setDuration(next.capabilities.defaults.duration);
-    setResolution(next.capabilities.defaults.resolution);
-    setRatio(next.capabilities.defaults.ratio);
-    setOutputFormat(next.capabilities.output_formats[0] || "mp4");
-    if (modeUnavailableFor(next.capabilities, mode)) setMode("text");
+    const nextMode = modeUnavailableFor(next.capabilities, mode) ? "text" : mode;
+    const nextTask = MODE_TASKS[nextMode];
+    setDuration(Number(parameterDefault(next.capabilities, nextTask, "seconds") ?? 5));
+    setResolution(String(parameterDefault(next.capabilities, nextTask, "resolution") ?? "720p"));
+    setRatio(String(parameterDefault(next.capabilities, nextTask, "aspect_ratio") ?? "adaptive"));
+    setOutputFormat(String(parameterValues(next.capabilities, nextTask, "output_format")[0] ?? "mp4"));
+    setMode(nextMode);
   }
 
   function validationError(): string | null {
     if (!model) return "Bitte wähle ein Modell aus.";
     if (!prompt.trim()) return "Bitte beschreibe das gewünschte Video.";
-    const unavailable = modeUnavailable(mode);
+    const unavailable = isModeUnavailable(mode);
     if (unavailable) return unavailable;
     const count = (kind: MediaKind) => allKinds.filter(value => value === kind).length;
     for (const kind of ["image", "video", "audio"] as MediaKind[]) {
-      const limit = limits?.[kind] ?? 0;
+      const limit = referenceLimit(capabilities, task, kind);
       if (count(kind) > limit) {
         return limit === 0
           ? `Dieses Modell unterstützt keine ${kindLabel[kind]}-Referenzen.`
@@ -320,6 +315,40 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }
 
   function buildPayload() {
+    return provider === "modelark" ? buildSeedancePayload() : buildUnifiedPayload();
+  }
+
+  // Unified request (SPEC section 5) for every provider other than ModelArk.
+  function buildUnifiedPayload() {
+    let imageIndex = 0;
+    let baseVideoTaken = false;
+    const roleFor = (kind: MediaKind) => {
+      if (mode === "first_frame") return "first_frame";
+      if (mode === "first_last" && kind === "image") return imageIndex++ === 0 ? "first_frame" : "last_frame";
+      if ((mode === "edit" || mode === "extend") && kind === "video" && !baseVideoTaken) {
+        baseVideoTaken = true;
+        return "base_video";
+      }
+      return "reference";
+    };
+    const includeReferences = mode !== "text";
+    return {
+      model,
+      ui_mode: mode,
+      task,
+      prompt: prompt.trim(),
+      seconds: effectiveDuration === -1 ? "auto" : effectiveDuration,
+      resolution,
+      aspect_ratio: effectiveRatio,
+      ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
+      ...(feature(capabilities, "generate_audio") ? { generate_audio: generateAudio } : {}),
+      ...(feature(capabilities, "watermark") ? { watermark } : {}),
+      ...(includeReferences && references.length ? { references: references.map(item => ({ type: item.kind, url: item.url, role: roleFor(item.kind) })) } : {}),
+      ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind })) } : {}),
+    };
+  }
+
+  function buildSeedancePayload() {
     let imageIndex = continuationTaskId ? 1 : 0;
     const roleFor = (kind: MediaKind) => {
       if (mode === "first_frame") return "first_frame";
@@ -334,7 +363,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       duration: effectiveDuration,
       resolution,
       ratio: effectiveRatio,
-      ...(capabilities && capabilities.output_formats.length > 1 ? { output_format: outputFormat } : {}),
+      ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
       ...((mode === "edit" || mode === "extend") && taskTypes.includes(mode) ? { omni_reference_task_type: mode } : {}),
       generate_audio: generateAudio,
       watermark,
@@ -396,9 +425,9 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
     <main className="studio-grid">
       <section className="composer panel">
-        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{config.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label></div>
+        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label></div>
 
-        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(modeUnavailable(item.id))} data-tooltip={modeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${modeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
+        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
         {mode !== "text" && <div className="field-group">
           <div className="label-row"><SettingLabel tooltip={TOOLTIPS.references}>Referenzen</SettingLabel><span>{allKinds.length} hinzugefügt</span></div>
@@ -408,20 +437,20 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>
           {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>Letztes Frame aus vorherigem Job</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
           {references.length > 0 && <div className="reference-list">
-            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span><div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div></div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
+            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span>{feature(capabilities, "real_human") && <div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div>}</div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
           </div>}
         </div>}
 
         <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
         <div className="settings-grid">
-          <label><span className="setting-label">Dauer<Tooltip text={durationLocked ? TOOLTIPS.durationLocked : TOOLTIPS.duration} /></span><select value={effectiveDuration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities || durationLocked}>{(capabilities?.durations || []).map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
-          <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{(capabilities?.resolutions || []).map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span className="setting-label">Format<Tooltip text={ratioLocked ? TOOLTIPS.ratioLocked : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{(capabilities?.ratios || []).map(value => <option key={value}>{value}</option>)}</select></label>
-          {capabilities && capabilities.output_formats.length > 1 && <label><span className="setting-label">Datei<Tooltip text={TOOLTIPS.outputFormat} /></span><select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>{capabilities.output_formats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>}
-          <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>
+          <label><span className="setting-label">Dauer<Tooltip text={durationLock ? durationLock.message : TOOLTIPS.duration} /></span><select value={effectiveDuration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities || durationLocked}>{durationOptions.map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
+          <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{resolutionOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+          <label><span className="setting-label">Format<Tooltip text={ratioLock ? ratioLock.message : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{ratioOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+          {outputFormats.length > 1 && <label><span className="setting-label">Datei<Tooltip text={TOOLTIPS.outputFormat} /></span><select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>{outputFormats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>}
+          {provider === "modelark" && <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>}
         </div>
-        <div className="toggle-row"><Toggle label="Synchrones Audio" tooltip={TOOLTIPS.audio} checked={generateAudio} onChange={setGenerateAudio}/><Toggle label="AI-Wasserzeichen" tooltip={TOOLTIPS.watermark} checked={watermark} onChange={setWatermark}/><Toggle label="Letztes Frame behalten" tooltip={TOOLTIPS.lastFrame} checked={returnLastFrame} onChange={setReturnLastFrame}/></div>
+        <div className="toggle-row">{feature(capabilities, "generate_audio") && <Toggle label="Synchrones Audio" tooltip={TOOLTIPS.audio} checked={generateAudio} onChange={setGenerateAudio}/>}{feature(capabilities, "watermark") && <Toggle label="AI-Wasserzeichen" tooltip={TOOLTIPS.watermark} checked={watermark} onChange={setWatermark}/>}{feature(capabilities, "last_frame_output") && <Toggle label="Letztes Frame behalten" tooltip={TOOLTIPS.lastFrame} checked={returnLastFrame} onChange={setReturnLastFrame}/>}</div>
         {error && <div className="error-message wide">{error}</div>}
         <div className="generate-bar"><div><span>Geplante Ausgabe</span><strong>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration}s`} · {resolution} · {effectiveRatio} · {generateAudio ? "mit Audio" : "stumm"}</strong></div><button className="generate-button" onClick={requestConfirmation} disabled={creating || uploading}><Icon name="spark" />{creating ? "Task wird erstellt …" : "Video generieren"}</button></div>
       </section>
