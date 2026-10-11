@@ -752,3 +752,21 @@ async def test_veo_models_advertise_video_extension(tmp_path: Path):
     caps = models.json()["data"][0]["capabilities"]
     assert caps["continuation"] == "video_extension"
     assert caps["tasks"]["extend"]["references"][0]["role"] == "base_video"
+
+
+async def test_default_parameter_policy_can_be_adapt(tmp_path: Path):
+    google = FakeGoogle(polls=[{"done": False}])
+    settings = settings_for(tmp_path, "vertex")
+    settings.default_parameter_policy = "adapt"
+
+    (response,) = await run(
+        settings,
+        google,
+        create({"model": "veo-3.1-fast-generate-001", "prompt": "fox", "seconds": 5}),
+    )
+
+    assert response.status_code == 200, response.text
+    sent = next(
+        r for r in google.requests if r.url.path.endswith(":predictLongRunning")
+    )
+    assert json.loads(sent.content)["parameters"]["durationSeconds"] in {4, 6}

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -36,7 +37,7 @@ from .credentials import (
     kling_check,
     modelark_check,
 )
-from .downloads import system_resolver
+from .downloads import host_is_public, system_resolver
 from .errors import ApiError, openai_error
 from .google_auth import TokenSource, VertexTokenSource
 from .ids import decode_video_id, encode_video_id
@@ -62,6 +63,7 @@ from .providers.seedance import SeedanceProvider
 from .references import ReferenceResolver
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
+from .validation import ContractError
 from .webhooks import WebhookDispatcher, validate_webhook_url
 from .workers import JobRunner
 
@@ -212,6 +214,16 @@ async def parse_create_request(
     ), None
 
 
+def _requests_real_human(data: dict[str, Any]) -> bool:
+    references = [
+        *(data.get("references") or []),
+        *(data.get("reference_urls") or []),
+    ]
+    return data.get("real_human") is True or any(
+        isinstance(item, dict) and item.get("real_human") is True for item in references
+    )
+
+
 # SPEC 11.7: no provider renders thumbnails or sprite sheets. Other variant
 # names (video, audio, watermarked, product_image_1 …) are resolved per job.
 UNSUPPORTED_VARIANTS = ("thumbnail", "spritesheet")
@@ -235,6 +247,7 @@ def create_app(
     vertex_token_source: TokenSource | None = None,
     reference_transport: httpx.AsyncBaseTransport | None = None,
     reference_resolver: Callable[[str], list[str]] | None = None,
+    webhook_resolver: Callable[[str], list[str]] = system_resolver,
     validate_startup_credentials: bool = True,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -368,6 +381,7 @@ def create_app(
         settings.provider_job_db,
         settings.webhook_secret,
         transport=webhook_transport,
+        resolver=webhook_resolver,
         timeout_seconds=settings.webhook_timeout_seconds,
         max_attempts=settings.webhook_max_attempts,
     )
@@ -824,7 +838,16 @@ def create_app(
                 validate_webhook_url(str(webhook_url))
             except ValueError as exc:
                 raise TranslationError(str(exc)) from exc
+            host = urlparse(str(webhook_url)).hostname or ""
+            if not await host_is_public(host, webhook_resolver):
+                raise TranslationError("webhook_url must resolve to a public address")
         provider = providers.for_model(model)
+        if provider.name != "modelark" and _requests_real_human(data):
+            raise ContractError(
+                "real_human is available for Seedance models only",
+                code="unsupported_parameter",
+                param="real_human",
+            )
         credentials.require(provider.name)
         video = await provider.create_video(data, upload)
         if webhook_url is not None:

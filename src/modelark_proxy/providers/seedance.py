@@ -718,7 +718,9 @@ class SeedanceProvider:
 
     async def _from_unified(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate a unified request into the Seedance fields it maps to."""
-        request = normalize_request(data)
+        request = normalize_request(
+            data, default_policy=self.settings.default_parameter_policy
+        )
         model = self.settings.resolve_model(request.model)
         request, _ = validate(seedance_capabilities(model), request)
         spec = spec_for(model)

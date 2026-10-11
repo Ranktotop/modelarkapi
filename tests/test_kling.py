@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -428,3 +429,43 @@ async def test_failed_tasks_carry_the_kling_message(tmp_path: Path):
 
     assert failed.json()["status"] == "failed"
     assert failed.json()["error"]["message"] == "Content risk detected"
+
+
+async def test_real_human_is_seedance_only(tmp_path: Path):
+    fake = FakeKling()
+
+    (response,) = await run(
+        tmp_path,
+        fake,
+        lambda client, _: client.post(
+            "/v1/videos",
+            json={
+                "model": "kling-3.0",
+                "prompt": "fox",
+                "references": [
+                    {
+                        "type": "image",
+                        "url": "https://i.example.com/a.png",
+                        "real_human": True,
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_parameter"
+    assert not any(r.method == "POST" for r in fake.requests)
+
+
+async def test_account_costs_are_throttled_to_one_per_second(tmp_path: Path):
+    fake = FakeKling(
+        states=[{"code": 0, "data": {"resource_pack_subscribe_infos": []}}]
+    )
+    costs = lambda client, _: client.get("/v1/providers/kling/account/costs")
+
+    started = time.monotonic()
+    first, second = await run(tmp_path, fake, costs, costs)
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert time.monotonic() - started >= 1.0

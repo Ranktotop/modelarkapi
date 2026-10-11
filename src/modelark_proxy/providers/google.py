@@ -122,7 +122,9 @@ class GoogleProvider:
                 code="unsupported_parameter",
                 param="input_reference",
             )
-        request = normalize_request(data)
+        request = normalize_request(
+            data, default_policy=self.settings.default_parameter_policy
+        )
         model = await self._model(request.model)
         request.model = model
         caps = self._capabilities(model)

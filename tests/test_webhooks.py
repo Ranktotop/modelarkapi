@@ -137,7 +137,12 @@ def settings(tmp_path: Path) -> Settings:
     )
 
 
-async def post_video(settings: Settings, body: dict, captured: list[httpx.Request]):
+async def post_video(
+    settings: Settings,
+    body: dict,
+    captured: list[httpx.Request],
+    resolver=public_resolver,
+):
     def modelark(request: httpx.Request) -> httpx.Response:
         captured.append(request)
         return httpx.Response(200, json={"id": "cgt-1"})
@@ -145,6 +150,7 @@ async def post_video(settings: Settings, body: dict, captured: list[httpx.Reques
     app = create_app(
         settings,
         ark_transport=httpx.MockTransport(modelark),
+        webhook_resolver=resolver,
         validate_startup_credentials=False,
     )
     async with (
@@ -214,3 +220,23 @@ async def test_webhook_url_must_use_https(settings: Settings):
     )
 
     assert response.status_code == 400
+
+
+async def test_private_webhook_targets_are_rejected_at_create(settings: Settings):
+    settings.webhook_secret = SECRET
+    captured: list[httpx.Request] = []
+
+    response, watched = await post_video(
+        settings,
+        {
+            "model": "dreamina-seedance-2-5-260628",
+            "prompt": "fox",
+            "webhook_url": "https://intranet.example.com/hook",
+        },
+        captured,
+        resolver=lambda host: ["10.0.0.5"],
+    )
+
+    assert response.status_code == 400
+    assert captured == []
+    assert watched == []

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     provider_status_min_interval_seconds: float = Field(default=2.0, ge=0)
     output_dir: Path = Path("./data/outputs")
     prompt_guides_dir: Path = Path("./prompt_guides")
+    # SPEC 9: `strict` rejects unsupported values, `adapt` fits them to the model.
+    default_parameter_policy: Literal["strict", "adapt"] = "strict"
+    # Kling allows account/costs at most once per second.
+    kling_costs_min_interval_seconds: float = Field(default=1.0, ge=0)
     webhook_secret: str = ""
     webhook_interval_seconds: float = Field(default=5.0, gt=0)
     webhook_timeout_seconds: float = Field(default=10.0, gt=0)

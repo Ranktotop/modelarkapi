@@ -7,6 +7,7 @@ Turbo only exists in the new API (model in the path, `/tasks` for status).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -95,6 +96,8 @@ class KlingProvider:
         self.references = references
         self.download_transport = download_transport
         self.last_polled: dict[str, float] = {}
+        self.costs_lock = asyncio.Lock()
+        self.costs_called_at = 0.0
         self.assets = KlingAssets(client, references)
         # Set by the app; drives multi-step jobs such as lip sync.
         self.runner: Any = None
@@ -144,7 +147,9 @@ class KlingProvider:
         if len(virtual_tasks) == 1:
             # A single-purpose virtual model implies its task.
             data = {**data, "task": data.get("task") or virtual_tasks[0]}
-        request = normalize_request(data)
+        request = normalize_request(
+            data, default_policy=self.settings.default_parameter_policy
+        )
         if model_id is None:
             raise ProviderUnavailable(
                 f"Model '{request.model}' is not available on this proxy"
@@ -1087,6 +1092,19 @@ class KlingProvider:
             or path.startswith(NATIVE_EXCLUDED)
         ):
             raise ApiError(f"{path} is not an available Kling route", 404, "not_found")
+        if path == "/account/costs":
+            async with self.costs_lock:
+                wait = self.settings.kling_costs_min_interval_seconds - (
+                    time.monotonic() - self.costs_called_at
+                )
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                try:
+                    return await self.client.raw(
+                        method, path, params=params or None
+                    ), None
+                finally:
+                    self.costs_called_at = time.monotonic()
         raw = await self.client.raw(method, path, params=params or None, json=body)
         if method != "POST" or not isinstance(raw.get("data"), dict):
             return raw, None
