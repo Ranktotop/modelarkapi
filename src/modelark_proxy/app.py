@@ -803,7 +803,9 @@ def create_app(
         data, upload = await parse_create_request(request)
         return await create_from(data, upload)
 
-    async def source_reference(source: Any) -> tuple[dict[str, Any], str | None]:
+    async def source_reference(
+        source: Any,
+    ) -> tuple[dict[str, Any], str | None, VideoObject | None]:
         """Reference and model for an OpenAI `video` source (id, URL, or upload)."""
         source_id = str(
             (source or {}).get("id") if isinstance(source, dict) else source or ""
@@ -811,20 +813,29 @@ def create_app(
         if not source_id:
             raise TranslationError("video.id is required")
         if source_id.startswith(("data:", "https://")):
-            return {"type": "video", "url": source_id}, None
+            return {"type": "video", "url": source_id}, None, None
         internal = decode_video_id(source_id)
         try:
             video = await video_provider(internal).get_video(internal)
         except (ApiError, ProviderUnavailable):
-            return {"type": "video", "upload_id": internal}, None
-        return {"task_id": internal, "role": "base_video"}, video.model
+            return {"type": "video", "upload_id": internal}, None, None
+        return {"task_id": internal, "role": "base_video"}, video.model, video
 
     async def derived_create(
         body: dict[str, Any], source: Any, task: str
     ) -> VideoObject:
         data = normalize_fields(dict(body))
-        reference, model = await source_reference(source)
+        reference, model, video = await source_reference(source)
         data.setdefault("model", model)
+        resolution = (video.model_extra or {}).get("resolution") if video else None
+        if (
+            task == "edit"
+            and resolution
+            and data["model"] == model
+            and not {"resolution", "size", "quality"} & data.keys()
+        ):
+            # A remix or edit keeps the source's resolution unless asked otherwise.
+            data["resolution"] = resolution
         data["task"] = task
         data["references"] = [reference, *(data.get("references") or [])]
         return await create_from(data, None)

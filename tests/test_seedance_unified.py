@@ -49,6 +49,9 @@ class FakeArk:
                 "id": request.url.path.rsplit("/", 1)[-1],
                 "model": MODEL,
                 "status": self.source_status,
+                "resolution": "480p",
+                "ratio": "16:9",
+                "duration": 4,
                 "content": {"video_url": SOURCE_VIDEO},
             },
         )
@@ -327,3 +330,23 @@ async def test_public_asset_ids_become_asset_uris(settings: Settings):
         "image_url": {"url": "asset://asset-20261011-abc"},
         "role": "reference_image",
     }
+
+
+async def test_remix_keeps_the_source_resolution(settings: Settings):
+    fake = FakeArk()
+    source = encode_video_id("cgt-source", MODEL)
+
+    kept = await post(
+        settings, fake, f"/v1/videos/{source}/remix", {"prompt": "make it snow"}
+    )
+    chosen = await post(
+        settings,
+        fake,
+        f"/v1/videos/{source}/remix",
+        {"prompt": "make it snow", "resolution": "1080p"},
+    )
+
+    assert kept.status_code == 200, kept.text
+    assert fake.created[0]["resolution"] == "480p"
+    assert chosen.status_code == 200, chosen.text
+    assert fake.created[1]["resolution"] == "1080p"
