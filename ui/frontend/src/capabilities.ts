@@ -140,3 +140,8 @@ export function continuationOf(caps: ModelCapabilities | undefined): string {
   if (!caps) return "none";
   return caps.continuation ?? "last_frame";
 }
+
+export function extendsVideos(caps: ModelCapabilities | undefined): boolean {
+  const continuation = continuationOf(caps);
+  return continuation === "video_extension" || continuation === "multi_turn";
+}

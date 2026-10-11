@@ -712,6 +712,66 @@ def create_app(
 
     async def create_video(request: Request) -> VideoObject:
         data, upload = await parse_create_request(request)
+        return await create_from(data, upload)
+
+    async def source_reference(source: Any) -> tuple[dict[str, Any], str | None]:
+        """Reference and model for an OpenAI `video` source (id, URL, or upload)."""
+        source_id = str(
+            (source or {}).get("id") if isinstance(source, dict) else source or ""
+        )
+        if not source_id:
+            raise TranslationError("video.id is required")
+        if source_id.startswith(("data:", "https://")):
+            return {"type": "video", "url": source_id}, None
+        internal = decode_video_id(source_id)
+        try:
+            video = await video_provider(internal).get_video(internal)
+        except (ApiError, ProviderUnavailable):
+            return {"type": "video", "upload_id": internal}, None
+        return {"task_id": internal, "role": "base_video"}, video.model
+
+    async def derived_create(
+        body: dict[str, Any], source: Any, task: str
+    ) -> VideoObject:
+        data = normalize_fields(dict(body))
+        reference, model = await source_reference(source)
+        data.setdefault("model", model)
+        data["task"] = task
+        data["references"] = [reference, *(data.get("references") or [])]
+        return await create_from(data, None)
+
+    async def json_body(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise TranslationError("Request body must be a JSON object")
+        return body
+
+    @app.post("/v1/videos/edits", response_model=VideoObject)
+    @app.post("/videos/edits", response_model=VideoObject, include_in_schema=False)
+    async def edit_video(request: Request) -> VideoObject:
+        body = await json_body(request)
+        return await derived_create(body, body.pop("video", None), "edit")
+
+    @app.post("/v1/videos/extensions", response_model=VideoObject)
+    @app.post("/videos/extensions", response_model=VideoObject, include_in_schema=False)
+    async def extend_video(request: Request) -> VideoObject:
+        body = await json_body(request)
+        return await derived_create(body, body.pop("video", None), "extend")
+
+    @app.post("/v1/videos/{video_id}/remix", response_model=VideoObject)
+    @app.post(
+        "/videos/{video_id}/remix", response_model=VideoObject, include_in_schema=False
+    )
+    async def remix_video(video_id: str, request: Request) -> VideoObject:
+        video = await derived_create(await json_body(request), {"id": video_id}, "edit")
+        source = decode_video_id(video_id)
+        source_model = (await video_provider(source).get_video(source)).model
+        video.remixed_from_video_id = encode_video_id(source, source_model)
+        return video
+
+    async def create_from(
+        data: dict[str, Any], upload: UploadFile | None
+    ) -> VideoObject:
         model = data.get("model")
         if not isinstance(model, str) or not model.strip():
             raise TranslationError("model is required")

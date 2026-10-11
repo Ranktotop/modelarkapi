@@ -16,6 +16,7 @@ from ..capabilities import ModelCapabilities
 from ..config import Settings
 from ..downloads import stream_remote
 from ..errors import ApiError, openai_error
+from ..ids import decode_video_id
 from ..outputs import OutputStore
 from ..provider_jobs import TERMINAL_STATUSES, ProviderJobStore
 from ..references import ReferenceResolver
@@ -137,11 +138,16 @@ class GoogleProvider:
         family = family_of(model)
         backend = self.backends[family]
         assert backend is not None
+        previous = self._previous_interaction(request, family, backend)
         media = await self._resolve(caps, request, family)
         if family == "omni":
             interaction = await backend.start_omni(
                 build_omni_body(
-                    request, caps, media, delivery_uri=backend.name == "gemini"
+                    request,
+                    caps,
+                    media,
+                    delivery_uri=backend.name == "gemini",
+                    previous_interaction=previous,
                 )
             )
             upstream = {
@@ -164,6 +170,36 @@ class GoogleProvider:
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    def _previous_interaction(
+        self, request: UnifiedRequest, family: str, backend: GoogleBackend
+    ) -> str | None:
+        """Use Omni multi-turn when the base video is an Omni job of this backend.
+
+        The reference is removed so its bytes are not uploaded again. This is
+        also the only way the Gemini API edits videos for users in the EEA.
+        """
+        if family != "omni":
+            return None
+        for reference in list(request.references):
+            if reference["role"] != "base_video" or not reference.get("task_id"):
+                continue
+            job = self.jobs.get(decode_video_id(str(reference["task_id"])))
+            upstream = (job or {}).get("upstream") or {}
+            if (
+                job
+                and upstream.get("kind") == "omni"
+                and upstream.get("backend") == backend.name
+            ):
+                if job["status"] != "completed":
+                    raise ContractError(
+                        "The source job has not finished yet",
+                        code="reference_unavailable",
+                        param="references",
+                    )
+                request.references.remove(reference)
+                return str(upstream["interaction"])
+        return None
 
     async def _resolve(
         self, caps: ModelCapabilities, request: UnifiedRequest, family: str

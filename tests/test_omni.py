@@ -351,3 +351,216 @@ async def test_deleting_a_running_job_cancels_it_upstream(tmp_path: Path):
     assert any(
         r.url.path.endswith("/interactions/v1_abc/cancel") for r in fake.requests
     )
+
+
+# --- T13: references, edit, extend, multi-turn --------------------------------
+
+MP4 = b"\x00\x00\x00\x20ftypisom" + b"\x00" * 24
+MP4_URI = "data:video/mp4;base64," + base64.b64encode(MP4).decode()
+MP4_B64 = base64.b64encode(MP4).decode()
+
+
+def done_vertex():
+    return completed({"data": base64.b64encode(VIDEO).decode()})
+
+
+async def test_reference_images_and_videos_become_input_parts(tmp_path: Path):
+    fake = FakeOmni()
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create(
+            {
+                "model": "gemini-omni-1.1-flash-preview",
+                "task": "reference_to_video",
+                "prompt": "<IMAGE_REF_0> dances like <VIDEO_REF_0>",
+                "references": [
+                    {"type": "image", "url": PNG_URI},
+                    {"type": "video", "url": MP4_URI},
+                ],
+            }
+        ),
+    )
+
+    assert created.status_code == 200
+    body = fake.created()
+    assert body["input"] == [
+        {"type": "image", "mime_type": "image/png", "data": PNG_B64},
+        {"type": "video", "mime_type": "video/mp4", "data": MP4_B64},
+        {"type": "text", "text": "<IMAGE_REF_0> dances like <VIDEO_REF_0>"},
+    ]
+    assert body["generation_config"] == {"video_config": {"task": "reference_to_video"}}
+
+
+async def test_at_most_three_reference_videos(tmp_path: Path):
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeOmni(),
+        create(
+            {
+                "model": "gemini-omni-1.1-flash-preview",
+                "task": "reference_to_video",
+                "prompt": "x",
+                "references": [{"type": "video", "url": MP4_URI}] * 4,
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reference_limit"
+
+
+async def test_uploaded_videos_are_edited_inline(tmp_path: Path):
+    fake = FakeOmni()
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create(
+            {
+                "model": "gemini-omni-flash-preview",
+                "task": "edit",
+                "prompt": "make it night",
+                "references": [{"type": "video", "url": MP4_URI}],
+            }
+        ),
+    )
+
+    assert created.status_code == 200
+    body = fake.created()
+    assert body["input"][0] == {
+        "type": "video",
+        "mime_type": "video/mp4",
+        "data": MP4_B64,
+    }
+    assert body["generation_config"] == {"video_config": {"task": "edit"}}
+    assert "previous_interaction_id" not in body
+
+
+async def test_extending_an_own_job_continues_the_interaction(tmp_path: Path):
+    fake = FakeOmni([done_vertex()])
+
+    _, _, extension = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create({"model": "gemini-omni-1.1-flash-preview", "prompt": "a boat"}),
+        follow(),
+        lambda c, results: c.post(
+            "/v1/videos",
+            json={
+                "model": "gemini-omni-1.1-flash-preview",
+                "task": "extend",
+                "prompt": "it sails away",
+                "seconds": 4,
+                "references": [{"task_id": results[0].json()["id"]}],
+            },
+        ),
+    )
+
+    assert extension.status_code == 200
+    body = [
+        json.loads(r.content)
+        for r in fake.requests
+        if r.method == "POST" and r.url.path.endswith("/interactions")
+    ][1]
+    assert body["previous_interaction_id"] == "v1_abc"
+    assert body["input"] == [{"type": "text", "text": "it sails away"}]
+    assert body["generation_config"] == {"video_config": {"task": "extend"}}
+    assert body["response_format"]["duration"] == "4s"
+
+
+async def test_remix_edits_the_source_video_with_extra_body_fields(tmp_path: Path):
+    fake = FakeOmni([done_vertex()])
+
+    created, _, remix = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create({"model": "gemini-omni-1.1-flash-preview", "prompt": "a boat"}),
+        follow(),
+        lambda c, results: c.post(
+            f"/v1/videos/{results[0].json()['id']}/remix",
+            json={"prompt": "make it snow", "resolution": "1080p"},
+        ),
+    )
+
+    assert remix.status_code == 200
+    assert remix.json()["remixed_from_video_id"] == created.json()["id"]
+    assert decode_video_id(remix.json()["id"]).startswith("vid-omni-")
+    body = [
+        json.loads(r.content)
+        for r in fake.requests
+        if r.method == "POST" and r.url.path.endswith("/interactions")
+    ][1]
+    assert body["previous_interaction_id"] == "v1_abc"
+    assert body["generation_config"] == {"video_config": {"task": "edit"}}
+    assert body["response_format"]["resolution"] == "1080p"
+
+
+async def test_edits_and_extensions_routes_follow_the_openai_shape(tmp_path: Path):
+    fake = FakeOmni([done_vertex()])
+
+    created, _, edit, extension = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create({"model": "gemini-omni-1.1-flash-preview", "prompt": "a boat"}),
+        follow(),
+        lambda c, results: c.post(
+            "/v1/videos/edits",
+            json={"prompt": "paint it red", "video": {"id": results[0].json()["id"]}},
+        ),
+        lambda c, results: c.post(
+            "/v1/videos/extensions",
+            json={
+                "prompt": "keep going",
+                "seconds": "6",
+                "video": {"id": results[0].json()["id"]},
+            },
+        ),
+    )
+
+    assert edit.status_code == 200
+    assert extension.status_code == 200
+    bodies = [
+        json.loads(r.content)
+        for r in fake.requests
+        if r.method == "POST" and r.url.path.endswith("/interactions")
+    ]
+    assert [b["generation_config"]["video_config"]["task"] for b in bodies[1:]] == [
+        "edit",
+        "extend",
+    ]
+    assert bodies[2]["response_format"]["duration"] == "6s"
+
+
+async def test_the_first_omni_preview_cannot_extend(tmp_path: Path):
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeOmni(),
+        create(
+            {
+                "model": "gemini-omni-flash-preview",
+                "task": "extend",
+                "prompt": "x",
+                "references": [{"type": "video", "url": MP4_URI}],
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_task"
+
+
+async def test_omni_continues_by_multi_turn(tmp_path: Path):
+    (models,) = await run(
+        settings_for(tmp_path, "vertex"), FakeOmni(), lambda c, _: c.get("/v1/models")
+    )
+
+    caps = {m["id"]: m["capabilities"] for m in models.json()["data"]}
+    assert caps["gemini-omni-1.1-flash-preview"]["continuation"] == "multi_turn"
+    assert set(caps["gemini-omni-1.1-flash-preview"]["tasks"]) >= {
+        "reference_to_video",
+        "edit",
+        "extend",
+    }
+    assert set(caps["gemini-omni-flash-preview"]["tasks"]) == {"text_to_video", "edit"}

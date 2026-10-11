@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { continuationOf, feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
+import { extendsVideos, feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
@@ -419,7 +419,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }
 
   function continueFrom(job: Job) {
-    if (continuationOf(capabilitiesOf(job)) === "video_extension") {
+    if (extendsVideos(capabilitiesOf(job))) {
       selectModel(job.request?.model || job.model);
       setMode("extend");
       setReferences([]);
@@ -495,7 +495,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           <div className="result-actions">
-            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}{continuationOf(capabilitiesOf(selected)) === "video_extension" && <button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Verlängern</button>}</>}
+            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}{extendsVideos(capabilitiesOf(selected)) && <button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Verlängern</button>}</>}
             <button className="action" onClick={() => setDetailsId(selected.id)} title="Einstellungen und Statusdetails dieses Jobs anzeigen"><Icon name="info" /> Details</button>
           </div>
         </> : <div className="empty-state"><div className="empty-visual"><Icon name="play" /></div><strong>Noch kein Video</strong><span>Deine aktuelle Generierung erscheint hier.</span></div>}

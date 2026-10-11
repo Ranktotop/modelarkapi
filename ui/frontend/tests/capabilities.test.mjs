@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   continuationOf,
+  extendsVideos,
   feature,
   groupModels,
   lockedValue,
@@ -124,4 +125,10 @@ test("continuation follows the document and defaults to the last frame", () => {
   assert.equal(continuationOf({ ...veo, continuation: "video_extension" }), "video_extension");
   assert.equal(continuationOf(v1Only), "last_frame");
   assert.equal(continuationOf(undefined), "none");
+});
+
+test("Veo extension and Omni multi-turn both continue by extending the video", () => {
+  assert.equal(extendsVideos({ ...veo, continuation: "video_extension" }), true);
+  assert.equal(extendsVideos({ ...veo, continuation: "multi_turn" }), true);
+  assert.equal(extendsVideos(seedance25), false);
 });
