@@ -100,7 +100,12 @@ class GeminiBackend(_Base):
         ]
 
     async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
-        return await self._call("POST", f"{self.base}/interactions", json=body)
+        return await self._call(
+            "POST",
+            f"{self.base}/interactions",
+            json=body,
+            timeout=self.settings.omni_create_timeout_seconds,
+        )
 
     async def get_omni(self, interaction_id: str) -> dict[str, Any]:
         return await self._call("GET", f"{self.base}/interactions/{interaction_id}")
@@ -170,7 +175,12 @@ class VertexBackend(_Base):
         )
 
     async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
-        return await self._call("POST", self.interactions_url, json=body)
+        return await self._call(
+            "POST",
+            self.interactions_url,
+            json=body,
+            timeout=self.settings.omni_create_timeout_seconds,
+        )
 
     async def get_omni(self, interaction_id: str) -> dict[str, Any]:
         return await self._call("GET", f"{self.interactions_url}/{interaction_id}")

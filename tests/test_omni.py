@@ -628,3 +628,35 @@ async def test_an_upstream_timeout_is_a_504_and_not_retried(tmp_path: Path):
     assert "may" in response.json()["error"]["message"]
     posts = [r for r in fake.requests if r.method == "POST"]
     assert len(posts) == 1
+
+
+async def test_omni_create_waits_longer_than_ordinary_calls(tmp_path: Path):
+    # Vertex can hold an Omni create open while it renders, despite background.
+    fake = FakeOmni()
+    seen: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/interactions") and request.method == "POST":
+            seen["read"] = request.extensions["timeout"]["read"]
+        return fake(request)
+
+    settings = settings_for(tmp_path, "vertex")
+    app = create_app(
+        settings,
+        google_transport=httpx.MockTransport(handler),
+        vertex_token_source=token,
+        validate_startup_credentials=False,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos", json={"model": "gemini-omni-1.1-flash-preview", "prompt": "x"}
+        )
+
+    assert response.status_code == 200, response.text
+    assert seen["read"] == settings.omni_create_timeout_seconds
+    assert settings.omni_create_timeout_seconds > settings.request_timeout_seconds

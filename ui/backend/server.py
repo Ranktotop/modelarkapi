@@ -586,7 +586,8 @@ def create_app(
         upstream = {
             key: value for key, value in data.items() if not key.startswith("ui_")
         }
-        status, body = await proxy_json("POST", "/videos", json=upstream)
+        # Longer than the proxy's Omni create timeout, so a slow create is kept.
+        status, body = await proxy_json("POST", "/videos", json=upstream, timeout=660)
         if status < 400:
             body = store.add(body, data)
         return JSONResponse(body, status_code=status)
