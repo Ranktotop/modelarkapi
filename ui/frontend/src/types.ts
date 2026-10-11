@@ -8,6 +8,8 @@ export type Reference = {
   filename?: string;
   expires_at: number;
   real_human?: boolean;
+  // Explicit role for the unified API; otherwise the proxy assigns one.
+  role?: string;
 };
 
 export type ParameterSpec = {
@@ -90,6 +92,7 @@ export type ProviderVideo = {
   progress?: number;
   last_frame_available?: boolean;
   error?: { message?: string; code?: string };
+  outputs?: { index: number; variants?: string[]; mime_type?: string }[];
 };
 
 export type JobReference = {

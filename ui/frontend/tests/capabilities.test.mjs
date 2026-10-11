@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  availableModes,
   continuationOf,
+  hasParameter,
+  parameterRange,
+  promptRequired,
+  resultVariants,
+  rolesFor,
   extendsVideos,
   feature,
   groupModels,
@@ -131,4 +137,57 @@ test("Veo extension and Omni multi-turn both continue by extending the video", (
   assert.equal(extendsVideos({ ...veo, continuation: "video_extension" }), true);
   assert.equal(extendsVideos({ ...veo, continuation: "multi_turn" }), true);
   assert.equal(extendsVideos(seedance25), false);
+});
+
+const klingTools = {
+  schema_version: 2,
+  provider: "kling",
+  parameters: {
+    seconds: { min: 3, max: 10, default: 5 },
+    resolution: { values: ["720p", "1080p"], default: "720p" },
+    speech: {},
+  },
+  tasks: {
+    avatar: { references: [{ role: "subject", types: ["image"], min: 1, max: 1 }, { role: "speech", types: ["audio"], min: 0, max: 1 }], prompt_required: false },
+    commerce_talking_agent: { references: [{ role: "avatar", types: ["image"], min: 0, max: 1 }, { role: "product", types: ["image"], min: 0, max: 5 }] },
+  },
+  prompt: { required: true },
+  constraints: [],
+  features: {},
+};
+
+test("roles for a reference come from the task's slots", () => {
+  assert.deepEqual(rolesFor(klingTools, "commerce_talking_agent", "image"), ["avatar", "product"]);
+  assert.deepEqual(rolesFor(klingTools, "avatar", "audio"), ["speech"]);
+  assert.deepEqual(rolesFor(seedance25, "reference_to_video", "video"), ["reference"]);
+  assert.deepEqual(rolesFor(v1Only, "reference_to_video", "image"), []);
+});
+
+test("prompt requirements follow the task, then the model", () => {
+  assert.equal(promptRequired(klingTools, "avatar"), false);
+  assert.equal(promptRequired(klingTools, "commerce_talking_agent"), true);
+  assert.equal(promptRequired(v1Only, "text_to_video"), true);
+});
+
+test("ranges and parameter presence are exposed", () => {
+  assert.deepEqual(parameterRange(klingTools, "avatar", "seconds"), { min: 3, max: 10 });
+  assert.equal(parameterRange(klingTools, "avatar", "resolution"), null);
+  assert.equal(hasParameter(klingTools, "avatar", "speech"), true);
+  assert.equal(hasParameter(klingTools, "avatar", "negative_prompt"), false);
+  assert.equal(hasParameter(v1Only, "text_to_video", "seconds"), true);
+});
+
+test("available modes list only the model's tasks", () => {
+  const modes = [{ id: "text" }, { id: "avatar" }, { id: "edit" }];
+  assert.deepEqual(availableModes(klingTools, modes).map(mode => mode.id), ["avatar"]);
+  assert.deepEqual(availableModes(v1Only, modes).map(mode => mode.id), ["text", "avatar", "edit"]);
+});
+
+test("result variants are listed per output", () => {
+  assert.deepEqual(resultVariants([{ index: 0, variants: ["video", "audio", "product_image_1"] }]), [
+    { output: 0, variant: "video" },
+    { output: 0, variant: "audio" },
+    { output: 0, variant: "product_image_1" },
+  ]);
+  assert.deepEqual(resultVariants(undefined), [{ output: 0, variant: "video" }]);
 });

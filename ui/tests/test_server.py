@@ -572,3 +572,47 @@ async def test_ui_exposes_prompt_guides(ui_settings: UISettings):
     assert guide.json() == {"id": "veo_3_1", "title": "Veo 3.1 Guide", "markdown": "# Veo"}
     assert captured[-2].headers["accept"] == "application/json"
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_ui_forwards_assets_effects_and_content_variants(ui_settings: UISettings):
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        path = request.url.path
+        if path.endswith("/content"):
+            return httpx.Response(200, content=b"mp3", headers={"content-type": "audio/mpeg"})
+        if path.endswith("/providers/kling/effects"):
+            return httpx.Response(200, json={"object": "list", "data": [{"id": "hug_pro", "images": 2}]})
+        if path.endswith("/assets") and request.method == "POST":
+            return httpx.Response(200, json={"id": "asset-kling-element-task-E1", "status": "processing"})
+        if path.endswith("/assets"):
+            return httpx.Response(200, json={"object": "list", "data": [{"id": "asset-kling-voice-1"}]})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"id": "asset-kling-voice-1", "deleted": True})
+        return httpx.Response(200, json={"id": "asset-kling-voice-1", "status": "ready"})
+
+    app = create_app(ui_settings, proxy_transport=httpx.MockTransport(handler), static_dir=Path("/does-not-exist"))
+    headers = {"X-UI-Request": "1"}
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://studio") as client,
+    ):
+        audio = await client.get("/api/videos/vid-1/content", params={"variant": "audio", "format": "wav", "output": 1})
+        effects = await client.get("/api/kling/effects")
+        listed = await client.get("/api/assets", params={"type": "voice", "scope": "preset"})
+        created = await client.post("/api/assets", headers=headers, json={"provider": "kling", "type": "element"})
+        fetched = await client.get("/api/assets/asset-kling-voice-1")
+        deleted = await client.delete("/api/assets/asset-kling-voice-1", headers=headers)
+
+    assert audio.content == b"mp3"
+    content_call = next(r for r in captured if r.url.path.endswith("/content"))
+    assert dict(content_call.url.params) == {"variant": "audio", "format": "wav", "output": "1"}
+    assert effects.json()["data"][0]["id"] == "hug_pro"
+    list_call = next(r for r in captured if r.url.path.endswith("/assets") and r.method == "GET")
+    assert dict(list_call.url.params) == {"provider": "kling", "type": "voice", "scope": "preset"}
+    assert listed.json()["data"][0]["id"] == "asset-kling-voice-1"
+    assert created.json()["status"] == "processing"
+    assert fetched.json()["status"] == "ready"
+    assert deleted.json()["deleted"] is True

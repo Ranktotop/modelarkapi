@@ -1,5 +1,7 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { extendsVideos, feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
+import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
+import { EMPTY_EXTRAS, TASK_MODES, TaskFields, taskError, taskPayload } from "./TaskFields";
+import type { TaskExtras } from "./TaskFields";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
@@ -23,7 +25,24 @@ const MODES = [
   { id: "edit", label: "Bearbeiten", hint: "Inhalt oder Stil eines Videos ändern", tooltip: "Bearbeitet ein hochgeladenes Referenzvideo anhand deines Prompts. Mindestens ein Video ist erforderlich." },
   { id: "extend", label: "Verlängern", hint: "Eine Szene weiterführen", tooltip: "Führt ein Referenzvideo zeitlich weiter. Beschreibe im Prompt, wie Handlung und Kamerabewegung fortgesetzt werden sollen." },
   { id: "stitch", label: "Verbinden", hint: "Mehrere Clips zusammenführen", tooltip: "Verbindet mindestens zwei Referenzvideos zu einer neuen Sequenz. Der Prompt beschreibt Reihenfolge und Übergänge." },
+  ...TASK_MODES,
 ] as const;
+
+const ROLE_NAMES: Record<string, string> = {
+  first_frame: "Startbild",
+  last_frame: "Endbild",
+  reference: "Referenz",
+  base_video: "Ausgangsvideo",
+  motion: "Bewegung",
+  subject: "Figur",
+  speech: "Sprache",
+  avatar: "Avatar",
+  product: "Produkt",
+  model: "Model",
+  bgm: "Musik",
+};
+
+const VARIANT_LABELS: Record<string, string> = { video: "Video", audio: "MP3", watermarked: "Mit Wasserzeichen" };
 
 const TOOLTIPS = {
   model: "Bestimmt die Seedance-Modellvariante. Mit dem Modell ändern sich die verfügbaren Auflösungen, Seitenverhältnisse und Videolängen.",
@@ -193,13 +212,14 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [error, setError] = useState("");
   const [previewRatio, setPreviewRatio] = useState<number | null>(null);
   const [guide, setGuide] = useState<{ title: string; markdown: string } | null>(null);
+  const [extras, setExtras] = useState<TaskExtras>(EMPTY_EXTRAS);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
   const detailsJob = detailsId ? jobs.find(job => job.id === detailsId) || null : null;
   const selectedModel = config.models.find(option => option.id === model);
   const capabilities = selectedModel?.capabilities;
-  const task = MODE_TASKS[mode];
+  const task = MODE_TASKS[mode] ?? mode;
   const provider = providerOf(capabilities);
   const taskTypes = capabilities?.task_types || [];
   const ratioLock = lockedValue(capabilities, task, "aspect_ratio");
@@ -209,6 +229,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const effectiveRatio = ratioLock ? String(ratioLock.value) : ratio;
   const effectiveDuration = durationLock ? Number(durationLock.value) : duration;
   const durationOptions = parameterValues(capabilities, task, "seconds").map(Number);
+  const durationRange = parameterRange(capabilities, task, "seconds");
+  const visibleModes = availableModes(capabilities, MODES);
   const resolutionOptions = parameterValues(capabilities, task, "resolution").map(String);
   const ratioOptions = parameterValues(capabilities, task, "aspect_ratio").map(String);
   const outputFormats = parameterValues(capabilities, task, "output_format").map(String);
@@ -298,7 +320,9 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
   function validationError(): string | null {
     if (!model) return "Bitte wähle ein Modell aus.";
-    if (!prompt.trim()) return "Bitte beschreibe das gewünschte Video.";
+    if (promptRequired(capabilities, task) && !prompt.trim()) return "Bitte beschreibe das gewünschte Video.";
+    const taskProblem = taskError(task, extras);
+    if (taskProblem) return taskProblem;
     const unavailable = isModeUnavailable(mode);
     if (unavailable) return unavailable;
     const count = (kind: MediaKind) => allKinds.filter(value => value === kind).length;
@@ -329,28 +353,35 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   function buildUnifiedPayload() {
     let imageIndex = 0;
     let baseVideoTaken = mode === "extend" && Boolean(continuationTaskId);
-    const roleFor = (kind: MediaKind) => {
+    // Roles the user picked win; otherwise the proxy assigns them per task.
+    const roleFor = (item: Reference): string | undefined => {
+      if (item.role) return item.role;
       if (mode === "first_frame") return "first_frame";
-      if (mode === "first_last" && kind === "image") return imageIndex++ === 0 ? "first_frame" : "last_frame";
-      if ((mode === "edit" || mode === "extend") && kind === "video" && !baseVideoTaken) {
+      if (mode === "first_last" && item.kind === "image") return imageIndex++ === 0 ? "first_frame" : "last_frame";
+      if ((mode === "edit" || mode === "extend") && item.kind === "video" && !baseVideoTaken) {
         baseVideoTaken = true;
         return "base_video";
       }
-      return "reference";
+      return undefined;
     };
     const includeReferences = mode !== "text";
     const continuation = mode === "extend" && continuationTaskId ? [{ task_id: continuationTaskId, role: "base_video" }] : [];
-    const uploaded = includeReferences ? references.map(item => ({ type: item.kind, url: item.url, role: roleFor(item.kind) })) : [];
+    const uploaded = includeReferences ? references.map(item => {
+      const role = roleFor(item);
+      return { type: item.kind, url: item.url, ...(role ? { role } : {}) };
+    }) : [];
+    const seconds = durationRange ? duration : effectiveDuration === -1 ? "auto" : effectiveDuration;
     return {
       model,
       ui_mode: mode,
       task,
       prompt: prompt.trim(),
-      seconds: effectiveDuration === -1 ? "auto" : effectiveDuration,
-      resolution,
-      aspect_ratio: effectiveRatio,
+      ...(hasParameter(capabilities, task, "seconds") ? { seconds } : {}),
+      ...(hasParameter(capabilities, task, "resolution") ? { resolution } : {}),
+      ...(hasParameter(capabilities, task, "aspect_ratio") ? { aspect_ratio: effectiveRatio } : {}),
+      ...taskPayload(task, extras, capabilities),
       ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
-      ...(feature(capabilities, "generate_audio") ? { generate_audio: generateAudio } : {}),
+      ...(feature(capabilities, "generate_audio") && hasParameter(capabilities, task, "generate_audio") ? { generate_audio: generateAudio } : {}),
       ...(feature(capabilities, "watermark") ? { watermark } : {}),
       ...(continuation.length || uploaded.length ? { references: [...continuation, ...uploaded] } : {}),
       ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind })) } : {}),
@@ -413,6 +444,19 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     if (selectedId === job.id) setSelectedId(null);
   }
 
+  function isAudioOnly(job: Job): boolean {
+    const variants = job.provider.outputs?.[0]?.variants;
+    return Boolean(variants && !variants.includes("video") && variants.includes("audio"));
+  }
+
+  function variantLabel(variant: string, job: Job): string {
+    if (variant === "video") return `${String(job.request?.output_format || "mp4").toUpperCase()} laden`;
+    if (variant === "audio_wav") return "WAV";
+    if (variant.startsWith("product_image")) return `Produktbild ${variant.split("_").pop()}`;
+    if (variant.startsWith("model_image")) return `Modelbild ${variant.split("_").pop()}`;
+    return VARIANT_LABELS[variant] || variant;
+  }
+
   function capabilitiesOf(job: Job): ModelCapabilities | undefined {
     const modelId = job.request?.model || job.model;
     return config.models.find(option => option.id === modelId)?.capabilities;
@@ -459,7 +503,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       <section className="composer panel">
         <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label><button className="action guide-button" onClick={openGuide} disabled={!selectedModel?.prompt_guide} title={selectedModel?.prompt_guide ? "Prompt Guide für dieses Modell öffnen" : "Für dieses Modell gibt es noch keinen Prompt Guide"}><Icon name="info" /> Prompt Guide</button></div>
 
-        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame" && item.id !== "extend") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
+        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{visibleModes.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame" && item.id !== "extend") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
         {mode !== "text" && <div className="field-group">
           <div className="label-row"><SettingLabel tooltip={TOOLTIPS.references}>Referenzen</SettingLabel><span>{allKinds.length} hinzugefügt</span></div>
@@ -469,16 +513,19 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>
           {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>{mode === "extend" ? "Video aus vorherigem Job" : "Letztes Frame aus vorherigem Job"}</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
           {references.length > 0 && <div className="reference-list">
-            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span>{feature(capabilities, "real_human") && <div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div>}</div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
+            {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span>{provider !== "modelark" && rolesFor(capabilities, task, item.kind).length > 1 && <select className="role-select" value={item.role || ""} onChange={event => setReferences(current => current.map(entry => entry.id === item.id ? { ...entry, role: event.target.value || undefined } : entry))} aria-label="Rolle der Referenz"><option value="">Rolle automatisch</option>{rolesFor(capabilities, task, item.kind).map(role => <option key={role} value={role}>{ROLE_NAMES[role] || role}</option>)}</select>}{feature(capabilities, "real_human") && <div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div>}</div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
           </div>}
         </div>}
 
         <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
+        <TaskFields task={task} caps={capabilities} extras={extras} onChange={setExtras} references={references} />
+
         <div className="settings-grid">
-          <label><span className="setting-label">Dauer<Tooltip text={durationLock ? durationLock.message : TOOLTIPS.duration} /></span><select value={effectiveDuration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities || durationLocked}>{durationOptions.map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>
-          <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{resolutionOptions.map(value => <option key={value}>{value}</option>)}</select></label>
-          <label><span className="setting-label">Format<Tooltip text={ratioLock ? ratioLock.message : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{ratioOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+          {durationRange && <label><span className="setting-label">Dauer (s)<Tooltip text={TOOLTIPS.duration} /></span><input type="number" step={0.1} min={durationRange.min} max={durationRange.max} value={duration} onChange={e => setDuration(Number(e.target.value))} /></label>}
+          {!durationRange && durationOptions.length > 0 && !(task === "multi_shot" && extras.shotMode === "customize") && <label><span className="setting-label">Dauer<Tooltip text={durationLock ? durationLock.message : TOOLTIPS.duration} /></span><select value={effectiveDuration} onChange={e => setDuration(Number(e.target.value))} disabled={!capabilities || durationLocked}>{durationOptions.map(value => <option key={value} value={value}>{value === -1 ? "Automatisch" : `${value} Sekunden`}</option>)}</select></label>}
+          {resolutionOptions.length > 0 && <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{resolutionOptions.map(value => <option key={value}>{value}</option>)}</select></label>}
+          {ratioOptions.length > 0 && hasParameter(capabilities, task, "aspect_ratio") && <label><span className="setting-label">Format<Tooltip text={ratioLock ? ratioLock.message : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{ratioOptions.map(value => <option key={value}>{value}</option>)}</select></label>}
           {outputFormats.length > 1 && <label><span className="setting-label">Datei<Tooltip text={TOOLTIPS.outputFormat} /></span><select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>{outputFormats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>}
           {provider === "modelark" && <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>}
         </div>
@@ -491,11 +538,11 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="results-header"><div><p className="eyebrow">OUTPUT</p><h2>Generierungen</h2></div><span>{jobs.length}</span></div>
         {selected ? <>
           <div className={`preview ${selected.provider.status}`} style={previewRatio ? { "--preview-ratio": previewRatio } as CSSProperties : undefined}>
-            {selected.provider.status === "completed" ? <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} /> : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
+            {selected.provider.status === "completed" ? (isAudioOnly(selected) ? <div className="preview-state"><div className="render-orb"><Icon name="play" /></div><audio key={selected.id} controls src={`/api/videos/${encodeURIComponent(selected.id)}/content?variant=audio`} /></div> : <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} />) : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           <div className="result-actions">
-            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}{extendsVideos(capabilitiesOf(selected)) && <button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Verlängern</button>}</>}
+            {selected.provider.status === "completed" && <>{resultVariants(selected.provider.outputs).map(({ output, variant }, index) => <a key={`${output}-${variant}`} className={`action ${index === 0 ? "primary" : ""}`} href={`/api/videos/${encodeURIComponent(selected.id)}/content?variant=${encodeURIComponent(variant)}&output=${output}`} download><Icon name="download" /> {variantLabel(variant, selected)}{output > 0 ? ` ${output + 1}` : ""}</a>)}{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}{extendsVideos(capabilitiesOf(selected)) && <button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Verlängern</button>}</>}
             <button className="action" onClick={() => setDetailsId(selected.id)} title="Einstellungen und Statusdetails dieses Jobs anzeigen"><Icon name="info" /> Details</button>
           </div>
         </> : <div className="empty-state"><div className="empty-visual"><Icon name="play" /></div><strong>Noch kein Video</strong><span>Deine aktuelle Generierung erscheint hier.</span></div>}

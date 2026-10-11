@@ -43,7 +43,7 @@ export function providerOf(caps: ModelCapabilities | undefined): string {
 export function modeUnavailable(caps: ModelCapabilities | undefined, mode: string): string | null {
   if (!caps) return null;
   if (caps.tasks) {
-    return caps.tasks[MODE_TASKS[mode]] ? null : "Dieses Modell unterstützt diesen Workflow nicht.";
+    return caps.tasks[MODE_TASKS[mode] ?? mode] ? null : "Dieses Modell unterstützt diesen Workflow nicht.";
   }
   const allowed = caps.reference_limits ?? { image: 0, video: 0, audio: 0 };
   if (mode === "first_last" && !caps.supports_last_frame_role) return "Dieses Modell unterstützt kein Endframe.";
@@ -144,4 +144,41 @@ export function continuationOf(caps: ModelCapabilities | undefined): string {
 export function extendsVideos(caps: ModelCapabilities | undefined): boolean {
   const continuation = continuationOf(caps);
   return continuation === "video_extension" || continuation === "multi_turn";
+}
+
+export function rolesFor(caps: ModelCapabilities | undefined, task: string, kind: string): string[] {
+  const slots = caps?.tasks?.[task]?.references ?? [];
+  return slots.filter(slot => slot.types.includes(kind)).map(slot => slot.role);
+}
+
+export function promptRequired(caps: ModelCapabilities | undefined, task: string): boolean {
+  const spec = caps?.tasks?.[task];
+  if (spec?.prompt_required !== undefined) return spec.prompt_required;
+  return caps?.prompt?.required ?? true;
+}
+
+export function parameterRange(caps: ModelCapabilities | undefined, task: string, name: string): { min: number; max: number } | null {
+  if (!caps?.parameters) return null;
+  const spec = parameterSpec(caps, task, name);
+  return spec && spec.min !== undefined && spec.max !== undefined ? { min: spec.min, max: spec.max } : null;
+}
+
+export function hasParameter(caps: ModelCapabilities | undefined, task: string, name: string): boolean {
+  if (!caps) return false;
+  if (!caps.parameters) return name in V1_PARAMETERS;
+  return Boolean(parameterSpec(caps, task, name));
+}
+
+// v2 documents list only what the model can do; v1 documents keep every
+// mode visible so the previous "disabled with reason" behaviour stays.
+export function availableModes<T extends { id: string }>(caps: ModelCapabilities | undefined, modes: readonly T[]): T[] {
+  if (!caps?.tasks) return [...modes];
+  return modes.filter(mode => Boolean(caps.tasks?.[MODE_TASKS[mode.id] ?? mode.id]));
+}
+
+export type ResultOutput = { index: number; variants?: string[] };
+
+export function resultVariants(outputs: ResultOutput[] | undefined): { output: number; variant: string }[] {
+  if (!outputs?.length) return [{ output: 0, variant: "video" }];
+  return outputs.flatMap(output => (output.variants ?? ["video"]).map(variant => ({ output: output.index, variant })));
 }
