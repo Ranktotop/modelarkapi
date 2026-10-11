@@ -200,7 +200,7 @@ Asset-ID. Seedance und Kling bekommen öffentliche URLs (Media-Store über
 `PUBLIC_BASE_URL`). Google bekommt Bytes, Files-API- oder Inline-Daten; dafür
 lädt der Proxy externe URLs **mit SSRF-Schutz** selbst herunter (nur `https`,
 keine privaten Adressen, auch nicht nach Redirects, Größenlimits). Details:
-[contract.md](contract.md) Abschnitt 7.
+[docs/SPEC.md](../docs/SPEC.md) Abschnitt 7.
 
 ## Abhängigkeitsgraph
 
@@ -274,7 +274,7 @@ ausarbeiten:
 Bestehende Seedance-Felder bleiben gültig (Kompatibilitätsteil).
 **Akzeptanz:** Jede Fähigkeit aus den drei Research-Berichten ist entweder einem einheitlichen Task bzw. Feld oder einer nativen Route zugeordnet, keine bleibt offen; Beispiele für LiteLLM ≤1.99 und ≥1.100.
 **Verifikation:** Review durch den Nutzer; Abgleich gegen die Feature-Matrizen in `research/*.md`.
-**Abh.:** T1 · **Dateien:** `tasks/contract.md` (die API-Referenz in `docs/` wird in T29 daraus erzeugt) · **Umfang:** M
+**Abh.:** T1 · **Dateien:** `docs/SPEC.md` (die API-Referenz in `docs/` wird in T29 daraus erzeugt) · **Umfang:** M
 
 ### Phase 1: Fundament
 

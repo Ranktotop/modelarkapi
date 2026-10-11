@@ -1,9 +1,9 @@
-# API-Vertrag: AI Video Studio (T2)
+# Spezifikation: AI Video Studio – API-Vertrag (T2)
 
 **Status:** abgenommen am 11.10.2026 · **Stand:** 11.10.2026 · **Grundlage:**
-[plan.md](plan.md), [ADR-001](../docs/architektur/README.md),
-[research/google.md](research/google.md), [research/kling.md](research/kling.md),
-[research/litellm-openai.md](research/litellm-openai.md)
+[plan.md](../tasks/plan.md), [ADR-001](architektur/README.md),
+[research/google.md](../tasks/research/google.md), [research/kling.md](../tasks/research/kling.md),
+[research/litellm-openai.md](../tasks/research/litellm-openai.md)
 
 Dieser Vertrag legt fest, wie Clients den Proxy ansprechen: Endpunkte, Feldnamen,
 Typen, IDs, Fehler und Modell-Metadaten. Alle Umsetzungs-Tasks (T3–T29)

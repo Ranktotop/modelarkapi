@@ -4,7 +4,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 
 ## Phase 0: Verträge und Risiken
 - [x] T1: Live-Verifikation mit kostenfreien Aufrufen (Gemini, Vertex, Kling, LiteLLM) und ADR (S)
-- [x] T2: Einheitlicher API-Vertrag → [contract.md](contract.md) (abgenommen)
+- [x] T2: Einheitlicher API-Vertrag → [docs/SPEC.md](../docs/SPEC.md) (abgenommen)
 
 ## Phase 1: Fundament
 - [x] T3: Provider-Kern und Seedance-Adapter (Refactor ohne Verhaltensänderung) (M)
