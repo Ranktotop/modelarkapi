@@ -1,7 +1,7 @@
 [project]
 name = "modelark-openai-video-proxy"
 version = "0.2.0"
-description = "OpenAI Videos API adapter for BytePlus ModelArk Seedance"
+description = "AI Video Studio: OpenAI-compatible video API for Seedance, Veo, Gemini Omni and Kling"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
