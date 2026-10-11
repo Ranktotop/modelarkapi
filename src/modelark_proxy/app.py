@@ -62,7 +62,7 @@ from .providers.kling.models import EFFECTS
 from .providers.seedance import SeedanceProvider
 from .references import ReferenceResolver
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
-from .translation import TranslationError
+from .translation import TranslationError, byteplus_to_openai
 from .validation import ContractError
 from .webhooks import WebhookDispatcher, validate_webhook_url
 from .workers import JobRunner
@@ -880,12 +880,91 @@ def create_app(
     )
 
     async def list_videos(request: Request) -> VideoList:
-        if not credentials.enabled(DEFAULT_PROVIDER):
-            return VideoList(data=[])
-        credentials.require(DEFAULT_PROVIDER)
-        videos = await providers.providers[DEFAULT_PROVIDER].list_videos(request)
-        videos.data = [with_public_id(video) for video in videos.data]
-        return videos
+        query = request.query_params
+        if any(
+            key in {"page_num", "page_size"} or key.startswith("filter.")
+            for key in query
+        ):
+            # Previous Seedance clients: ModelArk's own paging, unchanged.
+            if not credentials.enabled(DEFAULT_PROVIDER):
+                return VideoList(data=[])
+            credentials.require(DEFAULT_PROVIDER)
+            videos = await providers.providers[DEFAULT_PROVIDER].list_videos(request)
+            videos.data = [with_public_id(video) for video in videos.data]
+            return videos
+        return await combined_list(query)
+
+    async def combined_list(query: Any) -> VideoList:
+        """SPEC 11.5: ModelArk tasks plus the local job register, newest first."""
+        try:
+            limit = int(query.get("limit", 20))
+        except ValueError as exc:
+            raise TranslationError("limit must be an integer") from exc
+        if not 1 <= limit <= 100:
+            raise TranslationError("limit must be between 1 and 100")
+        order = query.get("order", "desc")
+        if order not in {"asc", "desc"}:
+            raise TranslationError("order must be asc or desc")
+        wanted = query.get("provider")
+        model = query.get("model")
+        model = strip_model_namespace(model) if model else None
+        status = query.get("status")
+
+        videos: list[VideoObject] = []
+        warnings: list[dict[str, Any]] = []
+        for name, provider in providers.providers.items():
+            if wanted not in (None, name) or not credentials.enabled(name):
+                continue
+            try:
+                credentials.require(name)
+                if name == DEFAULT_PROVIDER:
+                    params = [("page_size", "100")]
+                    if model:
+                        params.append(("filter.model", model))
+                    result = await provider.native_list(params)
+                    videos.extend(
+                        byteplus_to_openai(item) for item in result.get("items") or []
+                    )
+                else:
+                    videos.extend(
+                        provider_jobs.to_video(job)
+                        for job in provider_jobs.list(provider=name, limit=500)
+                    )
+            except (
+                ApiError,
+                HTTPException,
+                ModelArkError,
+                ProviderCredentialsError,
+                httpx.HTTPError,
+            ) as exc:
+                detail = getattr(exc, "detail", None) or str(exc)
+                warnings.append({"provider": name, "message": str(detail)})
+        videos = [
+            video
+            for video in videos
+            if (not model or strip_model_namespace(video.model or "") == model)
+            and (not status or video.status == status)
+        ]
+        # The ID breaks ties, so paging with `after` is stable within a second.
+        videos.sort(
+            key=lambda video: (video.created_at or 0, video.id),
+            reverse=order == "desc",
+        )
+        after = query.get("after")
+        if after:
+            internal = decode_video_id(after)
+            position = next(
+                (i for i, video in enumerate(videos) if video.id == internal), None
+            )
+            videos = videos[position + 1 :] if position is not None else []
+        page = [with_public_id(video) for video in videos[:limit]]
+        return VideoList(
+            data=page,
+            has_more=len(videos) > limit,
+            first_id=page[0].id if page else None,
+            last_id=page[-1].id if page else None,
+            warnings=warnings or None,
+        )
 
     app.add_api_route(
         "/v1/videos", list_videos, methods=["GET"], response_model=VideoList

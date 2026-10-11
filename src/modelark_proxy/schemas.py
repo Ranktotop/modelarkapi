@@ -30,6 +30,9 @@ class VideoList(BaseModel):
     page_num: int | None = None
     page_size: int | None = None
     has_more: bool | None = None
+    first_id: str | None = None
+    last_id: str | None = None
+    warnings: list[dict[str, Any]] | None = None
 
 
 class MediaReference(BaseModel):
