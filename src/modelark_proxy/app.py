@@ -322,7 +322,20 @@ def create_app(
     elif settings.google_veo_backend == "gemini" and settings.gemini_api_key:
         veo_backend = GeminiBackend(settings, google_api)
     omni_backend: GoogleBackend | None = None
-    if settings.google_omni_backend == "vertex" and settings.vertex_project:
+    omni_preview_backend: GoogleBackend | None = None
+    if settings.google_omni_backend == "both":
+        if settings.gemini_api_key:
+            omni_backend = GeminiBackend(settings, google_api)
+        if settings.vertex_project:
+            assert vertex_token_source is not None
+            vertex = VertexBackend(
+                settings, google_api, vertex_token_source, settings.google_omni_location
+            )
+            if omni_backend is None:
+                omni_backend = vertex
+            else:
+                omni_preview_backend = vertex
+    elif settings.google_omni_backend == "vertex" and settings.vertex_project:
         assert vertex_token_source is not None
         omni_backend = VertexBackend(
             settings, google_api, vertex_token_source, settings.google_omni_location
@@ -354,6 +367,7 @@ def create_app(
                 outputs,
                 references,
                 download_transport or google_transport,
+                omni_preview_backend=omni_preview_backend,
             )
         )
     kling_api = httpx.AsyncClient(

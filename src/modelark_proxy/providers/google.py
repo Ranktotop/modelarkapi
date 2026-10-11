@@ -47,9 +47,13 @@ class GoogleProvider:
         outputs: OutputStore,
         references: ReferenceResolver,
         download_transport: httpx.AsyncBaseTransport | None = None,
+        omni_preview_backend: GoogleBackend | None = None,
     ) -> None:
         self.settings = settings
         self.backends = {"veo": veo_backend, "omni": omni_backend}
+        # GOOGLE_OMNI_BACKEND=both (SPEC 12.3): GA IDs use `omni_backend`
+        # (Gemini API), `-preview` IDs this one (Vertex AI).
+        self.omni_preview_backend = omni_preview_backend
         self.jobs = jobs
         self.outputs = outputs
         self.references = references
@@ -64,9 +68,19 @@ class GoogleProvider:
 
     # --- models -----------------------------------------------------------
 
+    def _model_backend(self, model: str) -> GoogleBackend | None:
+        family = family_of(model)
+        if (
+            family == "omni"
+            and self.omni_preview_backend
+            and model.endswith("-preview")
+        ):
+            return self.omni_preview_backend
+        return self.backends[family]
+
     def _capabilities(self, model: str) -> ModelCapabilities:
         family = family_of(model)
-        backend = self.backends[family]
+        backend = self._model_backend(model)
         assert backend is not None
         if family == "omni":
             return omni_capabilities(model, backend.name)
@@ -81,9 +95,19 @@ class GoogleProvider:
                 ):
                     models: list[dict[str, Any]] = []
                     veo, omni = self.backends["veo"], self.backends["omni"]
-                    ids = (await veo.list_veo_models() if veo else []) + (
-                        await omni.list_omni_models() if omni else []
-                    )
+                    preview = self.omni_preview_backend
+                    omni_ids = await omni.list_omni_models() if omni else []
+                    if preview:
+                        omni_ids = [
+                            model
+                            for model in omni_ids
+                            if not model.endswith("-preview")
+                        ] + [
+                            model
+                            for model in await preview.list_omni_models()
+                            if model.endswith("-preview")
+                        ]
+                    ids = (await veo.list_veo_models() if veo else []) + omni_ids
                     for model in ids:
                         label = (
                             omni_label(model)
@@ -138,7 +162,7 @@ class GoogleProvider:
                 param="provider_options",
             )
         family = family_of(model)
-        backend = self.backends[family]
+        backend = self._model_backend(model)
         assert backend is not None
         previous = self._previous_interaction(request, family, backend)
         media = await self._resolve(caps, request, family)
@@ -302,6 +326,13 @@ class GoogleProvider:
 
     def _backend_for(self, job: dict[str, Any]) -> GoogleBackend:
         backend = self.backends[job["upstream"]["kind"]]
+        preview = self.omni_preview_backend
+        if (
+            job["upstream"]["kind"] == "omni"
+            and preview
+            and job["upstream"].get("backend") == preview.name
+        ):
+            backend = preview
         if backend is None:
             raise ProviderUnavailable(
                 f"{job['upstream']['kind']} is not configured on this proxy"

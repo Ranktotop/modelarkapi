@@ -565,3 +565,34 @@ async def test_omni_continues_by_multi_turn(tmp_path: Path):
         "extend",
     }
     assert set(caps["gemini-omni-flash-preview"]["tasks"]) == {"text_to_video", "edit"}
+
+
+async def test_both_backends_route_ga_to_gemini_and_previews_to_vertex(tmp_path: Path):
+    fake = FakeOmni()
+    settings = settings_for(tmp_path, "both")
+    settings.vertex_project = "proj-1"
+
+    models, ga, preview, ga_status = await run(
+        settings,
+        fake,
+        lambda c, _: c.get("/v1/models"),
+        create({"model": "gemini-omni-1.1-flash", "prompt": "x"}),
+        create({"model": "gemini-omni-1.1-flash-preview", "prompt": "x"}),
+        lambda c, results: c.get(f"/v1/videos/{results[1].json()['id']}"),
+    )
+
+    listed = {m["id"]: m["capabilities"]["backend"] for m in models.json()["data"]}
+    assert listed["gemini-omni-1.1-flash"] == "gemini"
+    assert listed["gemini-omni-1.1-flash-preview"] == "vertex"
+    assert (ga.status_code, preview.status_code) == (200, 200)
+    hosts = [
+        r.url.host
+        for r in fake.requests
+        if r.url.path.endswith("/interactions") and r.method == "POST"
+    ]
+    assert hosts == [GEMINI_HOST, VERTEX_HOST]
+    assert ga_status.status_code == 200
+    polls = [
+        r.url.host for r in fake.requests if r.url.path.endswith("/interactions/v1_abc")
+    ]
+    assert polls[-1] == GEMINI_HOST
