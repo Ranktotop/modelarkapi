@@ -97,7 +97,10 @@ def test_repository_prices_match_the_longest_prefix():
     assert prices.for_model("veo-3.1-fast-generate-001") == {
         "output_cost_per_second": 0.1
     }
-    assert prices.for_model("veo-3.1-lite-generate-001") == {}
+    assert prices.for_model("dreamina-seedance-2-0-mini-260615") == {
+        "output_cost_per_second": 0.0756
+    }
+    assert prices.for_model("kling-effects") == {}
 
 
 def test_invalid_price_entry_fails_at_startup(tmp_path: Path):
