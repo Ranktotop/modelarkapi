@@ -185,11 +185,11 @@ async def test_list_accepts_service_tier_and_limits_pages(settings: Settings):
 
 
 @pytest.mark.parametrize(
-    ("upstream", "status", "deleted"),
-    [("queued", "cancelled", None), ("succeeded", "succeeded", True)],
+    ("upstream", "status"),
+    [("queued", "cancelled"), ("succeeded", "succeeded")],
 )
 async def test_delete_reports_what_happened(
-    settings: Settings, upstream: str, status: str, deleted: bool | None
+    settings: Settings, upstream: str, status: str
 ):
     fake = FakeArk({"id": "cgt-1", "model": V25, "status": upstream})
 
@@ -197,7 +197,8 @@ async def test_delete_reports_what_happened(
 
     assert response.status_code == 200
     assert response.json()["provider_status"] == status
-    assert response.json().get("deleted") is deleted
+    assert response.json()["object"] == "video.deleted"
+    assert response.json()["deleted"] is True
 
 
 async def test_running_task_cannot_be_deleted(settings: Settings):

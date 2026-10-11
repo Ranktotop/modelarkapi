@@ -438,6 +438,9 @@ async def test_delete_removes_the_local_job(tmp_path: Path):
     )
 
     assert deleted.status_code == 200
+    assert deleted.json()["object"] == "video.deleted"
+    assert deleted.json()["deleted"] is True
+    assert deleted.json()["id"] == created.json()["id"]
     assert missing.status_code == 404
 
 

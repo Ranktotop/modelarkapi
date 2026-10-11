@@ -902,6 +902,9 @@ def create_app(
     async def delete_video(video_id: str) -> VideoObject:
         video_id = decode_video_id(video_id)
         video = await video_provider(video_id).delete_video(video_id)
+        # SPEC 11.6: OpenAI's deletion shape plus the previous video fields.
+        video.object = "video.deleted"
+        video.deleted = True
         return with_public_id(video)
 
     app.add_api_route(

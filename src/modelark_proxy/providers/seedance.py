@@ -900,11 +900,9 @@ class SeedanceProvider:
             )
         await self.ark.delete_task(video_id)
         if status == "queued":
-            # A queued task is cancelled; any finished task is deleted.
+            # A queued task is cancelled; provider_status tells the two apart.
             return byteplus_to_openai({**task, "id": video_id, "status": "cancelled"})
-        video = byteplus_to_openai({**task, "id": video_id})
-        video.deleted = True
-        return video
+        return byteplus_to_openai({**task, "id": video_id})
 
     async def stream_output(
         self,

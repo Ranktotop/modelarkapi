@@ -348,6 +348,7 @@ async def test_deleting_a_running_job_cancels_it_upstream(tmp_path: Path):
     )
 
     assert deleted.status_code == 200
+    assert deleted.json()["object"] == "video.deleted"
     assert any(
         r.url.path.endswith("/interactions/v1_abc/cancel") for r in fake.requests
     )
