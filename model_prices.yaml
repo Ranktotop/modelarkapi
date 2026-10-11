@@ -1,0 +1,21 @@
+# Prices for the LiteLLM export (GET /v1/litellm/config). Each price lands in
+# the entry's `litellm_params`, so LiteLLM tracks the spend.
+# `model` is a model ID prefix; the longest matching prefix wins. Models
+# without a match get no price. Values in USD.
+prices:
+  - model: dreamina-seedance-2-0-fast
+    output_cost_per_second: 0.0907
+  - model: dreamina-seedance-2-5
+    output_cost_per_second: 0.2311
+  - model: veo-3.1-generate
+    output_cost_per_second: 0.4
+  - model: veo-3.1-fast-generate
+    output_cost_per_second: 0.1
+  - model: gemini-omni-flash
+    output_cost_per_second: 0.1
+  - model: kling-3.0
+    output_cost_per_second: 0.084
+  - model: kling-3.0-omni
+    output_cost_per_second: 0.084
+  - model: kling-3.0-turbo
+    output_cost_per_second: 0.112

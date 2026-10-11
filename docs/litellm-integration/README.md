@@ -29,6 +29,7 @@ model_list:
       model: openai/veo-3.1-fast-generate-001
       api_base: http://modelarkapi_server:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
+      output_cost_per_second: 0.1     # aus model_prices.yaml
     model_info:
       mode: video_generation
       provider: google
@@ -40,6 +41,10 @@ model_list:
   bisherigen Namen bleiben erhalten: `seedance_25_api`, `seedance_20_fast_api`.
 - Virtuelle Kling-Modelle erscheinen wie echte. Alle Einträge haben
   `mode: video_generation`.
+- Die Preise kommen aus `model_prices.yaml` im Repository. Ein Eintrag ordnet
+  einem Modell-ID-Präfix ein LiteLLM-Kostenfeld zu, z. B.
+  `output_cost_per_second`. Der längste Präfix gewinnt. Modelle ohne Eintrag
+  bekommen keinen Preis. Nach einer Preisänderung den Export neu ausführen.
 - Der Guide steht nur als Link im Export. Der Proxy liefert unter dem Link
   immer den aktuellen Text, ohne Proxy-Key. Eine Änderung am Guide braucht
   keinen neuen Export.

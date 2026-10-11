@@ -50,6 +50,7 @@ from .ids import (
 from .litellm_export import export_model_list
 from .media import REFERENCE_SIZE_LIMITS, MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
+from .model_prices import ModelPrices
 from .prompt_guides import PromptGuides
 from .provider_jobs import ProviderJobStore, purge_expired
 from .providers import (
@@ -369,6 +370,7 @@ def create_app(
         retry_max_seconds=settings.asset_transient_retry_max_seconds,
     )
     prompt_guides = PromptGuides(settings.prompt_guides_dir)
+    model_prices = ModelPrices(settings.model_prices_file)
     google_api = httpx.AsyncClient(
         timeout=settings.request_timeout_seconds,
         transport=google_transport,
@@ -743,6 +745,7 @@ def create_app(
             config = export_model_list(
                 await collect_models(),
                 prompt_guides,
+                model_prices,
                 api_base=base,
                 public_base_url=settings.public_base_url,
                 name_template=name_template,

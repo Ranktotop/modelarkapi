@@ -59,8 +59,9 @@ Proxy (`src/modelark_proxy/`):
   Wiederholung.
 - `credentials.py`, `google_auth.py`: Credential-Zustand je Anbieter, Vertex-Token.
 - `ids.py`: Video-IDs (`video_…`) und Character-IDs (`character_…`) im LiteLLM-Format.
-- `prompt_guides.py`, `litellm_export.py`, `audio.py`: Prompt-Guide-Registry,
-  `model_list`-Export, Audiolänge (mutagen) für Kling Lip Sync.
+- `prompt_guides.py`, `model_prices.py`, `litellm_export.py`, `audio.py`:
+  Prompt-Guide-Registry, Preise je Modell, `model_list`-Export, Audiolänge
+  (mutagen) für Kling Lip Sync.
 - `client.py`, `assets.py`, `asset_jobs.py`: ModelArk-Client, HMAC-signierter
   Assets-Client und persistente Real-Human-Orchestrierung.
 - `translation.py`, `schemas.py`, `errors.py`, `config.py`: Feld- und
@@ -69,6 +70,7 @@ Proxy (`src/modelark_proxy/`):
 Außerdem:
 
 - `prompt_guides/`: Markdown-Guides plus `manifest.yaml`.
+- `model_prices.yaml`: Preise je Modell für den LiteLLM-Export.
 - `ui/backend/server.py`: Single-User-Session, temporäres Jobregister und
   serverseitige Kommunikation mit dem Proxy.
 - `ui/frontend`: React-/TypeScript-Studio „AI Video Studio“, vom UI-Backend als

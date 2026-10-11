@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .model_prices import ModelPrices
 from .prompt_guides import PromptGuides
 
 VENDOR_PREFIXES = ("dreamina-", "bytedance-")
@@ -38,6 +39,7 @@ def family_slug(family: str) -> str:
 def export_model_list(
     models: list[dict[str, Any]],
     guides: PromptGuides,
+    prices: ModelPrices,
     *,
     api_base: str,
     public_base_url: str | None,
@@ -60,6 +62,7 @@ def export_model_list(
                     "model": f"openai/{model['id']}",
                     "api_base": api_base,
                     "api_key": "os.environ/MODELARK_PROXY_API_KEY",
+                    **prices.for_model(model["id"]),
                 },
                 "model_info": {
                     "mode": "video_generation",

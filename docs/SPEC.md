@@ -763,12 +763,16 @@ Regeln:
       model: openai/veo-3.1-fast-generate-001
       api_base: https://modelark.marcmeese.de/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
+      output_cost_per_second: 0.1          # aus model_prices.yaml
     model_info:
       mode: video_generation
       provider: google
       capabilities: {…}                    # Abschnitt 13
       prompt_guide_url: https://modelark.marcmeese.de/v1/prompt-guides/veo_3_1
   ```
+- Preise: `model_prices.yaml` ordnet Modell-ID-Präfixen LiteLLM-Kostenfelder
+  zu (z. B. `output_cost_per_second`); der längste Präfix gewinnt. Der Export
+  schreibt sie in `litellm_params`. Modelle ohne Eintrag bekommen keinen Preis.
 - Der Guide steht nur als Link im Export, nicht als Text. Eine Änderung am
   Guide braucht deshalb keine Änderung an der LiteLLM-Config.
   `prompt_guide_url` braucht `PUBLIC_BASE_URL`.
