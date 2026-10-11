@@ -274,6 +274,13 @@ def create_app(
         settings.provider_job_db, settings.provider_job_ttl_seconds
     )
     outputs = OutputStore(settings.output_dir)
+    job_runner = JobRunner(
+        provider_jobs,
+        settings.provider_worker_concurrency,
+        poll_interval_seconds=settings.provider_poll_interval_seconds,
+        retry_base_seconds=settings.asset_transient_retry_seconds,
+        retry_max_seconds=settings.asset_transient_retry_max_seconds,
+    )
     prompt_guides = PromptGuides(settings.prompt_guides_dir)
     google_api = httpx.AsyncClient(
         timeout=settings.request_timeout_seconds,
@@ -333,16 +340,17 @@ def create_app(
         ),
     )
     if settings.kling_configured:
-        enabled_providers.append(
-            KlingProvider(
-                settings,
-                KlingClient(settings, kling_api),
-                provider_jobs,
-                outputs,
-                references,
-                download_transport or kling_transport,
-            )
+        kling_provider_instance = KlingProvider(
+            settings,
+            KlingClient(settings, kling_api),
+            provider_jobs,
+            outputs,
+            references,
+            download_transport or kling_transport,
         )
+        kling_provider_instance.runner = job_runner
+        job_runner.register("kling", kling_provider_instance.run_job)
+        enabled_providers.append(kling_provider_instance)
     providers = ProviderRegistry(enabled_providers)
     webhooks = WebhookDispatcher(
         settings.provider_job_db,
@@ -350,13 +358,6 @@ def create_app(
         transport=webhook_transport,
         timeout_seconds=settings.webhook_timeout_seconds,
         max_attempts=settings.webhook_max_attempts,
-    )
-    job_runner = JobRunner(
-        provider_jobs,
-        settings.provider_worker_concurrency,
-        poll_interval_seconds=settings.provider_poll_interval_seconds,
-        retry_base_seconds=settings.asset_transient_retry_seconds,
-        retry_max_seconds=settings.asset_transient_retry_max_seconds,
     )
 
     def video_provider(video_id: str) -> VideoProvider:

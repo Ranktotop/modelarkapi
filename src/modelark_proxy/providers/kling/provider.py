@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from ...config import Settings
 from ...downloads import host_allowed, stream_remote
 from ...errors import ApiError, openai_error
+from ...ids import decode_video_id
 from ...outputs import OutputStore
 from ...provider_jobs import TERMINAL_STATUSES, ProviderJobStore
 from ...references import ReferenceResolver
@@ -29,6 +30,7 @@ from .assets import KlingAssets, native_id, parse_asset_id
 from .client import KlingClient
 from .models import (
     MODELS,
+    VIRTUAL_MODELS,
     KlingModel,
     QUALITY_RESOLUTIONS,
     RESOLUTION_MODES,
@@ -88,6 +90,8 @@ class KlingProvider:
         self.download_transport = download_transport
         self.last_polled: dict[str, float] = {}
         self.assets = KlingAssets(client, references)
+        # Set by the app; drives multi-step jobs such as lip sync.
+        self.runner: Any = None
 
     def owns_video(self, video_id: str) -> bool:
         return video_id.startswith("vid-kling-")
@@ -102,6 +106,16 @@ class KlingProvider:
                 "capabilities": kling_capabilities(model.id).to_dict(),
             }
             for model in MODELS.values()
+        ] + [
+            {
+                "id": model_id,
+                "object": "model",
+                "owned_by": "kling",
+                "name": label,
+                "virtual": True,
+                "capabilities": kling_capabilities(model_id).to_dict(),
+            }
+            for model_id, label in VIRTUAL_MODELS.items()
         ]
 
     # --- create -------------------------------------------------------------
@@ -115,13 +129,22 @@ class KlingProvider:
                 code="unsupported_parameter",
                 param="input_reference",
             )
+        model_id = canonical_model(strip_model_namespace(str(data.get("model", ""))))
+        if model_id in VIRTUAL_MODELS:
+            # A virtual model does exactly one task.
+            data = {
+                **data,
+                "task": data.get("task")
+                or next(iter(kling_capabilities(model_id).tasks)),
+            }
         request = normalize_request(data)
-        model_id = canonical_model(strip_model_namespace(request.model))
         if model_id is None:
             raise ProviderUnavailable(
                 f"Model '{request.model}' is not available on this proxy"
             )
         request.model = model_id
+        if model_id in VIRTUAL_MODELS:
+            return await self._create_virtual(request)
         quality = request.params.get("quality")
         if quality in QUALITY_RESOLUTIONS:
             request.params.pop("quality")
@@ -201,6 +224,178 @@ class KlingProvider:
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    # --- lip sync and avatar ----------------------------------------------------
+
+    async def _create_virtual(self, request: UnifiedRequest) -> VideoObject:
+        caps = kling_capabilities(request.model)
+        quality = request.params.pop("quality", None)
+        if quality in QUALITY_RESOLUTIONS:
+            request.params.setdefault("resolution", QUALITY_RESOLUTIONS[quality])
+        request, adjustments = validate(caps, request)
+        speech = request.params.get("speech") or {}
+        audio = next((r for r in request.references if r["role"] == "speech"), None)
+        if audio is None and not speech.get("text"):
+            raise ContractError(
+                f"{request.task} needs an audio reference with role speech or speech.text",
+                code="reference_limit",
+                param="references",
+            )
+        if audio is None and not speech.get("voice"):
+            raise ContractError(
+                "speech.voice is required for speech.text", param="speech"
+            )
+        if request.task == "lip_sync":
+            # Face detection, text-to-speech and rendering run in the worker.
+            job = self.jobs.create(
+                "kling",
+                request.model,
+                request.task,
+                {
+                    "prompt": request.prompt,
+                    "params": request.params,
+                    "references": request.references,
+                },
+                worker=True,
+            )
+            self.jobs.update(
+                job["id"], state={"step": "identify"}, adjustments=adjustments or None
+            )
+            if self.runner is not None:
+                self.runner.schedule(job["id"])
+            return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+        subject = next(r for r in request.references if r["role"] == "subject")
+        body: dict[str, Any] = {"image": await self._image(subject)}
+        body.update(await self._speech(audio, speech, max_seconds=300))
+        if request.prompt:
+            body["prompt"] = request.prompt
+        body["mode"] = RESOLUTION_MODES[request.params.get("resolution", "720p")]
+        if request.params.get("watermark"):
+            body["watermark_info"] = {"enabled": True}
+        path = "/v1/videos/avatar/image2video"
+        created = await self.client.call("POST", path, json=body)
+        upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
+        return self._register(request.model, request, upstream, adjustments)
+
+    async def _speech(
+        self,
+        audio: dict[str, Any] | None,
+        speech: dict[str, Any],
+        *,
+        max_seconds: int,
+    ) -> dict[str, Any]:
+        """`audio_id` from text-to-speech or a `sound_file` (URL or base64)."""
+        if audio is None:
+            audio_id, _ = await self._tts(speech)
+            return {"audio_id": audio_id}
+        url = audio.get("url")
+        if (
+            isinstance(url, str)
+            and url.startswith("https://")
+            and not self.references.is_own_media(url)
+        ):
+            return {"sound_file": url}
+        media = await self.references.fetch(audio)
+        if len(media.data) > 5 * 1024 * 1024:
+            raise ContractError(
+                "Kling accepts audio files up to 5 MB",
+                code="reference_limit",
+                param="references",
+            )
+        return {"sound_file": media.base64}
+
+    async def _tts(self, speech: dict[str, Any]) -> tuple[str, int]:
+        """Kling text-to-speech; returns the audio ID and its length in ms."""
+        data = await self.client.call(
+            "POST",
+            "/v1/audio/tts",
+            json={
+                "text": speech["text"],
+                "voice_id": speech["voice"],
+                "voice_language": speech.get("language", "en"),
+                "voice_speed": float(speech.get("speed", 1.0)),
+            },
+        )
+        clip = ((data.get("task_result") or {}).get("audios") or [{}])[0]
+        if not clip.get("id"):
+            raise ApiError(
+                "Kling text-to-speech returned no audio", 502, "upstream_error"
+            )
+        return str(clip["id"]), int(float(clip.get("duration") or 0) * 1000)
+
+    async def run_job(self, job: dict[str, Any]) -> None:
+        """Worker step for multi-step jobs (lip sync)."""
+        state = job["state"] or {}
+        if state.get("step") == "rendering":
+            await self._poll(job)
+            return
+        request = job["request"]
+        params = request["params"]
+        speech = params.get("speech") or {}
+        options = params.get("audio") or {}
+        references = request["references"]
+        video = next(r for r in references if r["role"] == "base_video")
+        audio = next((r for r in references if r["role"] == "speech"), None)
+        self.jobs.update(
+            job["id"], status="in_progress", provider_status="face_identification"
+        )
+        faces = await self.client.call(
+            "POST", "/v1/videos/identify-face", json=await self._video_source(video)
+        )
+        candidates = faces.get("face_data") or []
+        if not candidates:
+            raise ApiError("Kling found no face in the video", 400, "invalid_request")
+        face = next(
+            (f for f in candidates if f.get("face_id") == options.get("face_id")), None
+        )
+        if face is None:
+            face = max(
+                candidates, key=lambda f: int(f["end_time"]) - int(f["start_time"])
+            )
+        face_ms = int(face["end_time"]) - int(face["start_time"])
+        if audio is None:
+            audio_id, length_ms = await self._tts(speech)
+            sound: dict[str, Any] = {"audio_id": audio_id}
+        else:
+            sound = await self._speech(audio, speech, max_seconds=60)
+            length_ms = min(face_ms, 60_000)
+        choice: dict[str, Any] = {
+            "face_id": face["face_id"],
+            **sound,
+            "sound_start_time": int(options.get("start_ms", 0)),
+            "sound_end_time": int(options.get("end_ms", length_ms)),
+            "sound_insert_time": int(options.get("insert_at_ms", face["start_time"])),
+        }
+        if "volume" in options:
+            choice["sound_volume"] = options["volume"]
+        if "original_volume" in options:
+            choice["original_audio_volume"] = options["original_volume"]
+        body: dict[str, Any] = {
+            "session_id": faces["session_id"],
+            "face_choose": [choice],
+        }
+        if params.get("watermark"):
+            body["watermark_info"] = {"enabled": True}
+        path = "/v1/videos/advanced-lip-sync"
+        created = await self.client.call("POST", path, json=body)
+        self.jobs.update(
+            job["id"],
+            upstream={"api": "legacy", "path": path, "task_id": created["task_id"]},
+            state={"step": "rendering", "face_id": face["face_id"]},
+            provider_status="submitted",
+        )
+
+    async def _video_source(self, reference: dict[str, Any]) -> dict[str, Any]:
+        """Kling's own video ID for earlier Kling jobs, otherwise a fetchable URL."""
+        if reference.get("task_id"):
+            source = self.jobs.get(decode_video_id(str(reference["task_id"])))
+            outputs = (source or {}).get("outputs") or []
+            index = int(reference.get("output") or 0)
+            if source and source["provider"] == "kling" and index < len(outputs):
+                kling_id = outputs[index].get("kling_video_id")
+                if kling_id:
+                    return {"video_id": kling_id}
+        return {"video_url": await self.references.public_url(reference)}
 
     async def _motion_body(
         self, request: UnifiedRequest, model_name: str, options: dict[str, Any]
@@ -519,7 +714,8 @@ class KlingProvider:
 
     async def refresh(self, video_id: str) -> dict[str, Any]:
         job = self._job(video_id)
-        if job["status"] in TERMINAL_STATUSES:
+        if job["status"] in TERMINAL_STATUSES or job["upstream"] is None:
+            # Worker jobs before their render step have nothing to poll yet.
             return job
         now = time.monotonic()
         if (
@@ -528,6 +724,10 @@ class KlingProvider:
         ):
             return job
         self.last_polled[video_id] = now
+        return await self._poll(job)
+
+    async def _poll(self, job: dict[str, Any]) -> dict[str, Any]:
+        video_id = job["id"]
         task = await self._task(job["upstream"])
         status = str(task["status"] or "processing")
         if status in RUNNING:

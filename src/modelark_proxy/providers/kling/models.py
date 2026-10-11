@@ -117,10 +117,12 @@ ALIASES = {
 
 def canonical_model(model: str) -> str | None:
     model = ALIASES.get(model, model)
-    return model if model in MODELS else None
+    return model if model in MODELS or model in VIRTUAL_MODELS else None
 
 
 def kling_capabilities(model_id: str) -> ModelCapabilities:
+    if model_id in VIRTUAL_MODELS:
+        return virtual_capabilities(model_id)
     model = MODELS[model_id]
     if model.omni:
         return omni_capabilities(model)
@@ -353,4 +355,78 @@ def omni_capabilities(model: KlingModel) -> ModelCapabilities:
         ),
         features={"watermark": True},
         provider_options=OMNI_OPTIONS,
+    )
+
+
+AUDIO_FORMATS = ("audio/mpeg", "audio/wav")
+# Kling functions without a model choice, exposed as models (SPEC 12.2).
+VIRTUAL_MODELS = {
+    "kling-lip-sync": "Kling Lip Sync",
+    "kling-avatar": "Kling Avatar",
+}
+
+
+def virtual_capabilities(model_id: str) -> ModelCapabilities:
+    speech = ReferenceSlot(
+        "speech",
+        ("audio",),
+        0,
+        1,
+        max_bytes=5 * 1024 * 1024,
+        formats=AUDIO_FORMATS,
+        min_seconds=2,
+    )
+    if model_id == "kling-lip-sync":
+        task = "lip_sync"
+        spec = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "base_video",
+                    ("video",),
+                    1,
+                    1,
+                    max_bytes=100 * 1024 * 1024,
+                    formats=VIDEO_FORMATS,
+                    min_seconds=2,
+                    max_seconds=60,
+                ),
+                speech,
+            ),
+            prompt_required=False,
+        )
+        parameters: dict[str, Param] = {
+            "speech": Param(),
+            "audio": Param(),
+            "watermark": Param(default=False),
+        }
+    else:
+        task = "avatar"
+        spec = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "subject",
+                    ("image",),
+                    1,
+                    1,
+                    max_bytes=LEGACY_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+                speech,
+            ),
+            prompt_required=False,
+        )
+        parameters = {
+            "speech": Param(),
+            "resolution": Param(values=("720p", "1080p"), default="720p"),
+            "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
+            "watermark": Param(default=False),
+        }
+    return ModelCapabilities(
+        provider="kling",
+        family=model_id,
+        launch_stage="ga",
+        prompt_max_chars=2500,
+        parameters=parameters,
+        tasks={task: spec},
+        features={"watermark": True},
     )

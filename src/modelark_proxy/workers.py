@@ -69,7 +69,12 @@ class JobRunner:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if isinstance(exc, TransientUpstreamError) or is_retryable(exc):
+                transient = (
+                    isinstance(exc, TransientUpstreamError)
+                    or is_retryable(exc)
+                    or getattr(exc, "retryable", False)
+                )
+                if transient:
                     attempt += 1
                     delay = backoff_delay(
                         attempt, self.retry_base_seconds, self.retry_max_seconds
@@ -83,11 +88,13 @@ class JobRunner:
                     await asyncio.sleep(delay)
                     continue
                 logger.exception("Job %s failed in its worker", job_id)
+                # API and contract errors carry their own unified code.
+                code = getattr(exc, "code", None)
                 self.store.update(
                     job_id,
                     status="failed",
                     error={
-                        "code": "upstream_error",
+                        "code": code if isinstance(code, str) else "upstream_error",
                         "message": str(exc) or type(exc).__name__,
                     },
                 )
