@@ -135,6 +135,13 @@ export function feature(caps: ModelCapabilities | undefined, name: string): bool
   return Boolean(caps.features[name]);
 }
 
+// Provider-native request fields (e.g. Seedance priority); older documents
+// have no list, so every field stays allowed there.
+export function nativeField(caps: ModelCapabilities | undefined, name: string): boolean {
+  if (!caps) return false;
+  return caps.native_fields ? caps.native_fields.includes(name) : true;
+}
+
 export function groupModels<T extends { capabilities: ModelCapabilities }>(models: T[]): { provider: string; label: string; models: T[] }[] {
   const order = Object.keys(PROVIDER_LABELS);
   const groups = new Map<string, T[]>();

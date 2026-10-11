@@ -78,6 +78,8 @@ export type ModelCapabilities = {
   continuation?: string;
   features?: Record<string, boolean>;
   provider_options?: string[];
+  native_fields?: string[];
+  deprecation?: { shutdown_at: string; replacement: string };
 };
 
 export type StudioConfig = {

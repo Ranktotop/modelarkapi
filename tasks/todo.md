@@ -45,8 +45,8 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T25: Veo-Guide korrigieren, Seedance-Zuordnung prüfen, Lücken schließen (S–M)
 
 ## Phase 6: UI und Integration
-- [ ] T26: UI-Assetbibliotheken, Effekt-Galerie, Spezialformulare, Multi-Output (L, aufteilen)
+- [x] T26: UI-Assetbibliotheken, Effekt-Galerie, Spezialformulare, Multi-Output (L, aufteilen)
 - [x] T27: Branding „AI Video Studio“ und Provider-Texte (S)
 - [x] T28: LiteLLM-Ende-zu-Ende-Suite (zwei LiteLLM-Versionen) (M)
-- [ ] T29: Dokumentation und Konfiguration (M)
+- [x] T29: Dokumentation und Konfiguration (M)
 - [ ] **Checkpoint: Fertig**

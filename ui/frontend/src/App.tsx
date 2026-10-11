@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, billingParty, providerLabel, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
+import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, billingParty, nativeField, providerLabel, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
 import { AssetLibrary } from "./AssetLibrary";
 import type { AssetRef } from "./AssetLibrary";
 import { EMPTY_EXTRAS, TASK_MODES, TaskFields, taskError, taskPayload } from "./TaskFields";
@@ -409,10 +409,10 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       ratio: effectiveRatio,
       ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
       ...((mode === "edit" || mode === "extend") && taskTypes.includes(mode) ? { omni_reference_task_type: mode } : {}),
-      generate_audio: generateAudio,
+      ...(feature(capabilities, "generate_audio") ? { generate_audio: generateAudio } : {}),
       watermark,
       return_last_frame: returnLastFrame,
-      priority,
+      ...(nativeField(capabilities, "priority") ? { priority } : {}),
       ...(includeReferences && references.length ? { reference_urls: references.map(item => ({ url: item.url, media_type: item.kind, role: roleFor(item.kind), real_human: Boolean(item.real_human) })) } : {}),
       ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind, real_human: Boolean(item.real_human) })) } : {}),
       ...(includeReferences && continuationTaskId ? { input_reference_task_id: continuationTaskId } : {}),
@@ -443,7 +443,13 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   }
 
   async function deleteJob(job: Job) {
-    await api(`/api/videos/${encodeURIComponent(job.id)}`, { method: "DELETE" }).catch(() => undefined);
+    try {
+      await api(`/api/videos/${encodeURIComponent(job.id)}`, { method: "DELETE" });
+    } catch (err) {
+      // e.g. a running Seedance task can be neither cancelled nor deleted.
+      setError(err instanceof Error ? err.message : "Der Job konnte nicht gelöscht werden");
+      return;
+    }
     setJobs(current => current.filter(item => item.id !== job.id));
     if (selectedId === job.id) setSelectedId(null);
   }
@@ -532,7 +538,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           {resolutionOptions.length > 0 && <label><span className="setting-label">Auflösung<Tooltip text={TOOLTIPS.resolution} /></span><select value={resolution} onChange={e => setResolution(e.target.value)} disabled={!capabilities}>{resolutionOptions.map(value => <option key={value}>{value}</option>)}</select></label>}
           {ratioOptions.length > 0 && hasParameter(capabilities, task, "aspect_ratio") && <label><span className="setting-label">Format<Tooltip text={ratioLock ? ratioLock.message : TOOLTIPS.ratio} /></span><select value={effectiveRatio} onChange={e => setRatio(e.target.value)} disabled={!capabilities || ratioLocked}>{ratioOptions.map(value => <option key={value}>{value}</option>)}</select></label>}
           {outputFormats.length > 1 && <label><span className="setting-label">Datei<Tooltip text={TOOLTIPS.outputFormat} /></span><select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>{outputFormats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>}
-          {provider === "modelark" && <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>}
+          {provider === "modelark" && nativeField(capabilities, "priority") && <label><span className="setting-label">Priorität<Tooltip text={TOOLTIPS.priority} /></span><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{Array.from({ length: 10 }, (_, value) => <option key={value} value={value}>{value}{value === 0 ? " · Standard" : ""}</option>)}</select></label>}
         </div>
         <div className="toggle-row">{feature(capabilities, "generate_audio") && <Toggle label="Synchrones Audio" tooltip={TOOLTIPS.audio} checked={generateAudio} onChange={setGenerateAudio}/>}{feature(capabilities, "watermark") && <Toggle label="AI-Wasserzeichen" tooltip={TOOLTIPS.watermark} checked={watermark} onChange={setWatermark}/>}{feature(capabilities, "last_frame_output") && <Toggle label="Letztes Frame behalten" tooltip={TOOLTIPS.lastFrame} checked={returnLastFrame} onChange={setReturnLastFrame}/>}</div>
         {error && <div className="error-message wide">{error}</div>}

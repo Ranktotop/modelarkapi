@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   availableModes,
+  nativeField,
   billingParty,
   providerLabel,
   continuationOf,
@@ -201,4 +202,11 @@ test("provider labels and billing party follow the selected model", () => {
   assert.equal(billingParty({ provider: "google", backend: "vertex" }), "Google Cloud (Vertex AI)");
   assert.equal(billingParty({ provider: "google", backend: "gemini" }), "Google (Gemini API)");
   assert.equal(billingParty({ provider: "kling" }), "Kling");
+});
+
+test("native fields follow the model's list and stay open for v1 documents", () => {
+  assert.equal(nativeField({ native_fields: ["priority"] }, "priority"), true);
+  assert.equal(nativeField({ native_fields: ["camera_fixed"] }, "priority"), false);
+  assert.equal(nativeField({ resolutions: ["720p"] }, "priority"), true);
+  assert.equal(nativeField(undefined, "priority"), false);
 });
