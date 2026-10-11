@@ -79,4 +79,7 @@ class ProviderRegistry:
         for provider in self.providers.values():
             if provider.owns_video(video_id):
                 return provider
-        return self.providers[DEFAULT_PROVIDER]
+        provider = self.providers.get(DEFAULT_PROVIDER)
+        if provider is None:
+            raise ProviderUnavailable(f"Video '{video_id}' is not known to this proxy")
+        return provider

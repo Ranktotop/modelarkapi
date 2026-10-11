@@ -37,6 +37,27 @@ class Settings(BaseSettings):
     allowed_download_host_suffixes: list[str] = Field(
         default_factory=lambda: [".bytepluses.com", ".volces.com"]
     )
+    gemini_api_key: str = ""
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    vertex_project: str = ""
+    google_application_credentials: str = ""
+    google_veo_backend: str = "vertex"
+    google_veo_location: str = "us-central1"
+    google_omni_backend: str = "vertex"
+    google_omni_location: str = "global"
+    google_download_host_suffixes: list[str] = Field(
+        default_factory=lambda: [".googleapis.com", ".googleusercontent.com"]
+    )
+    kling_api_key: str = ""
+    kling_base_url: str = "https://api-singapore.klingai.com"
+    kling_download_host_suffixes: list[str] = Field(
+        default_factory=lambda: [
+            ".klingai.com",
+            ".kechuangai.com",
+            ".kwimgs.com",
+            ".inkwai.com",
+        ]
+    )
     byteplus_access_key_id: str = ""
     byteplus_secret_access_key: str = ""
     byteplus_asset_group_id: str = ""
@@ -64,7 +85,12 @@ class Settings(BaseSettings):
     webhook_timeout_seconds: float = Field(default=10.0, gt=0)
     webhook_max_attempts: int = Field(default=8, ge=1)
 
-    @field_validator("allowed_download_host_suffixes", mode="before")
+    @field_validator(
+        "allowed_download_host_suffixes",
+        "google_download_host_suffixes",
+        "kling_download_host_suffixes",
+        mode="before",
+    )
     @classmethod
     def parse_host_suffixes(cls, value: Any) -> Any:
         if isinstance(value, str):
@@ -95,6 +121,24 @@ class Settings(BaseSettings):
                 self.byteplus_asset_group_id,
             )
         )
+
+    @property
+    def modelark_configured(self) -> bool:
+        return any(
+            (
+                self.ark_api_key,
+                self.byteplus_access_key_id,
+                self.byteplus_secret_access_key,
+            )
+        )
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.gemini_api_key or self.vertex_project)
+
+    @property
+    def kling_configured(self) -> bool:
+        return bool(self.kling_api_key)
 
     @property
     def model_management_configured(self) -> bool:

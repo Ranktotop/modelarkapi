@@ -9,7 +9,7 @@ import mimetypes
 import time
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
-from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -21,7 +21,15 @@ from .asset_jobs import AssetJobManager
 from .assets import AssetAPIError, AssetClient
 from .client import ModelArkClient, ModelArkError
 from .config import Settings
+from .credentials import (
+    CredentialMonitor,
+    ProviderCredentialsError,
+    google_check,
+    kling_check,
+    modelark_check,
+)
 from .errors import openai_error
+from .google_auth import TokenSource, VertexTokenSource
 from .ids import decode_video_id, encode_video_id
 from .media import MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
@@ -30,6 +38,7 @@ from .providers import (
     DEFAULT_PROVIDER,
     ProviderRegistry,
     ProviderUnavailable,
+    VideoProvider,
     strip_model_namespace,
 )
 from .providers import seedance
@@ -201,6 +210,9 @@ def create_app(
     asset_transport: httpx.AsyncBaseTransport | None = None,
     download_transport: httpx.AsyncBaseTransport | None = None,
     webhook_transport: httpx.AsyncBaseTransport | None = None,
+    google_transport: httpx.AsyncBaseTransport | None = None,
+    kling_transport: httpx.AsyncBaseTransport | None = None,
+    vertex_token_source: TokenSource | None = None,
     validate_startup_credentials: bool = True,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -212,13 +224,31 @@ def create_app(
     model_cache: list[dict[str, Any]] | None = None
     model_cache_expires_at = 0.0
     model_cache_lock = asyncio.Lock()
-    credential_state: dict[str, Any] = {
-        "status": "checking" if validate_startup_credentials else "valid",
-        "message": None,
-        "last_checked_at": None,
-        "ark_api_key": "checking" if validate_startup_credentials else "valid",
-        "iam": "checking" if validate_startup_credentials else "valid",
-    }
+    check_timeout = httpx.Timeout(settings.credential_validation_timeout_seconds)
+    google_http = httpx.AsyncClient(timeout=check_timeout, transport=google_transport)
+    kling_http = httpx.AsyncClient(timeout=check_timeout, transport=kling_transport)
+    if vertex_token_source is None and settings.vertex_project:
+        vertex_token_source = VertexTokenSource(
+            Path(settings.google_application_credentials)
+            if settings.google_application_credentials
+            else None
+        )
+    credentials = CredentialMonitor(
+        {
+            "modelark": modelark_check(settings, ark, assets)
+            if settings.modelark_configured
+            else None,
+            "google": google_check(settings, google_http, vertex_token_source)
+            if settings.google_configured
+            else None,
+            "kling": kling_check(settings, kling_http)
+            if settings.kling_configured
+            else None,
+        },
+        validate=validate_startup_credentials,
+    )
+    # Kept for /health's legacy `credentials` field (ModelArk only).
+    credential_state = credentials.state["modelark"]
     asset_jobs = AssetJobManager(
         settings,
         assets,
@@ -230,6 +260,8 @@ def create_app(
     )
     providers = ProviderRegistry(
         [SeedanceProvider(settings, ark, asset_jobs, media, download_transport)]
+        if settings.modelark_configured
+        else []
     )
     provider_jobs = ProviderJobStore(
         settings.provider_job_db, settings.provider_job_ttl_seconds
@@ -250,6 +282,11 @@ def create_app(
         retry_max_seconds=settings.asset_transient_retry_max_seconds,
     )
 
+    def video_provider(video_id: str) -> VideoProvider:
+        provider = providers.for_video(video_id)
+        credentials.require(provider.name)
+        return provider
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         async def cleanup_media() -> None:
@@ -259,7 +296,7 @@ def create_app(
                 purge_expired(provider_jobs, outputs)
 
         async def get_public_video(video_id: str) -> VideoObject:
-            video = await providers.for_video(video_id).get_video(video_id)
+            video = await video_provider(video_id).get_video(video_id)
             return with_public_id(video)
 
         async def deliver_webhooks() -> None:
@@ -277,118 +314,28 @@ def create_app(
                     await asset_jobs.maintenance()
                 await asyncio.sleep(settings.asset_maintenance_interval_seconds)
 
-        async def refresh_credential_state() -> None:
-            # Each validator returns (message, unreachable). "unreachable" marks a
-            # network-level failure, which says nothing about the credential and
-            # must not lock the proxy out of its own upstream.
-            async def validate_ark_api_key() -> tuple[str | None, bool]:
-                if not settings.ark_api_key:
-                    return "ARK_API_KEY is not configured", False
-                try:
-                    async with asyncio.timeout(
-                        settings.credential_validation_timeout_seconds
-                    ):
-                        await ark.validate_api_key()
-                except ModelArkError as exc:
-                    return (
-                        f"ARK_API_KEY was rejected with HTTP {exc.status_code}",
-                        False,
-                    )
-                except TimeoutError:
-                    return "ARK_API_KEY validation timed out", True
-                except httpx.HTTPError:
-                    return "ARK_API_KEY validation could not reach ModelArk", True
-                except Exception:
-                    logger.exception("Unexpected ARK_API_KEY validation failure")
-                    return "ARK_API_KEY validation failed unexpectedly", False
-                return None, False
-
-            async def validate_iam_credentials() -> tuple[str | None, bool]:
-                if not settings.byteplus_access_key_id:
-                    return "BYTEPLUS_ACCESS_KEY_ID is not configured", False
-                if not settings.byteplus_secret_access_key:
-                    return "BYTEPLUS_SECRET_ACCESS_KEY is not configured", False
-                try:
-                    async with asyncio.timeout(
-                        settings.credential_validation_timeout_seconds
-                    ):
-                        await assets.validate_management_access()
-                except AssetAPIError:
-                    return (
-                        (
-                            "BYTEPLUS_ACCESS_KEY_ID/BYTEPLUS_SECRET_ACCESS_KEY "
-                            "were rejected by the ModelArk management API"
-                        ),
-                        False,
-                    )
-                except TimeoutError:
-                    return "IAM credential validation timed out", True
-                except httpx.HTTPError:
-                    return (
-                        (
-                            "IAM credential validation could not reach the "
-                            "ModelArk management API"
-                        ),
-                        True,
-                    )
-                except Exception:
-                    logger.exception("Unexpected IAM credential validation failure")
-                    return "IAM credential validation failed unexpectedly", False
-                return None, False
-
-            ark_result, iam_result = await asyncio.gather(
-                validate_ark_api_key(), validate_iam_credentials()
-            )
-            results = (("ark_api_key", ark_result), ("iam", iam_result))
-            fields: dict[str, str] = {}
-            for field, (message, unreachable) in results:
-                if message is None:
-                    fields[field] = "valid"
-                elif unreachable:
-                    # Keep a credential that already worked; otherwise stay
-                    # undecided so the fast recheck loop can settle it.
-                    fields[field] = (
-                        "valid" if credential_state[field] == "valid" else "checking"
-                    )
-                else:
-                    fields[field] = "invalid"
-            if "invalid" in fields.values():
-                status = "invalid"
-            elif "checking" in fields.values():
-                status = "checking"
-            else:
-                status = "valid"
-            errors = [message for _, (message, _) in results if message]
-            credential_state.update(
-                status=status,
-                message="; ".join(errors) if errors else None,
-                last_checked_at=datetime.now(UTC).isoformat(),
-                **fields,
-            )
-            if errors:
-                logger.warning(
-                    "ModelArk credential check reported %s: %s",
-                    status,
-                    "; ".join(errors),
-                )
-
         async def maintain_credential_state() -> None:
             while True:
                 interval = settings.credential_validation_interval_seconds
-                if credential_state["status"] != "valid":
+                if credentials.needs_recheck():
                     interval = min(
                         interval, settings.credential_revalidation_interval_seconds
                     )
                 await asyncio.sleep(interval)
-                await refresh_credential_state()
+                await credentials.refresh()
 
         cleanup_task: asyncio.Task[None] | None = None
         webhook_task: asyncio.Task[None] | None = None
         asset_task: asyncio.Task[None] | None = None
         credential_task: asyncio.Task[None] | None = None
         try:
+            if not any(map(credentials.enabled, ("modelark", "google", "kling"))):
+                logger.warning(
+                    "No video provider is configured; set ARK_API_KEY, "
+                    "GEMINI_API_KEY/VERTEX_PROJECT, or KLING_API_KEY"
+                )
             if validate_startup_credentials:
-                await refresh_credential_state()
+                await credentials.refresh()
             media.cleanup()
             purge_expired(provider_jobs, outputs)
             job_runner.resume()
@@ -421,6 +368,8 @@ def create_app(
             await asset_jobs.close()
             await assets.close()
             await ark.close()
+            await google_http.aclose()
+            await kling_http.aclose()
 
     app = FastAPI(
         title="ModelArk OpenAI Video Proxy", version="0.2.0", lifespan=lifespan
@@ -430,6 +379,7 @@ def create_app(
     app.state.assets = assets
     app.state.asset_jobs = asset_jobs
     app.state.credential_state = credential_state
+    app.state.credentials = credentials
     app.state.providers = providers
     app.state.provider_jobs = provider_jobs
     app.state.outputs = outputs
@@ -447,22 +397,6 @@ def create_app(
                 response = openai_error("Invalid API key", 401, "invalid_api_key")
                 response.headers["WWW-Authenticate"] = "Bearer"
                 return response
-        if (
-            not request.url.path.startswith(("/health", "/media/reference/"))
-            and credential_state["status"] != "valid"
-        ):
-            message = credential_state["message"] or "validation is still pending"
-            if credential_state["status"] == "checking":
-                return openai_error(
-                    f"ModelArk credentials could not be validated yet: {message}",
-                    503,
-                    "upstream_credentials_unavailable",
-                )
-            return openai_error(
-                f"ModelArk credentials are currently invalid: {message}",
-                503,
-                "upstream_credentials_invalid",
-            )
         try:
             return await call_next(request)
         except ModelArkError as exc:
@@ -473,6 +407,8 @@ def create_app(
             return openai_error(str(exc), 400, "invalid_request")
         except ProviderUnavailable as exc:
             return openai_error(str(exc), 404, "model_unavailable")
+        except ProviderCredentialsError as exc:
+            return openai_error(str(exc), 503, exc.code)
         except UploadTooLarge as exc:
             return openai_error(str(exc), 413, "upload_too_large")
 
@@ -482,12 +418,16 @@ def create_app(
             "status": "ok",
             "version": settings.app_version,
             "credentials": deepcopy(credential_state),
+            "providers": credentials.snapshot(),
         }
 
     @app.get("/v1/models")
     @app.get("/models", include_in_schema=False)
     async def list_models() -> dict[str, Any]:
         nonlocal model_cache, model_cache_expires_at
+        if not credentials.enabled("modelark"):
+            return {"object": "list", "data": []}
+        credentials.require("modelark")
         if not settings.model_management_configured:
             raise HTTPException(
                 status_code=503,
@@ -517,6 +457,8 @@ def create_app(
     @app.get("/v1/real-human/configuration")
     @app.get("/real-human/configuration", include_in_schema=False)
     async def real_human_configuration() -> dict[str, Any]:
+        if credentials.enabled("modelark"):
+            credentials.require("modelark")
         if not settings.real_human_assets_configured:
             return {"configured": False, "verified": False}
         result = await assets.list_asset_groups()
@@ -632,7 +574,9 @@ def create_app(
                 validate_webhook_url(str(webhook_url))
             except ValueError as exc:
                 raise TranslationError(str(exc)) from exc
-        video = await providers.for_model(model).create_video(data, upload)
+        provider = providers.for_model(model)
+        credentials.require(provider.name)
+        video = await provider.create_video(data, upload)
         if webhook_url is not None:
             webhooks.watch(video.id, str(webhook_url), video.status)
         return with_public_id(video, strip_model_namespace(model))
@@ -649,6 +593,9 @@ def create_app(
     )
 
     async def list_videos(request: Request) -> VideoList:
+        if not credentials.enabled(DEFAULT_PROVIDER):
+            return VideoList(data=[])
+        credentials.require(DEFAULT_PROVIDER)
         videos = await providers.providers[DEFAULT_PROVIDER].list_videos(request)
         videos.data = [with_public_id(video) for video in videos.data]
         return videos
@@ -666,7 +613,7 @@ def create_app(
 
     async def get_video(video_id: str) -> VideoObject:
         video_id = decode_video_id(video_id)
-        return with_public_id(await providers.for_video(video_id).get_video(video_id))
+        return with_public_id(await video_provider(video_id).get_video(video_id))
 
     app.add_api_route(
         "/v1/videos/{video_id}", get_video, methods=["GET"], response_model=VideoObject
@@ -681,7 +628,7 @@ def create_app(
 
     async def delete_video(video_id: str) -> VideoObject:
         video_id = decode_video_id(video_id)
-        video = await providers.for_video(video_id).delete_video(video_id)
+        video = await video_provider(video_id).delete_video(video_id)
         return with_public_id(video)
 
     app.add_api_route(
@@ -702,9 +649,7 @@ def create_app(
         video_id: str, field: str, media_type: str
     ) -> StreamingResponse | JSONResponse:
         video_id = decode_video_id(video_id)
-        return await providers.for_video(video_id).stream_output(
-            video_id, field, media_type
-        )
+        return await video_provider(video_id).stream_output(video_id, field, media_type)
 
     async def video_content(video_id: str):
         return await stream_task_output(video_id, "video_url", "video/mp4")

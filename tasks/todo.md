@@ -9,7 +9,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 ## Phase 1: Fundament
 - [x] T3: Provider-Kern und Seedance-Adapter (Refactor ohne Verhaltensänderung) (M)
 - [x] T4: LiteLLM-robuster Eingang (Multipart-Klammern, JSON-Strings) und IDs im LiteLLM-Format (M)
-- [ ] T5: Config, Credentials und Health pro Provider; Backend und Region je Google-Familie (M)
+- [x] T5: Config, Credentials und Health pro Provider; Backend und Region je Google-Familie (M)
 - [x] T6: Jobregister, Output-Speicher und Worker-Framework (M)
 - [x] T6b: Ausgehende Webhooks (`webhook_url`, Standard Webhooks) (S)
 - [ ] T7a: Capability-Schema v2 und Validierungs-Engine (M)
