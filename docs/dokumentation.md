@@ -53,7 +53,7 @@ Hintergrund und Quellen: `tasks/plan.md`, `tasks/todo.md` und
 | Veo 3.1 (Vertex und Gemini API): Text, Bild, First/Last, Referenzbilder, Extension, `n` bis 4 auf Vertex | umgesetzt; auf Vertex einmal live geprüft (Lite, Region `global`) |
 | Gemini Omni Flash (Interactions API, `background`): Text, Bild, First/Last, Referenzen, Edit, Extend, Multi-Turn | umgesetzt; Generierung über den Proxy nicht live getestet |
 | Kling (3.0, Turbo, Omni, O1, 2.6, 2.5 Turbo): Text, Bild, First/Last, Multi-Shot, Motion Control, Referenzen, Edit | umgesetzt; nicht live getestet |
-| Kling-Werkzeuge: Lip Sync, Avatar, Effekte (219), Multi-Element-Edit, TTS, Text-/Video-to-Audio, Video-Commerce, Elements und Voices | umgesetzt; nicht live getestet |
+| Kling-Werkzeuge: Lip Sync, Avatar, Effekte (219), Multi-Element-Edit, Video-to-Audio, Video-Commerce, Elements und Voices | umgesetzt; nicht live getestet |
 | Webhooks (`webhook_url`, Standard Webhooks) für alle Anbieter | umgesetzt |
 | Prompt Guides (`/v1/prompt-guides`) und LiteLLM-Export | umgesetzt |
 | LiteLLM-Ende-zu-Ende-Suite (1.95.0, 1.104.2, 1.105.0) | umgesetzt, opt-in |

@@ -49,7 +49,6 @@ Die Schlüsselwörter **muss**, **soll** und **kann** sind verbindlich gemeint.
 | POST | `/v1/videos/extensions` | Video verlängern | ✔ (Extras nur über `extra_body`) |
 | GET | `/v1/videos` | Liste | ✘ (LiteLLM routet nicht) |
 | DELETE | `/v1/videos/{id}` | Abbrechen bzw. lokal löschen | ✘ (LiteLLM: 405) |
-| POST | `/v1/audio/speech` | Text-to-Speech (OpenAI-Format) | ✔ |
 | GET | `/v1/models` | Modellliste mit Capabilities und Guide-Link | ✘ (LiteLLM erzeugt eigene Liste) |
 | GET | `/v1/models/{id}` | Ein Modell inklusive Prompt-Guide-Volltext | ✘ |
 | GET | `/v1/prompt-guides` | Liste der Guides | ✘ |
@@ -244,7 +243,6 @@ sind über `extra_body` zusätzlich nutzbar.
 | `effect` | Effekt-Vorlage anwenden | `effect` + 1 oder 2 × `image`/`subject` (je nach Effekt) | – |
 | `multi_element_edit` | Objekte im Video hinzufügen, tauschen, entfernen | `video`/`base_video` + `selections` + `edit_mode` (+ Bilder bei addition/swap) | `prompt`, `negative_prompt` |
 | `video_to_audio` | Ton für ein vorhandenes Video | 1 × `video`/`base_video` (oder `task_id`) | `prompt` (Soundeffekte), `audio.bgm_prompt`, `audio.asmr` |
-| `text_to_audio` | Soundeffekt oder Musik aus Text | `prompt`, `seconds` | – |
 | `commerce_talking_agent` | Sprechendes Produktvideo | `commerce`, Avatar-Bild oder Avatar-ID, Produktbild(er) | `speech`, `voice` |
 | `commerce_goods_studio` | Produktvideo aus Bild und Text | Produktbild + `commerce.title` | `commerce.description`, `seconds`, `aspect_ratio` |
 | `commerce_apparel` | Kleidungsvideo (Apparel Replicator) | Quellvideo, Produktbild(er) | Modelbild, `commerce`, Voice, BGM |
@@ -253,9 +251,8 @@ sind über `extra_body` zusätzlich nutzbar.
 
 | Task | Ausgabe |
 |---|---|
-| alle außer den beiden folgenden | Video (`variant=video`) |
+| alle außer `video_to_audio` | Video (`variant=video`) |
 | `video_to_audio` | Video mit Ton (`variant=video`) **und** Tonspur (`variant=audio`) |
-| `text_to_audio` | Audio (`variant=audio`; `variant=video` liefert 404) |
 
 ### 6.3 Ableitung, wenn `task` fehlt
 
@@ -346,7 +343,6 @@ insgesamt höchstens `MAX_UPLOAD_BYTES` pro Request.
   gesetzt und unterschiedlich, gibt es 400.
 - `-1` oder `"auto"`: Das Modell wählt die Dauer (Seedance); bei anderen
   Modellen gilt der Default aus dem Capability-Dokument.
-- Kling `text_to_audio`: Float 3.0–10.0 mit einer Nachkommastelle.
 - Tasks ohne Dauer (`motion_control`, `edit` bei Kling Omni und Seedance-Edit,
   `lip_sync`, `effect`): `seconds` führt bei `strict` zu 400 und wird bei
   `adapt` ignoriert.
@@ -406,8 +402,8 @@ Varianten brauchen, senden `n` Einzelanfragen.
 ```json
 {"text": "…", "voice": "<voice-id>", "language": "en", "speed": 1.0}
 ```
-Bei `lip_sync` und `avatar` erzeugt der Proxy aus `speech.text` zuerst TTS
-(Kling) und verwendet die `audio_id`. Alternativ liefert eine Audio-Referenz
+Bei `lip_sync` und `avatar` erzeugt der Proxy aus `speech.text` zuerst intern TTS
+(Kling) und verwendet die `audio_id`; TTS ist kein eigener Endpunkt. Alternativ liefert eine Audio-Referenz
 mit Rolle `speech` den Ton.
 
 ### 8.8 AudioOptions
@@ -616,7 +612,7 @@ Seedance-Clients erhalten zusätzlich die bisherigen Felder.
 | `thumbnail`, `spritesheet` | nicht unterstützt → `400 unsupported_parameter` |
 
 Über LiteLLM kommt immer das Hauptergebnis an, und LiteLLM meldet stets
-`video/mp4` als Typ; die Bytes stimmen trotzdem (auch bei `text_to_audio`).
+`video/mp4` als Typ.
 
 ---
 
@@ -640,8 +636,6 @@ Seedance-Clients erhalten zusätzlich die bisherigen Felder.
 | `kling-effects` | `effect` |
 | `kling-multi-elements` | `multi_element_edit` |
 | `kling-video-to-audio` | `video_to_audio` |
-| `kling-text-to-audio` | `text_to_audio` |
-| `kling-tts` | nur `/v1/audio/speech` |
 | `kling-commerce` | `commerce_talking_agent`, `commerce_goods_studio`, `commerce_apparel` |
 
 Virtuelle Modelle erscheinen in `/v1/models` mit `"virtual": true` und lassen
@@ -769,7 +763,7 @@ Regeln:
       api_base: https://modelark.marcmeese.de/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
     model_info:
-      mode: video_generation               # audio_speech für kling-tts
+      mode: video_generation
       provider: google
       capabilities: {…}                    # Abschnitt 13
       prompt_guide: "…Markdown-Volltext…"
@@ -830,7 +824,7 @@ Die Real-Human-Assets laufen über `/v1/assets` bzw. das bestehende
 | `POST /v1/providers/kling/v1/videos/multi-elements/{init-selection\|add-selection\|delete-selection\|clear-selection\|preview-selection}` | Multi-Element-Session (für interaktive Auswahl in der UI) |
 | `POST /v1/providers/kling/v1/videos/multi-elements` | Multi-Element-Create |
 | `POST /v1/providers/kling/v1/videos/image-recognize` | Bilderkennung (Hilfsfunktion) |
-| `POST /v1/providers/kling/v1/audio/{tts\|text-to-audio\|video-to-audio}` | Audio |
+| `POST /v1/providers/kling/v1/audio/video-to-audio` | Video-to-Audio |
 | `POST/GET /v1/providers/kling/v1/general/{advanced-custom-elements\|advanced-presets-elements\|custom-voices\|presets-voices}`, `POST …/{delete-advanced-elements\|delete-voices}` | Elements und Voices |
 | `POST /v1/providers/kling/v1/general/ai-multi-shot` | Zusatzansichten für Elements |
 | `POST /v1/providers/kling/solutions/{talking_agent\|e-commerce/goods_studio\|e-commerce/clothing_dupe}` | Video-Commerce |
@@ -905,7 +899,7 @@ Capability-Dokument des jeweiligen Modells.
 | `motion_control` | – | – | – | – | – | – | – | – | ✔ | – | – | ✔ | – |
 
 Virtuelle Kling-Modelle: `lip_sync`, `avatar`, `effect`,
-`multi_element_edit`, `video_to_audio`, `text_to_audio`, TTS, Commerce
+`multi_element_edit`, `video_to_audio`, Commerce
 (Abschnitt 12.2). Seedance 1.x wird in T22 genau erhoben; die Spalte ist
 vorläufig.
 
@@ -930,7 +924,8 @@ Jede Fähigkeit aus den Research-Berichten ist genau einer Stelle zugeordnet.
 | **Kling** T2V, I2V, First/Last, Multi-Shot, native Audio, Voices, Elements | Tasks, Referenzen `element`/`voice` |
 | Kling Omni `refer_image`, `feature_video`, `base_video`, `audio: original` | `reference_to_video`, `edit`, `provider_options.kling.audio` |
 | Kling Motion Control (`character_orientation`, `keep_original_sound`) | `motion_control`; `provider_options.kling` |
-| Kling Avatar, TTS, Lip Sync (inkl. Face Identification), Text-to-Audio, Video-to-Audio | virtuelle Modelle, 8.7/8.8, `/v1/audio/speech` |
+| Kling Avatar, Lip Sync (inkl. Face Identification, TTS nur intern für `speech.text`), Video-to-Audio | virtuelle Modelle, 8.7/8.8 |
+| Kling reines TTS, Text-to-Audio | **entfernt** (Nur Video, Abschnitt 21) |
 | Kling Effects (219), Multi-Elements, Image Recognition, AI Multi-Shot | `effect`, `multi_element_edit`, native Routen |
 | Kling Elements, Voices (Custom/Preset, CRUD) | `/v1/assets`, native Routen |
 | Kling Commerce (Talking Agent, Goods Studio, Apparel) | Commerce-Tasks |
@@ -955,3 +950,4 @@ Jede Fähigkeit aus den Research-Berichten ist genau einer Stelle zugeordnet.
    eingehend werden beide Formen akzeptiert.
 3. **Ausgehende Webhooks** (Abschnitt 11.4) werden umgesetzt (Task T6b),
    über das eigene Feld `webhook_url`; `callback_url` bleibt Seedance-nativ.
+4. **Nur Video:** reine Audio-Erzeugung (TTS, Text-to-Audio) ist entfernt (11.10.2026); Kling-TTS dient nur intern für `speech.text` bei Lip Sync und Avatar.

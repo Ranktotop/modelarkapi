@@ -79,7 +79,7 @@ Außerdem:
 
 | Fläche | Pfad | Zweck |
 |---|---|---|
-| Einheitlich | `/v1/videos`, `/v1/models`, `/v1/audio/speech`, `/v1/assets`, `/v1/prompt-guides`, `/v1/litellm/config` | OpenAI-kompatibel, für LiteLLM und Apps |
+| Einheitlich | `/v1/videos`, `/v1/models`, `/v1/assets`, `/v1/prompt-guides`, `/v1/litellm/config` | OpenAI-kompatibel, für LiteLLM und Apps |
 | Nativ | `/v1/providers/modelark/tasks`, `/v1/providers/google/veo/…`, `/v1/providers/google/interactions`, `/v1/providers/kling/…` | Original-Parameter des Anbieters; erzeugte Jobs landen im selben Register |
 
 Beide Flächen teilen Jobregister, Media-Store, Download und Credential-Status.
@@ -176,7 +176,7 @@ können, ohne ihren Code anzupassen.
 ### Entscheidungen
 
 1. **Zwei API-Flächen über einem Provider-Kern.** Einheitlich unter
-   `/v1/videos`, `/v1/models` und `/v1/audio/speech` (OpenAI-kompatibel, für
+   `/v1/videos` und `/v1/models` (OpenAI-kompatibel, für
    LiteLLM); nativ unter `/v1/providers/{provider}/…` mit den
    Original-Parametern. Beide teilen Jobregister, Media-Store, Download und
    Credential-Status.

@@ -30,7 +30,7 @@ model_list:
       api_base: http://modelarkapi_server:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
     model_info:
-      mode: video_generation          # audio_speech für kling-tts
+      mode: video_generation
       provider: google
       capabilities: {…}               # Capability-Dokument v2
       prompt_guide: "…Markdown-Volltext…"
@@ -39,11 +39,11 @@ model_list:
 
 - `model_name` leitet sich aus der Modellfamilie ab (`family_slug`). Die
   bisherigen Namen bleiben erhalten: `seedance_25_api`, `seedance_20_fast_api`.
-- Virtuelle Kling-Modelle erscheinen wie echte; `kling-tts` bekommt
-  `mode: audio_speech`.
+- Virtuelle Kling-Modelle erscheinen wie echte. Alle Einträge haben
+  `mode: video_generation`.
 - `prompt_guide_url` ist nur gesetzt, wenn `PUBLIC_BASE_URL` konfiguriert ist.
 - Die Datei `litellm-config.example.yaml` im Repository zeigt vier Einträge im
-  Format des Exports (Seedance, Veo, Kling, `kling_tts_api`); die vollständige
+  Format des Exports (Seedance, Veo, Kling); die vollständige
   Liste liefert `GET /v1/litellm/config`.
 
 Beim LiteLLM-Container muss gesetzt sein:
@@ -107,7 +107,7 @@ video = video_generation(
 
 `tests/integration/test_litellm.py` startet echte LiteLLM-Proxies (1.95.0,
 1.104.2 und 1.105.0) vor dem Proxy; dessen Anbieter sind simulierte Upstreams,
-es entstehen keine Kosten. Die Suite (30 Tests) ist opt-in; jede virtuelle Umgebung braucht
+es entstehen keine Kosten. Die Suite (27 Tests) ist opt-in; jede virtuelle Umgebung braucht
 `litellm[proxy]`:
 
 ```bash
@@ -124,7 +124,6 @@ LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm
 | Remix | auch mit `extra_body` |
 | `POST /v1/videos/edits` | zusätzliche Felder nur in `extra_body` |
 | `POST /v1/videos/extensions` | LiteLLM verlangt `seconds` |
-| `POST /v1/audio/speech` | `kling-tts` (Modus `audio_speech`) |
 | `POST /v1/videos/characters` (+ `GET …/{id}`) | legt ein Kling-Video-Element an; LiteLLM sendet nur `name` und `video`. IDs `character_<base64>`, auch als `asset_id` nutzbar |
 
 **Nicht über LiteLLM erreichbar** (direkt am Proxy mit dem Proxy-Key nutzen):
@@ -133,7 +132,7 @@ LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm
 |---|---|
 | `GET /v1/videos` (Liste) | 400 |
 | `DELETE /v1/videos/{id}` | 405 |
-| `GET …/content?variant=` | der Parameter wird nicht weitergegeben; es kommt immer das Hauptvideo (auch bei Audio-Ergebnissen; LiteLLM meldet `video/mp4`, die Bytes stimmen) |
+| `GET …/content?variant=` | der Parameter wird nicht weitergegeben; es kommt immer das Hauptvideo (LiteLLM meldet `video/mp4`; die Tonspur von `video_to_audio` ist so nicht abrufbar) |
 | `output` > 0, `last_frame`, `/v1/assets`, Guides als Ressource | nicht geroutet |
 
 LiteLLM < 1.100 sendet Formularfelder als JSON-Strings (`"true"`, `"5"`); der

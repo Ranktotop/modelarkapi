@@ -29,9 +29,9 @@ Verfügbarkeit laut Capability-Profilen im Code (✔ = angeboten, – = nicht):
 
 Die Kling-Werkzeuge sind virtuelle Modelle: `kling-lip-sync` (`lip_sync`),
 `kling-avatar` (`avatar`), `kling-effects` (`effect`), `kling-multi-elements`
-(`multi_element_edit`), `kling-video-to-audio`, `kling-text-to-audio`,
-`kling-commerce` (`commerce_talking_agent`, `commerce_goods_studio`,
-`commerce_apparel`) und `kling-tts` (nur `/v1/audio/speech`).
+(`multi_element_edit`), `kling-video-to-audio` und `kling-commerce`
+(`commerce_talking_agent`, `commerce_goods_studio`, `commerce_apparel`). Reine
+Audio-Erzeugung (TTS, Text-to-Audio) gibt es nicht.
 
 Beispiele für den einheitlichen Request:
 
@@ -340,10 +340,9 @@ Intervall.
 (höchstens 10 Frames mit je höchstens 10 Punkten, Koordinaten in [0, 1]); Bilder
 für `addition` (1–2) und `swap` (1).
 
-**Audio.** `kling-text-to-audio` (Prompt ≤ 200 Zeichen, 3,0–10,0 s, Ergebnis
-`variant=audio`), `kling-video-to-audio` (Video 3–20 s; `audio.bgm_prompt`,
-`audio.asmr`; liefert `video` und `audio`), `kling-tts` über
-`POST /v1/audio/speech`.
+**Ton für ein Video.** `kling-video-to-audio` (Video 3–20 s, Prompt ≤ 200 Zeichen
+für Soundeffekte; `audio.bgm_prompt`, `audio.asmr`) liefert das Video mit Ton
+(`variant=video`) und die Tonspur (`variant=audio`).
 
 **Video-Commerce** (`kling-commerce`): `commerce_talking_agent` (Avatar-Bild oder
 `commerce.avatar_id`, Produktbilder, Skript in `commerce.script`),

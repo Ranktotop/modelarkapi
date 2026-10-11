@@ -55,7 +55,6 @@ außer den nativen Routen unter `/v1/providers/…`, `/v1/assets` und
 | `POST` | `/v1/videos/{id}/remix` | Ergebnis per Prompt bearbeiten (`task=edit`) |
 | `POST` | `/v1/videos/edits` | Video bearbeiten (`video:{id}`) |
 | `POST` | `/v1/videos/extensions` | Video verlängern (`video:{id}`) |
-| `POST` | `/v1/audio/speech` | Text-to-Speech (`model: kling-tts`) |
 | `GET` `POST` | `/v1/assets` | Kling-Elements und -Voices auflisten (`provider`, `type`, `scope`) bzw. anlegen |
 | `GET` `DELETE` | `/v1/assets/{id}` | Asset lesen bzw. löschen |
 | `POST` | `/v1/providers/google/veo/{model}:predictLongRunning` | natives Veo-Create |
@@ -274,11 +273,9 @@ LiteLLM leitet die Liste nicht weiter (400).
 `output` wählt bei mehreren Varianten (`n` > 1) das Ergebnis. Vorhandene
 Varianten stehen je Ausgabe unter `outputs[].variants`.
 
-## POST `/v1/audio/speech`
-
-OpenAI-Format mit `model: "kling-tts"`, `input` (1–1000 Zeichen), `voice`
-(Kling-TTS-Stimme, etwa `oversea_male1`), `speed` (0,8–2,0) und `language`
-(`en` oder `zh`). Antwort: `audio/mpeg`. Andere Modelle ergeben einen Fehler.
+Die Plattform erzeugt nur Video: Es gibt keine Route für reine Audio-Erzeugung
+(`/v1/audio/speech` ist entfernt). Kling-TTS läuft nur intern für `speech.text` bei
+Lip Sync und Avatar.
 
 ## Assets
 
@@ -325,7 +322,7 @@ liefert den aktuellen Status. Über LiteLLM funktioniert die Anlage; es sendet n
   `proxy: {id, status_url}`. `GET …/tasks` listet (native Query-Parameter),
   `GET`/`DELETE …/tasks/{id}` fragen bzw. löschen nativ.
 - **Kling:** `/v1/providers/kling/{pfad}` leitet dokumentierte Kling-Pfade durch
-  (`v1/videos/…`, `v1/audio/…`, `v1/general/…`, `text-to-video/…`,
+  (`v1/videos/…`, `v1/audio/video-to-audio`, `v1/general/…`, `text-to-video/…`,
   `image-to-video/…`, `omni-video/…`, `motion-control/…`, `tasks`, `solutions`,
   `account/costs`, höchstens ein Aufruf pro `KLING_COSTS_MIN_INTERVAL_SECONDS`, Standard 1 s: der Proxy wartet). `solutions/virtual_try_on` und alle anderen Pfade ergeben 404.
   Erzeugte Video-Tasks werden registriert und antworten mit `proxy: {id, status_url}`.

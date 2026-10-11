@@ -130,8 +130,8 @@ curl -H "Authorization: Bearer $PROXY_KEY" \
 `variant`: `video` (Standard), `audio` (`format=wav` für WAV), `watermarked`,
 `last_frame`; Kling-Apparel liefert zusätzlich `product_image_n` und
 `model_image_n`. `thumbnail` und `spritesheet` ergeben `400`. Welche Varianten ein
-Job hat, steht unter `outputs[].variants`. Reine Audio-Tasks (`text_to_audio`)
-liefern nur `audio`; `variant=video` ergibt 404. Über LiteLLM kommt immer das
+Job hat, steht unter `outputs[].variants` (`video_to_audio` liefert `video` und
+`audio`). Über LiteLLM kommt immer das
 Hauptergebnis.
 
 Das letzte Frame gibt es nur bei Seedance, wenn der Task mit

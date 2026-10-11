@@ -22,7 +22,7 @@ den Browser.
   Zuordnung dem Proxy.
 - **Task-Felder:** Multi-Shot (bis zu 6 Shots mit Prompt und Dauer, Modus „eigene
   Shots“ oder „automatisch aus dem Prompt“), Effekt-Galerie mit Suche (219
-  Kling-Effekte), Sprechtext mit TTS-Stimme und Sprache für Lip Sync und Avatar,
+  Kling-Effekte), Sprechtext mit Kling-Stimme und Sprache für Lip Sync und Avatar,
   Objektauswahl, Vertonen, Bewegungsoptionen und Video-Commerce (siehe unten).
 - **Kling-Bibliothek** für Elements und Voices: eigene und Kling-Vorlagen
   auswählen, neu anlegen und beobachten, bis sie bereit sind.
@@ -32,8 +32,8 @@ den Browser.
   den Abrechnenden nennt (BytePlus, Google (Gemini API), Google Cloud (Vertex AI)
   oder Kling), plus Hinweis, dass das Ergebnis nur etwa 24 Stunden verfügbar ist.
   Die Schaltfläche heißt „Kostenpflichtig starten“.
-- **Ergebnis:** automatische Statusaktualisierung, Video-Player, Audio-Player für
-  reine Audio-Ergebnisse und ein Download pro Variante (Video, Audio, WAV,
+- **Ergebnis:** automatische Statusaktualisierung, Video-Player und ein Download pro
+  Variante (Video, Tonspur, WAV,
   Produkt-/Modellbilder, weitere Ausgaben bei `n` > 1) sowie Download des letzten
   Frames.
 - **Job-Details** zeigen Anbieter, Backend (Vertex AI oder Gemini API), Modell,
@@ -161,7 +161,6 @@ einheitlichen Vertrag mit `task`, `references[]` und `seconds`.
 | Effekt | `effect` | 1–2 Bilder | `effect` |
 | Objekte | `multi_element_edit` | Video | `edit_mode`, `selections` |
 | Vertonen | `video_to_audio` | Video | `audio.bgm_prompt`, `audio.asmr` |
-| Audio | `text_to_audio` | – | Prompt, `seconds` (3–10) |
 | Sprecher | `commerce_talking_agent` | Avatar-Bild oder Preset-Avatar, Skript | `commerce` (`script`, `avatar_id`, `title`, `price`, `selling_points`, `speech_rate`, `bgm`), Stimme |
 | Produktfilm | `commerce_goods_studio` | Produktbilder, Titel | `commerce` (`title`, `description`) |
 | Kleidung | `commerce_apparel` | Video, Produktbilder | `commerce.product_info`, Stimme |

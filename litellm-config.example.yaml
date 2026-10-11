@@ -22,14 +22,6 @@ model_list:
     model_info:
       mode: video_generation
       provider: google
-  - model_name: kling_tts_api
-    litellm_params:
-      model: openai/kling-tts
-      api_base: http://modelarkapi_server:8080/v1
-      api_key: os.environ/MODELARK_PROXY_API_KEY
-    model_info:
-      mode: audio_speech
-      provider: kling
   - model_name: kling_30_api
     litellm_params:
       model: openai/kling-3.0

@@ -222,7 +222,7 @@ mit dem ersten Fehler.
 - **Kling:** feste Liste (`kling-3.0-turbo`, `kling-3.0`, `kling-3.0-omni`,
   `kling-o1`, `kling-2.6`, `kling-2.5-turbo`) plus virtuelle Modelle
   (`kling-lip-sync`, `kling-avatar`, `kling-effects`, `kling-multi-elements`,
-  `kling-text-to-audio`, `kling-video-to-audio`, `kling-commerce`, `kling-tts`).
+  `kling-video-to-audio`, `kling-commerce`).
 
 Fehlende oder ungültige Zugangsdaten beenden den Proxy nicht. `/health` meldet
 den Zustand unter `providers` (`valid`, `checking`, `invalid`, `disabled`);

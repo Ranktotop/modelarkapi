@@ -30,7 +30,7 @@ ohne LiteLLM. Sie speichert fertige Videos nicht dauerhaft auf dem Server.
   ein Modellwechsel ändert nur `model`
 - Tasks: Text-, Bild-, First/Last-Frame-, Referenz-, Multi-Shot-Video, Edit,
   Extend, Stitch, Motion Control, Lip Sync, Avatar, Effekte, Multi-Element-Edit,
-  Video-to-Audio, Text-to-Audio und Kling-Video-Commerce
+  Video-to-Audio (Ton für ein Video) und Kling-Video-Commerce
 - `references[]` mit Typ (`image`, `video`, `audio`, `element`, `voice`) und
   Rolle; Quellen: `url`, `data:`-URI, `upload_id`, `task_id`, `asset_id`
 - `GET /v1/models` mit Capability-Dokument v2 je Modell, `GET /v1/prompt-guides`
@@ -38,7 +38,6 @@ ohne LiteLLM. Sie speichert fertige Videos nicht dauerhaft auf dem Server.
 - `GET /v1/videos/{id}`, `/content` (mit `?variant=` und `?output=`),
   `/last_frame`, `POST /v1/videos/{id}/remix`, `/v1/videos/edits`,
   `/v1/videos/extensions`, `DELETE`
-- `POST /v1/audio/speech` (Kling TTS, Modell `kling-tts`)
 - `/v1/assets` für Kling-Elements und -Voices
 - OpenAI-Characters (`/v1/videos/characters`) als Kling-Video-Elements
 - `GET /v1/videos` über ModelArk und das lokale Jobregister (alle Anbieter)
