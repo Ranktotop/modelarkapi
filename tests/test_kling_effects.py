@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
+from kling_helpers import strip_external
 
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
@@ -27,7 +28,7 @@ class FakeKling:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
-        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})  # noqa: E731
+        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})
         if request.url.host == "v1-kling.klingai.com":
             return httpx.Response(200, content=b"\x00\x00\x00\x20ftypisom")
         if path == "/v1/videos/multi-elements/init-selection":
@@ -57,7 +58,7 @@ class FakeKling:
 
     def posts(self, path: str) -> list[dict[str, Any]]:
         return [
-            json.loads(r.content)
+            strip_external(json.loads(r.content))
             for r in self.requests
             if r.method == "POST" and r.url.path == path
         ]

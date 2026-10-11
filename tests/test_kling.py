@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
+from kling_helpers import strip_external
 
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
@@ -59,7 +60,11 @@ class FakeKling:
         return httpx.Response(200, json=state)
 
     def created(self) -> dict[str, Any]:
-        return next(json.loads(r.content) for r in self.requests if r.method == "POST")
+        return next(
+            strip_external(json.loads(r.content))
+            for r in self.requests
+            if r.method == "POST"
+        )
 
     def created_path(self) -> str:
         return next(r.url.path for r in self.requests if r.method == "POST")

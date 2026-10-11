@@ -91,7 +91,9 @@ Ohne jeden Anbieter startet der Proxy mit einer Warnung.
 | `MAX_UPLOAD_BYTES` | `209715200` | maximale Größe eines Uploads (`input_reference`, `/v1/media/references`) |
 | `MAX_INLINE_REFERENCE_BYTES` | `26214400` | maximale dekodierte Größe einer `data:`-Referenz |
 | `REQUEST_TIMEOUT_SECONDS` | `60` | Timeout für Anbieter-API-Aufrufe |
-| `OMNI_CREATE_TIMEOUT_SECONDS` | `600` | Timeout für das Anlegen einer Omni-Interaction; Vertex hält den Aufruf teils offen, bis das Video fertig ist (live beobachtet). Ein Create wird nie wiederholt |
+| `CREATE_TIMEOUT_SECONDS` | `600` | Wie lange der Proxy auf die Antwort eines kostenpflichtigen Create wartet. Ein Create wird nie erneut gesendet, damit nichts doppelt abgerechnet wird |
+| `CREATE_RECOVERY_SECONDS` | `180` | Wie lange der Proxy nach einem Create-Timeout den Task beim Anbieter sucht (Kling über die eigene `external_task_id`, Seedance über die Taskliste); ohne Treffer endet der Job mit `504 upstream_timeout` |
+| `CREATE_RECOVERY_INTERVAL_SECONDS` | `10` | Abstand der Suchabfragen nach einem Create-Timeout |
 | `DOWNLOAD_TIMEOUT_SECONDS` | `600` | Timeout für Ergebnisstreams und -downloads |
 | `MAX_UPSTREAM_CONNECTIONS` | `100` | maximale parallele Anbieter-Verbindungen |
 | `MAX_KEEPALIVE_CONNECTIONS` | `20` | wiederverwendete Verbindungen |

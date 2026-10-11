@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -181,14 +182,14 @@ class KlingProvider:
         if model.omni:
             path = "/v1/videos/omni-video"
             body = await self._omni_body(request, model, options)
-            created = await self.client.call("POST", path, json=body)
+            created = await self._submit(path, body)
             upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
             return self._register(model_id, request, upstream, adjustments)
         if request.task == "motion_control":
             assert model.legacy_name is not None
             path = "/v1/videos/motion-control"
             body = await self._motion_body(request, model.legacy_name, options)
-            created = await self.client.call("POST", path, json=body)
+            created = await self._submit(path, body)
             upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
             return self._register(model_id, request, upstream, adjustments)
         images = {
@@ -199,22 +200,67 @@ class KlingProvider:
         steering = self._steering(request, images)
         if model.legacy_name:
             path = "/v1/videos/image2video" if images else "/v1/videos/text2video"
-            created = await self.client.call(
-                "POST",
+            created = await self._submit(
                 path,
-                json={
-                    **self._legacy_body(request, model.legacy_name, images),
-                    **steering,
-                },
+                {**self._legacy_body(request, model.legacy_name, images), **steering},
             )
             upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         else:
             path = "image-to-video" if images else "text-to-video"
-            created = await self.client.call(
-                "POST", f"/{path}/{model_id}", json=self._new_body(request, images)
+            created = await self._submit(
+                f"/{path}/{model_id}", self._new_body(request, images)
             )
             upstream = {"api": "new", "task_id": created["id"]}
         return self._register(model_id, request, upstream, adjustments)
+
+    async def _submit(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Create a task under our own external ID; after a timeout, find it by it.
+
+        The create is never resent (that could bill twice); see
+        tasks/research/create-recovery.md.
+        """
+        external = f"vid-kling-{uuid.uuid4().hex}"
+        new_api = path.startswith(NEW_API_KINDS)
+        if new_api:
+            options = {**(body.get("options") or {}), "external_task_id": external}
+            body = {**body, "options": options}
+        else:
+            body = {**body, "external_task_id": external}
+        try:
+            return await self.client.call("POST", path, json=body)
+        except httpx.TimeoutException:
+            found = await self._recover(path, external, new_api)
+            if found is None:
+                raise
+            logger.warning("Recovered Kling task %s after a create timeout", external)
+            return found
+
+    async def _recover(
+        self, path: str, external: str, new_api: bool
+    ) -> dict[str, Any] | None:
+        deadline = time.monotonic() + self.settings.create_recovery_seconds
+        while True:
+            try:
+                if new_api:
+                    data = await self.client.call(
+                        "GET", "/tasks", params={"external_task_ids": external}
+                    )
+                    tasks = data.get("result") if isinstance(data, dict) else data
+                    match = next(
+                        (t for t in tasks or [] if t.get("external_id") == external),
+                        None,
+                    )
+                    if match and match.get("id"):
+                        return {"id": match["id"]}
+                else:
+                    data = await self.client.call("GET", f"{path}/{external}")
+                    if isinstance(data, dict) and data.get("task_id"):
+                        return {"task_id": data["task_id"]}
+            except (ApiError, httpx.HTTPError):
+                pass  # not created (yet), or the lookup itself failed
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(self.settings.create_recovery_interval_seconds)
 
     def _register(
         self,
@@ -294,7 +340,7 @@ class KlingProvider:
         if request.params.get("watermark"):
             body["watermark_info"] = {"enabled": True}
         path = "/v1/videos/avatar/image2video"
-        created = await self.client.call("POST", path, json=body)
+        created = await self._submit(path, body)
         upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         return self._register(request.model, request, upstream, adjustments)
 
@@ -312,7 +358,7 @@ class KlingProvider:
             body["bgm_prompt"] = options["bgm_prompt"]
         if "asmr" in options:
             body["asmr_mode"] = bool(options["asmr"])
-        created = await self.client.call("POST", path, json=body)
+        created = await self._submit(path, body)
         upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         return self._register(request.model, request, upstream, adjustments)
 
@@ -385,6 +431,7 @@ class KlingProvider:
                 "watermark_info" if request.task == "commerce_apparel" else "watermark"
             )
             body["options"] = {key: {"enabled": True}}
+        # Solutions document no external ID; they still get the long timeout.
         created = await self.client.call("POST", path, json=body)
         upstream = {"api": "solutions", "task_id": created["id"]}
         return self._register(request.model, request, upstream, adjustments)
@@ -616,7 +663,7 @@ class KlingProvider:
             "input": {"image": encoded[0]} if expected == 1 else {"images": encoded},
         }
         path = "/v1/videos/effects"
-        created = await self.client.call("POST", path, json=body)
+        created = await self._submit(path, body)
         upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         return self._register(request.model, request, upstream, adjustments)
 
@@ -750,7 +797,7 @@ class KlingProvider:
         if params.get("watermark"):
             body["watermark_info"] = {"enabled": True}
         path = "/v1/videos/multi-elements"
-        created = await self.client.call("POST", path, json=body)
+        created = await self._submit(path, body)
         self.jobs.update(
             job["id"],
             upstream={"api": "legacy", "path": path, "task_id": created["task_id"]},
@@ -820,7 +867,7 @@ class KlingProvider:
         if params.get("watermark"):
             body["watermark_info"] = {"enabled": True}
         path = "/v1/videos/advanced-lip-sync"
-        created = await self.client.call("POST", path, json=body)
+        created = await self._submit(path, body)
         self.jobs.update(
             job["id"],
             upstream={"api": "legacy", "path": path, "task_id": created["task_id"]},

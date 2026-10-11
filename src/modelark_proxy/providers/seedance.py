@@ -6,7 +6,9 @@ assets, and BytePlus download hosts lives here, so the HTTP layer only routes.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import mimetypes
 import re
 import time
@@ -20,7 +22,7 @@ from fastapi import HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..asset_jobs import AssetJobManager
-from ..client import ModelArkClient
+from ..client import ModelArkClient, ModelArkError
 from ..config import Settings
 from ..errors import ApiError, openai_error
 from ..ids import decode_video_id
@@ -37,6 +39,8 @@ from ..schemas import VideoList, VideoObject
 from ..translation import TranslationError, apply_openai_format, byteplus_to_openai
 from ..unified import normalize_request
 from ..validation import validate
+
+logger = logging.getLogger(__name__)
 
 PASSTHROUGH_FIELDS = {
     "resolution",
@@ -820,7 +824,15 @@ class SeedanceProvider:
         if real_human_sources:
             return self.asset_jobs.create(data, real_human_sources)
         payload = build_task_payload(data, settings, hosted_reference)
-        result = await self.ark.create_task(payload)
+        submitted_at = int(time.time())
+        try:
+            result = await self.ark.create_task(payload)
+        except httpx.TimeoutException:
+            # Never resent (that could bill twice); find the task instead.
+            task_id = await self._recover_task(payload, submitted_at)
+            if task_id is None:
+                raise
+            result = {"id": task_id}
         now = int(time.time())
         return VideoObject(
             id=str(result["id"]),
@@ -833,6 +845,46 @@ class SeedanceProvider:
             size=data.get("size"),
             model=payload["model"],
         )
+
+    async def _recover_task(
+        self, payload: dict[str, Any], submitted_at: int
+    ) -> str | None:
+        """The task a timed-out create made, if exactly one matches.
+
+        ModelArk has no idempotency key and its task list holds no prompt, so
+        the match uses model, creation time and the requested format
+        (tasks/research/create-recovery.md). Two candidates mean failure.
+        """
+        wanted = {
+            name: payload[name]
+            for name in ("resolution", "ratio", "duration", "seed")
+            if payload.get(name) not in (None, -1, "adaptive")
+        }
+        deadline = time.monotonic() + self.settings.create_recovery_seconds
+        while True:
+            try:
+                listed = await self.ark.list_tasks(
+                    [("page_size", "100"), ("filter.model", str(payload["model"]))]
+                )
+                matches = [
+                    task
+                    for task in listed.get("items") or []
+                    if int(task.get("created_at") or 0) >= submitted_at - 5
+                    and all(task.get(name) == value for name, value in wanted.items())
+                ]
+                if len(matches) == 1:
+                    logger.warning(
+                        "Recovered ModelArk task %s after a create timeout",
+                        matches[0]["id"],
+                    )
+                    return str(matches[0]["id"])
+                if len(matches) > 1:
+                    return None
+            except (ModelArkError, httpx.HTTPError):
+                pass
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(self.settings.create_recovery_interval_seconds)
 
     # --- native routes (SPEC 16.2) ------------------------------------------
 

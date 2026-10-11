@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
+from kling_helpers import strip_external
 
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
@@ -34,7 +35,7 @@ class FakeKling:
     def created(self) -> dict[str, Any]:
         request = next(r for r in self.requests if r.method == "POST")
         assert request.url.path == "/v1/videos/omni-video"
-        return json.loads(request.content)
+        return strip_external(json.loads(request.content))
 
 
 def settings_for(tmp_path: Path, **extra: Any) -> Settings:
@@ -269,7 +270,7 @@ async def post_motion(
     if not posted:
         return response, None
     assert posted[0].url.path == "/v1/videos/motion-control"
-    return response, json.loads(posted[0].content)
+    return response, strip_external(json.loads(posted[0].content))
 
 
 async def test_motion_control_moves_the_character_like_the_video(tmp_path: Path):

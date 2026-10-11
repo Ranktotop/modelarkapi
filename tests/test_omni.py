@@ -208,6 +208,8 @@ async def test_vertex_text_to_video_runs_in_the_background(tmp_path: Path):
         },
         "background": True,
         "store": True,
+        # Streamed so the first event names the interaction (create-recovery.md).
+        "stream": True,
     }
     assert running.json()["status"] == "in_progress"
     assert done.json()["status"] == "completed"
@@ -625,7 +627,7 @@ async def test_an_upstream_timeout_is_a_504_and_not_retried(tmp_path: Path):
 
     assert response.status_code == 504
     assert response.json()["error"]["code"] == "upstream_timeout"
-    assert "may" in response.json()["error"]["message"]
+    assert "not resent" in response.json()["error"]["message"]
     posts = [r for r in fake.requests if r.method == "POST"]
     assert len(posts) == 1
 
@@ -658,5 +660,5 @@ async def test_omni_create_waits_longer_than_ordinary_calls(tmp_path: Path):
         )
 
     assert response.status_code == 200, response.text
-    assert seen["read"] == settings.omni_create_timeout_seconds
-    assert settings.omni_create_timeout_seconds > settings.request_timeout_seconds
+    assert seen["read"] == settings.create_timeout_seconds
+    assert settings.create_timeout_seconds > settings.request_timeout_seconds

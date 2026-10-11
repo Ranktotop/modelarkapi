@@ -6,12 +6,13 @@ operation polling call differ (docs/SPEC.md, ADR-001 decision 7).
 
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
 import httpx
 
 from ..config import Settings
-from ..errors import upstream_error
+from ..errors import ApiError, upstream_error
 from ..google_auth import TokenSource
 from ..retry import with_retry
 
@@ -53,6 +54,9 @@ class _Base:
 
     async def _call(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         headers = {**(await self.headers()), **kwargs.pop("headers", {})}
+        if method == "POST":
+            # POSTs start paid work; they are never resent, so wait for them.
+            kwargs.setdefault("timeout", self.settings.create_timeout_seconds)
         response = await with_retry(
             lambda: self.http.request(method, url, headers=headers, **kwargs),
             attempts=self.settings.upstream_retry_attempts,
@@ -67,6 +71,63 @@ class _Base:
         if response.is_error:
             raise upstream_error("Google", response.status_code, body)
         return body if isinstance(body, dict) else {"data": body}
+
+    async def _create_interaction(
+        self, url: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Create through the event stream: its first event names the interaction.
+
+        A plain create can stay silent until the video is rendered (live,
+        2026-10-11), and a create without its ID cannot be recovered. With
+        background=true the server keeps rendering after the stream is closed.
+        """
+        headers = await self.headers()
+        payload = {**body, "stream": True, "background": True}
+
+        async def read() -> dict[str, Any]:
+            async with self.http.stream(
+                "POST",
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self.settings.create_timeout_seconds,
+            ) as response:
+                if response.is_error or "text/event-stream" not in response.headers.get(
+                    "content-type", ""
+                ):
+                    raw = await response.aread()
+                    try:
+                        data = json.loads(raw)
+                    except ValueError:
+                        data = {"message": raw.decode(errors="replace")}
+                    if response.is_error:
+                        raise upstream_error("Google", response.status_code, data)
+                    return data if isinstance(data, dict) else {"data": data}
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        event = json.loads(line[5:])
+                    except ValueError:
+                        continue
+                    if event.get("error"):
+                        raise upstream_error("Google", 502, event)
+                    interaction = event.get("interaction") or {}
+                    if interaction.get("id"):
+                        return interaction
+            raise ApiError(
+                "Google ended the interaction stream without an ID",
+                502,
+                "upstream_error",
+            )
+
+        return await with_retry(
+            read,
+            attempts=self.settings.upstream_retry_attempts,
+            backoff_seconds=self.settings.upstream_retry_backoff_seconds,
+            max_backoff_seconds=self.settings.upstream_retry_max_backoff_seconds,
+            description=f"Google POST {url}",
+        )
 
 
 class GeminiBackend(_Base):
@@ -100,12 +161,7 @@ class GeminiBackend(_Base):
         ]
 
     async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
-        return await self._call(
-            "POST",
-            f"{self.base}/interactions",
-            json=body,
-            timeout=self.settings.omni_create_timeout_seconds,
-        )
+        return await self._create_interaction(f"{self.base}/interactions", body)
 
     async def get_omni(self, interaction_id: str) -> dict[str, Any]:
         return await self._call("GET", f"{self.base}/interactions/{interaction_id}")
@@ -175,12 +231,7 @@ class VertexBackend(_Base):
         )
 
     async def start_omni(self, body: dict[str, Any]) -> dict[str, Any]:
-        return await self._call(
-            "POST",
-            self.interactions_url,
-            json=body,
-            timeout=self.settings.omni_create_timeout_seconds,
-        )
+        return await self._create_interaction(self.interactions_url, body)
 
     async def get_omni(self, interaction_id: str) -> dict[str, Any]:
         return await self._call("GET", f"{self.interactions_url}/{interaction_id}")

@@ -65,6 +65,9 @@ class KlingClient:
     async def raw(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """Send a request and return the whole Kling body, raising ApiError on failure."""
         headers = {"authorization": f"Bearer {self.settings.kling_api_key}"}
+        if method == "POST":
+            # POSTs create paid tasks; they are never resent, so wait for them.
+            kwargs.setdefault("timeout", self.settings.create_timeout_seconds)
         response = await with_retry(
             lambda: self.http.request(
                 method, f"{self.base}{path}", headers=headers, **kwargs

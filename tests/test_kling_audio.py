@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from kling_helpers import strip_external
 
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
@@ -25,7 +26,7 @@ class FakeKling:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
-        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})  # noqa: E731
+        ok = lambda data: httpx.Response(200, json={"code": 0, "data": data})
         if request.url.host == CDN:
             content = {"/a.mp3": MP3, "/a.wav": WAV, "/v.mp4": VIDEO}[path]
             return httpx.Response(200, content=content)
@@ -65,7 +66,7 @@ class FakeKling:
 
     def posted(self, path: str) -> dict[str, Any]:
         return next(
-            json.loads(r.content)
+            strip_external(json.loads(r.content))
             for r in self.requests
             if r.method == "POST" and r.url.path == path
         )

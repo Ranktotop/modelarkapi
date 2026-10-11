@@ -68,7 +68,11 @@ class ModelArkClient:
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = await self._send(
             "create task",
-            lambda: self.http.post("/contents/generations/tasks", json=payload),
+            lambda: self.http.post(
+                "/contents/generations/tasks",
+                json=payload,
+                timeout=self.settings.create_timeout_seconds,
+            ),
         )
         return await self._json(response)
 

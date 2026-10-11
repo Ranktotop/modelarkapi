@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     max_inline_reference_bytes: int = 25 * 1024 * 1024
     request_timeout_seconds: float = 60.0
     download_timeout_seconds: float = 600.0
-    # Vertex can keep an Omni create open while it renders (live, 2026-10-11),
-    # even with background=true; a create is never retried, so wait for it.
-    omni_create_timeout_seconds: float = Field(default=600.0, gt=0)
+    # A paid create is never sent twice, so wait generously for its answer
+    # (Vertex once held an Omni create open for over 60 s, live 2026-10-11).
+    create_timeout_seconds: float = Field(default=600.0, gt=0)
+    # After a create timeout: how long and how often to look the task up.
+    create_recovery_seconds: float = Field(default=180.0, ge=0)
+    create_recovery_interval_seconds: float = Field(default=10.0, gt=0)
     max_upstream_connections: int = 100
     max_keepalive_connections: int = 20
     upstream_retry_attempts: int = Field(default=3, ge=1)

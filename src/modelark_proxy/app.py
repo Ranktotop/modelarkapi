@@ -550,9 +550,8 @@ def create_app(
             # Not retried: a create may already be accepted (and billed) upstream.
             logger.warning("Upstream timeout on %s: %r", request.url.path, exc)
             return openai_error(
-                f"The provider did not answer within {settings.request_timeout_seconds:g} s. "
-                "The request may still have been accepted upstream; check the "
-                "provider before retrying.",
+                "The provider did not answer in time and the task could not be "
+                "found afterwards. It was not resent, so nothing is billed twice.",
                 504,
                 "upstream_timeout",
             )
