@@ -1,5 +1,7 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
+import { AssetLibrary } from "./AssetLibrary";
+import type { AssetRef } from "./AssetLibrary";
 import { EMPTY_EXTRAS, TASK_MODES, TaskFields, taskError, taskPayload } from "./TaskFields";
 import type { TaskExtras } from "./TaskFields";
 import type { JSX } from "react";
@@ -213,6 +215,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [previewRatio, setPreviewRatio] = useState<number | null>(null);
   const [guide, setGuide] = useState<{ title: string; markdown: string } | null>(null);
   const [extras, setExtras] = useState<TaskExtras>(EMPTY_EXTRAS);
+  const [assetRefs, setAssetRefs] = useState<AssetRef[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = jobs.find(job => job.id === selectedId) || jobs[0];
@@ -370,6 +373,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       const role = roleFor(item);
       return { type: item.kind, url: item.url, ...(role ? { role } : {}) };
     }) : [];
+    const usableAssets = assetRefs.filter(asset => rolesFor(capabilities, task, asset.type).length > 0);
     const seconds = durationRange ? duration : effectiveDuration === -1 ? "auto" : effectiveDuration;
     return {
       model,
@@ -383,7 +387,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
       ...(feature(capabilities, "generate_audio") && hasParameter(capabilities, task, "generate_audio") ? { generate_audio: generateAudio } : {}),
       ...(feature(capabilities, "watermark") ? { watermark } : {}),
-      ...(continuation.length || uploaded.length ? { references: [...continuation, ...uploaded] } : {}),
+      ...(continuation.length || uploaded.length || usableAssets.length ? { references: [...continuation, ...uploaded, ...usableAssets.map(asset => ({ type: asset.type, asset_id: asset.asset_id }))] } : {}),
       ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind })) } : {}),
     };
   }
@@ -519,6 +523,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
         <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
 
+        <AssetLibrary caps={capabilities} task={task} selected={assetRefs} onChange={setAssetRefs} references={references} />
         <TaskFields task={task} caps={capabilities} extras={extras} onChange={setExtras} references={references} />
 
         <div className="settings-grid">
