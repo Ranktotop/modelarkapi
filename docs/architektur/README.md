@@ -242,6 +242,7 @@ können, ohne ihren Code anzupassen.
 | Seedance 2.0 Fast, 4 s, 480p, danach Remix | Quelle nach 115 s fertig. Der Remix kommt als Edit mit dem Quellvideo als `reference_video` an und verändert nur das Verlangte (Wiese → Schnee). Befund: Der Remix nahm die Modell-Standardwerte (720p, 5 s); seitdem übernimmt er die Auflösung der Quelle. |
 | Seedance 2.5 Draft, 480p, danach finales Video | Draft nach 84 s mit `draft: true`; das finale Video aus `draft_task_id` in 1080p mit derselben Seed. Befund: `size` meldet für 2.5 die Pixelmaße von 2.0 (864x496). |
 | Kling 2.5 Turbo, 5 s | Abgelehnt mit `402 billing` („Account balance not enough“); die Fehlerabbildung stimmt, eine Generierung ist nicht live geprüft. |
+| Kling 2.5 Turbo, 5 s, 720p (nach Aufladen) | Mit eigener `external_task_id` angenommen, nach 43 s fertig, 1280×720, 5,04 s, über den Proxy gespeichert und abrufbar. |
 | Vertex Omni (`gemini-omni-1.1-flash-preview`, 3 s, 360p), 1. Versuch | `POST …/interactions` lieferte trotz `background: true` über 60 s keine Antwort; der Proxy brach mit einem unbehandelten `ReadTimeout` ab (500). Ob Google die Generierung abgerechnet hat, ist offen. Seitdem: eigenes Create-Timeout (`OMNI_CREATE_TIMEOUT_SECONDS`, 600 s) und 504 `upstream_timeout` statt 500. |
 | Vertex Omni, 2. Versuch | Create kam sofort zurück, Video (640×360, 3 s, mit Ton) nach 23 s fertig und über den Proxy abrufbar; 5 793 Output-Tokens. Der Hänger beim ersten Versuch war ein Ausreißer. |
 
