@@ -42,9 +42,9 @@ model_list:
 - Virtuelle Kling-Modelle erscheinen wie echte; `kling-tts` bekommt
   `mode: audio_speech`.
 - `prompt_guide_url` ist nur gesetzt, wenn `PUBLIC_BASE_URL` konfiguriert ist.
-- Die Datei `litellm-config.example.yaml` im Repository enthält zwei
-  Seedance-Einträge in der älteren Form (`model_name` gleich Modell-ID); für neue
-  Setups den Export verwenden.
+- Die Datei `litellm-config.example.yaml` im Repository zeigt vier Einträge im
+  Format des Exports (Seedance, Veo, Kling, `kling_tts_api`); die vollständige
+  Liste liefert `GET /v1/litellm/config`.
 
 Beim LiteLLM-Container muss gesetzt sein:
 
@@ -107,7 +107,7 @@ video = video_generation(
 
 `tests/integration/test_litellm.py` startet echte LiteLLM-Proxies (1.95.0,
 1.104.2 und 1.105.0) vor dem Proxy; dessen Anbieter sind simulierte Upstreams,
-es entstehen keine Kosten. Die Suite ist opt-in; jede virtuelle Umgebung braucht
+es entstehen keine Kosten. Die Suite (30 Tests) ist opt-in; jede virtuelle Umgebung braucht
 `litellm[proxy]`:
 
 ```bash
@@ -125,6 +125,7 @@ LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm
 | `POST /v1/videos/edits` | zusätzliche Felder nur in `extra_body` |
 | `POST /v1/videos/extensions` | LiteLLM verlangt `seconds` |
 | `POST /v1/audio/speech` | `kling-tts` (Modus `audio_speech`) |
+| `POST /v1/videos/characters` (+ `GET …/{id}`) | legt ein Kling-Video-Element an; LiteLLM sendet nur `name` und `video`. IDs `character_<base64>`, auch als `asset_id` nutzbar |
 
 **Nicht über LiteLLM erreichbar** (direkt am Proxy mit dem Proxy-Key nutzen):
 

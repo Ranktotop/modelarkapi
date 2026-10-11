@@ -2,7 +2,7 @@
 
 Der Vertrag mit allen Feldern, Tasks und Regeln steht in [SPEC.md](../SPEC.md).
 Diese Seite beschreibt, was der Proxy auf dem Branch `feature/multi-provider`
-anbietet. Abweichungen von der SPEC sind als solche markiert.
+anbietet.
 
 ## Authentifizierung
 
@@ -47,9 +47,9 @@ außer den nativen Routen unter `/v1/providers/…`, `/v1/assets` und
 | `DELETE` | `/v1/media/references/{id}` | temporäre Referenz entfernen |
 | `GET` | `/v1/real-human/configuration` | Assets-API und Gruppe read-only prüfen |
 | `POST` | `/v1/videos` | Generierungstask erstellen (alle Modelle) |
-| `GET` | `/v1/videos` | ModelArk-Tasks auflisten und filtern |
+| `GET` | `/v1/videos` | Jobs aller Anbieter auflisten und filtern |
 | `GET` | `/v1/videos/{id}` | Status |
-| `DELETE` | `/v1/videos/{id}` | Abbrechen bzw. löschen (Verhalten je Anbieter, siehe [Taskverwaltung](../taskverwaltung/README.md)) |
+| `DELETE` | `/v1/videos/{id}` | Abbrechen bzw. löschen; Antwort stets `object: "video.deleted"`, `deleted: true` plus die bisherigen Videofelder (Verhalten je Anbieter: [Taskverwaltung](../taskverwaltung/README.md)) |
 | `GET` | `/v1/videos/{id}/content` | Ergebnis streamen (`?variant=`, `?output=`, `?format=`) |
 | `GET` | `/v1/videos/{id}/last_frame` | letztes PNG-Frame (nur Seedance) |
 | `POST` | `/v1/videos/{id}/remix` | Ergebnis per Prompt bearbeiten (`task=edit`) |
@@ -60,12 +60,16 @@ außer den nativen Routen unter `/v1/providers/…`, `/v1/assets` und
 | `GET` `DELETE` | `/v1/assets/{id}` | Asset lesen bzw. löschen |
 | `POST` | `/v1/providers/google/veo/{model}:predictLongRunning` | natives Veo-Create |
 | `GET` | `/v1/providers/google/veo/operations/{id}` | native Veo-Operation |
+| `POST` | `/v1/providers/google/interactions` | native Omni-Interaction (`background` und `store` erzwungen) |
+| `GET` `DELETE` | `/v1/providers/google/interactions/{id}` | Interaction lesen bzw. löschen (wie `DELETE /v1/videos/{id}`) |
+| `POST` | `/v1/providers/google/interactions/{id}/cancel` | Interaction abbrechen |
+| `POST` `GET` | `/v1/providers/modelark/tasks` | natives Seedance-Create (rohes `content`) bzw. Liste |
+| `GET` `DELETE` | `/v1/providers/modelark/tasks/{id}` | native Abfrage bzw. Löschen |
+| `POST` | `/v1/videos/characters` | OpenAI-Character (Multipart `name`, `video`, optional `description`) als Kling-Video-Element |
+| `GET` | `/v1/videos/characters/{id}` | Character lesen |
 | `GET` | `/v1/providers/kling/effects` | Effekt-Katalog (219 Einträge: `id`, `name`, `images`) |
 | `GET` `POST` | `/v1/providers/kling/{pfad}` | native Kling-Durchleitung |
 
-Abweichungen von der SPEC: Die dort genannten Routen
-`/v1/providers/modelark/tasks`, `/v1/providers/google/interactions…` und
-`/v1/videos/characters` gibt es nicht.
 
 ## Modelle und Capabilities
 
@@ -137,9 +141,9 @@ Felder auf oberster Ebene haben Vorrang.
 | `shots`, `shot_mode`, `effect`, `speech`, `audio`, `selections`, `edit_mode`, `commerce` | – | task-spezifische Felder, siehe [Video-Generierung](../video-generierung/README.md) |
 | `enhance_prompt`, `person_generation` | – | Veo |
 | `output_format`, `return_last_frame` | – | Seedance |
-| `parameter_policy` | `strict` \| `adapt` | Standard `strict`; `adapt` passt Werte an und meldet `adjustments[]` |
+| `parameter_policy` | `strict` \| `adapt` | Standard aus `DEFAULT_PARAMETER_POLICY` (`strict`); `adapt` passt Werte an und meldet `adjustments[]` |
 | `provider_options` | object | Anbieterfelder, nur der Block des Zielmodells zählt |
-| `webhook_url` | string | HTTPS-Ziel für signierte Statusereignisse (braucht `WEBHOOK_SECRET`) |
+| `webhook_url` | string | HTTPS-Ziel für signierte Statusereignisse (braucht `WEBHOOK_SECRET`; der Host muss öffentlich auflösen, sonst 400) |
 | `user` | string | wird bei Seedance zu `safety_identifier` |
 | `metadata` | object | wird gespeichert (nur Direktaufrufe) |
 | `input_reference` | file | Multipart-Datei, Typ ausschließlich über die Dateisignatur bestimmt; Google und Kling lehnen sie ab, `references` nutzen |
@@ -149,8 +153,8 @@ Bei einheitlichen Requests führen Felder, die der Anbieter nicht kennt, zu
 vermerkt. Die Modell-Validierung findet vor dem Upstream-Aufruf statt; ein
 unpassender Wert ergibt HTTP 400 statt einer Task-ID.
 
-Der Standard `strict` ist im Code fest eingestellt; die in der SPEC genannte
-Variable `DEFAULT_PARAMETER_POLICY` gibt es nicht.
+Der Standard ergibt sich aus `DEFAULT_PARAMETER_POLICY` (`strict` oder `adapt`, Standard
+`strict`) und gilt für alle Anbieter.
 
 ### Seedance-Altfelder
 
@@ -169,6 +173,9 @@ enthält; sonst läuft er unverändert über den bisherigen Pfad.
 | `ratio`, `resolution`, `duration`, `frames`, `output_format`, `generate_audio`, `watermark`, `camera_fixed`, `return_last_frame`, `seed` | direkt an ModelArk |
 | `service_tier`, `execution_expires_after`, `priority`, `callback_url`, `safety_identifier` | ModelArk-Felder |
 | `draft`, `draft_task_id` | Draft-Modus |
+
+Real-Human: `real_human: true` an einem Nicht-Seedance-Modell ergibt
+`400 unsupported_parameter` (`param: real_human`).
 
 Asset-IDs: In `references[]` ist `asset_id` mit einer öffentlichen ModelArk-ID
 (`asset-…`, wird zu `asset://asset-…`) erlaubt. Die Altfelder `asset_id`,
@@ -218,7 +225,7 @@ die interne Form (`cgt-…`, `video-rh-…`, `vid-<anbieter>-<uuid>`). Weitere F
 | `provider`, `task`, `outputs[]`, `adjustments[]`, `last_frame_available`, `metadata` | lokales Register | nur bei Direktaufrufen sichtbar (LiteLLM verwirft unbekannte Felder) |
 | `usage` | alle | Anbieter, Backend und, soweit bekannt, Verbrauch |
 | `seed`, `resolution`, `ratio`, `frames`, `framespersecond`, `output_format`, `generate_audio`, `draft`, `draft_task_id`, `priority`, `execution_expires_after`, `safety_identifier`, `service_tier` | Seedance | von ModelArk zurückgemeldete Einstellungen des Tasks |
-| `deleted` | Seedance | `true` nach `DELETE` eines beendeten Tasks |
+| `deleted` | alle | `true` in der `DELETE`-Antwort (zusammen mit `object: "video.deleted"`) |
 
 Statusabbildung (SPEC 11.2): ModelArk `queued → queued`, `running → in_progress`,
 `succeeded → completed`; `failed`, `cancelled` und `expired` erscheinen als
@@ -226,22 +233,32 @@ Statusabbildung (SPEC 11.2): ModelArk `queued → queued`, `running → in_progr
 
 ## GET `/v1/videos`
 
-Die Liste enthält ausschließlich ModelArk-Tasks (Seedance). Google- und
-Kling-Jobs erscheinen nicht, und `after`, `order` sowie `provider` werden nicht
-ausgewertet; das weicht von SPEC 11.5 ab. Ist ModelArk nicht konfiguriert, ist die
-Liste leer.
+Ohne Altparameter vereint die Liste ModelArk-Tasks (die ersten 100) und das lokale
+Jobregister (Google, Kling) und sortiert nach `created_at`. Parameter:
 
-Unterstützte Query-Parameter: `page_num` (1–500), `page_size` (1–500, Alias
-`limit`), `filter.status`, wiederholtes `filter.task_ids`, `filter.model` und
-`filter.service_tier`. Unbekannte Parameter werden nicht weitergereicht.
+| Parameter | Bedeutung |
+|---|---|
+| `limit` | 1–100, Standard 20 |
+| `after` | ID des letzten Eintrags der vorigen Seite (kodiert oder intern) |
+| `order` | `desc` (Standard) oder `asc` |
+| `model`, `status`, `provider` | Filter (`provider`: `modelark`, `google`, `kling`) |
+
+Die Antwort enthält `object: "list"`, `data`, `first_id`, `last_id`, `has_more`
+und `warnings[]` (`{provider, message}`) für Anbieter, die gerade ausfallen; die
+übrigen Einträge kommen trotzdem.
+
+Sobald `page_num`, `page_size` oder ein `filter.*`-Parameter vorkommt, verhält sich
+die Route wie bisher und listet ausschließlich ModelArk-Tasks mit ModelArk-Paging:
+`page_num` (1–500), `page_size` (1–500, Alias `limit`), `filter.status`,
+wiederholtes `filter.task_ids`, `filter.model`, `filter.service_tier`. Die Antwort
+enthält dann `total`, Seitendaten und – wenn berechenbar – `has_more`.
 
 ```bash
 curl -H "Authorization: Bearer $PROXY_KEY" \
-  'http://127.0.0.1:8081/v1/videos?page_num=1&page_size=20&filter.status=succeeded'
+  'http://127.0.0.1:8081/v1/videos?limit=20&provider=kling&order=desc'
 ```
 
-Die Antwort enthält `object: "list"`, `data`, `total`, Seitendaten und – wenn
-berechenbar – `has_more`.
+LiteLLM leitet die Liste nicht weiter (400).
 
 ## GET `/v1/videos/{id}/content`
 
@@ -281,16 +298,36 @@ genau ein Video oder ein Frontalbild (Rolle `frontal`) plus 1–3 weitere Bilder
 eine Voice genau ein Audio oder Video. Verwendung in `references`:
 `{"type":"element","asset_id":"asset-kling-element-…"}`.
 
+### OpenAI-Characters
+
+`POST /v1/videos/characters` (Multipart `name`, `video`, optional `description`)
+legt ein Kling-Video-Element an; nötig sind Kling und `PUBLIC_BASE_URL`. Die
+Antwort hat `object: "character"`, `id`, `name`, `status`. Die ID hat das Format
+`character_<base64>` und umhüllt `char-kling-element-…`; beide Formen werden
+angenommen, auch als `asset_id` in `references[]`. `GET /v1/videos/characters/{id}`
+liefert den aktuellen Status. Über LiteLLM funktioniert die Anlage; es sendet nur
+`name` und `video`.
+
 ## Native Routen
 
 - **Google:** `POST /v1/providers/google/veo/{model}:predictLongRunning` nimmt den
   nativen Veo-Body (`instances`, `parameters`) und liefert die native Antwort plus
   `proxy: {id, status_url}`. `GET …/veo/operations/{id}` gibt die native Operation
   zurück.
+- **Google Interactions:** `POST /v1/providers/google/interactions` nimmt den
+  nativen Omni-Body (`background` und `store` erzwingt der Proxy, bei der Gemini
+  API zusätzlich `delivery: uri`) und antwortet nativ plus `proxy: {id, status_url}`.
+  `GET …/{id}` liefert die native Interaction, `POST …/{id}/cancel` bricht ab,
+  `DELETE …/{id}` verhält sich wie `DELETE /v1/videos/{id}`.
+- **ModelArk:** `POST /v1/providers/modelark/tasks` nimmt ein rohes ModelArk-Body
+  mit `content`-Array (Upload-IDs und `data:`-Videos werden zu öffentlichen URLs,
+  `data:`-Bilder/-Audio gehen unverändert durch) und antwortet nativ plus
+  `proxy: {id, status_url}`. `GET …/tasks` listet (native Query-Parameter),
+  `GET`/`DELETE …/tasks/{id}` fragen bzw. löschen nativ.
 - **Kling:** `/v1/providers/kling/{pfad}` leitet dokumentierte Kling-Pfade durch
   (`v1/videos/…`, `v1/audio/…`, `v1/general/…`, `text-to-video/…`,
   `image-to-video/…`, `omni-video/…`, `motion-control/…`, `tasks`, `solutions`,
-  `account/costs`). `solutions/virtual_try_on` und alle anderen Pfade ergeben 404.
+  `account/costs`, höchstens ein Aufruf pro `KLING_COSTS_MIN_INTERVAL_SECONDS`, Standard 1 s: der Proxy wartet). `solutions/virtual_try_on` und alle anderen Pfade ergeben 404.
   Erzeugte Video-Tasks werden registriert und antworten mit `proxy: {id, status_url}`.
 
 Native Ergebnisse sind über `/v1/videos/{id}` und `/content` abrufbar.

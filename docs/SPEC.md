@@ -58,7 +58,7 @@ Die Schlüsselwörter **muss**, **soll** und **kann** sind verbindlich gemeint.
 | POST | `/v1/media/references` | Datei hochladen (bestehend) | ✘ |
 | DELETE | `/v1/media/references/{id}` | Upload löschen (bestehend) | ✘ |
 | GET/POST/DELETE | `/v1/assets[/{id}]` | Wiederverwendbare Assets (Elements, Voices, Real-Human) | ✘ |
-| POST/GET | `/v1/videos/characters[/{id}]` | OpenAI-Characters als Asset | ✔ (in T28 zu verifizieren) |
+| POST/GET | `/v1/videos/characters[/{id}]` | OpenAI-Characters als Kling-Video-Element | ✔ (T28 verifiziert) |
 | GET | `/v1/real-human/configuration` | bestehend | ✘ |
 | GET | `/health` | Health je Provider | – |
 
@@ -112,7 +112,7 @@ Interne IDs dürfen nur `[A-Za-z0-9_-]` enthalten.
 |---|---|
 | `ref-…` | Upload im Media-Store (`POST /v1/media/references`; bisher ohne Präfix, beide Formen gültig) |
 | `asset-kling-element-<id>`, `asset-kling-voice-<id>`, `asset-modelark-<id>` | Assets aus `/v1/assets` |
-| `char-…` | OpenAI-Character (ein Alias auf ein Asset) |
+| `char-…` | OpenAI-Character, Alias auf ein Kling-Video-Element (`char-kling-element-<id>` ↔ `asset-kling-element-<id>`). Nach außen im LiteLLM-Format `character_` + Base64(`litellm:custom_llm_provider:openai;model_id:kling-3.0-omni;character_id:char-…`), damit LiteLLM Abfragen an den Proxy statt an OpenAI routet; beide Formen gelten auch als `asset_id` |
 
 ---
 
@@ -587,8 +587,9 @@ Callbacks nutzt der Proxy nicht; er pollt.
 
 `GET /v1/videos?limit=&after=&order=&model=&status=&provider=` liefert
 `{object:"list", data, first_id, last_id, has_more}` über ModelArk-Tasks und
-das lokale Register. Die bisherigen Parameter (`page_num`, `page_size`,
-`filter.*`) bleiben gültig. Fällt ein Provider aus, enthält die Antwort die
+das lokale Register (von ModelArk die neuesten 100 Tasks, wegen dessen
+List-Limit von 1 QPS). Die bisherigen Parameter (`page_num`, `page_size`,
+`filter.*`) bleiben gültig und liefern dann ModelArks eigenes Paging. Fällt ein Provider aus, enthält die Antwort die
 übrigen Einträge und `warnings[]`.
 
 ### 11.6 Löschen

@@ -106,8 +106,10 @@ nur Prompt, Parameter, Job-ID und Status und löscht abgeschlossene Einträge na
   Bilder), gilt: nur `https`, Hostauflösung mit Ablehnung privater,
   Loopback-, Link-Local- und Multicast-Adressen (auch nach Redirects, höchstens 3),
   Größenlimit je Typ, Timeout und Dateisignaturprüfung.
-- Webhook-Ziele müssen `https` sein; der Proxy löst den Host vor jeder
-  Auslieferung auf, liefert nicht an private Adressen und folgt keinen Redirects.
+- Webhook-Ziele müssen `https` sein und beim Create wie vor jeder Auslieferung auf
+  eine öffentliche Adresse auflösen; der Proxy folgt keinen Redirects.
+- `GET /v1/providers/kling/account/costs` ist auf einen Aufruf pro
+  `KLING_COSTS_MIN_INTERVAL_SECONDS` (Standard 1 s) gedrosselt.
 - `data:`-Referenzen sind auf `MAX_INLINE_REFERENCE_BYTES` begrenzt.
 - Native Kling-Pfade sind eine Allowlist dokumentierter Präfixe; Bild-APIs und
   Virtual Try-On sind ausgeschlossen.

@@ -39,9 +39,13 @@ den Browser.
 - **Job-Details** zeigen Anbieter, Backend (Vertex AI oder Gemini API), Modell,
   Anbieter-Status, Fortschritt, Fehlercode und -meldung, Referenzen mit Rollen und
   die Rohdaten von Anfrage und Antwort.
-- **Seedance-Besonderheiten:** Schalter **Reale Person · automatisch
+- **Seedance-Besonderheiten:** `priority` und `generate_audio` sendet das Studio nur,
+  wenn das Capability-Dokument des Modells sie zulässt (`native_fields` bzw.
+  `parameters`). Schalter **Reale Person · automatisch
   verifizieren** pro Referenz, Priorität, letztes Frame und Fortsetzen.
-- Abbrechen/Löschen von Jobs und Fortsetzen: über das letzte Frame (Seedance),
+- Abbrechen/Löschen von Jobs (schlägt das Löschen beim Proxy fehl, etwa bei einem
+  laufenden Seedance-Task, bleibt der Job erhalten und der Fehler wird angezeigt)
+  und Fortsetzen: über das letzte Frame (Seedance),
   durch Verlängern des Videos (Veo) oder durch Multi-Turn (Omni).
 
 ## Start

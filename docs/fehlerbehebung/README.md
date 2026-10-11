@@ -38,8 +38,8 @@ erreichbar ist, oder die Modell-ID wird vom Anbieter nicht gemeldet.
   erreichbar, `europe-west4` laut ADR-001 nicht).
 - Omni auf Vertex kennt nur die Preview-IDs `gemini-omni-1.1-flash-preview` und
   `gemini-omni-flash-preview`; `gemini-omni-1.1-flash` gibt es nur auf der Gemini
-  API. `GOOGLE_OMNI_BACKEND` muss `vertex` oder `gemini` sein; `both` wird nicht
-  unterstützt.
+  API. `GOOGLE_OMNI_BACKEND` ist `vertex`, `gemini` oder `both`; bei `both` braucht es
+  `GEMINI_API_KEY` und `VERTEX_PROJECT`, sonst fehlt das jeweilige Backend.
 - Kling meldet bei abgekündigten Modellen Code 1203; der Proxy macht daraus
   `model_unavailable`.
 
@@ -55,6 +55,12 @@ Die Fehlermeldung nennt die erlaubten Werte; dieselben stehen im Capability-Doku
 - Kling: `generate_audio` zusammen mit Referenzvideo (Omni); Elements und Voices
   gleichzeitig; Elements ohne Startbild; Dauer bei Tasks, die der Anbieter bestimmt.
 - Seedance: siehe die folgenden Abschnitte.
+
+## `real_human` bei Nicht-Seedance-Modellen
+
+`real_human: true` (am Request oder an einer Referenz) ergibt bei Veo, Omni und
+Kling `400 unsupported_parameter` mit `param: real_human`. Das Verfahren gibt es
+nur bei Seedance.
 
 ## Seedance lehnt ein Feld ab
 
@@ -81,9 +87,8 @@ Der Proxy prüft Seedance-Felder vor dem Upstream-Aufruf:
 ## `409 video_running`
 
 Ein laufender Seedance-Task lässt sich weder abbrechen noch löschen. Erst nach
-`succeeded`/`failed` löschen; ein `queued`-Task wird dagegen abgebrochen. In der
-Studio-Oberfläche verschwindet der Job lokal, der Eintrag bleibt aber beim Proxy,
-bis er endet.
+`succeeded`/`failed` löschen; ein `queued`-Task wird dagegen abgebrochen. Das Studio
+zeigt den Fehler an und behält den Job.
 
 ## Kling-Fehler
 
@@ -131,8 +136,9 @@ Weitere Hinweise:
 - `webhook_url requires WEBHOOK_SECRET to be configured on the proxy`:
   `WEBHOOK_SECRET` setzen und den Proxy neu starten.
 - `webhook_url must be an absolute https URL`: nur HTTPS-Ziele.
-- Es kommt nichts an: Der Proxy liefert nicht an Hosts, die auf private,
-  Loopback- oder Link-Local-Adressen auflösen, und folgt keinen Redirects. Nach
+- `webhook_url must resolve to a public address`: der Host löst nicht auf eine
+  öffentliche Adresse auf (beim Create mit 400, vor jeder Auslieferung erneut).
+- Es kommt nichts an: Der Proxy folgt keinen Redirects. Nach
   `WEBHOOK_MAX_ATTEMPTS` Fehlversuchen (Standard 8) wird die Auslieferung
   verworfen; die Warnung steht im Log.
 

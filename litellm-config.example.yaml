@@ -1,13 +1,40 @@
+# Illustrative excerpt of `GET /v1/litellm/config` (add ?format=yaml). Generate the
+# real list from your proxy; it contains every active model. The export also fills
+# `capabilities` (capability document v2) and `prompt_guide` (Markdown) in
+# `model_info`, and `prompt_guide_url` when PUBLIC_BASE_URL is set.
+# LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
 model_list:
-  - model_name: dreamina-seedance-2-5-260628
+  - model_name: seedance_25_api            # name_template default: {family_slug}_api
     litellm_params:
-      # LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
       model: openai/dreamina-seedance-2-5-260628
       api_base: http://modelarkapi_server:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
-  - model_name: dreamina-seedance-2-0-fast-260128
+    model_info:
+      mode: video_generation
+      provider: modelark
+      # capabilities: {...}   filled by GET /v1/litellm/config
+      # prompt_guide: "..."   filled by GET /v1/litellm/config
+  - model_name: veo_31_fast_api
     litellm_params:
-      # LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
-      model: openai/dreamina-seedance-2-0-fast-260128
+      model: openai/veo-3.1-fast-generate-001
       api_base: http://modelarkapi_server:8080/v1
       api_key: os.environ/MODELARK_PROXY_API_KEY
+    model_info:
+      mode: video_generation
+      provider: google
+  - model_name: kling_tts_api
+    litellm_params:
+      model: openai/kling-tts
+      api_base: http://modelarkapi_server:8080/v1
+      api_key: os.environ/MODELARK_PROXY_API_KEY
+    model_info:
+      mode: audio_speech
+      provider: kling
+  - model_name: kling_30_api
+    litellm_params:
+      model: openai/kling-3.0
+      api_base: http://modelarkapi_server:8080/v1
+      api_key: os.environ/MODELARK_PROXY_API_KEY
+    model_info:
+      mode: video_generation
+      provider: kling

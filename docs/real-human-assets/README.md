@@ -1,7 +1,8 @@
 # Real-Human-Assets und Gesichtsverifizierung
 
 Dieses Verfahren betrifft ausschließlich Seedance (BytePlus ModelArk). Veo, Omni
-und Kling kennen kein `real_human`; der Proxy wertet das Flag bei ihnen nicht aus.
+und Kling kennen kein `real_human`; der Proxy lehnt das Flag bei ihnen mit
+`400 unsupported_parameter` (`param: real_human`) ab.
 
 ## Warum die Verifizierung nötig ist
 

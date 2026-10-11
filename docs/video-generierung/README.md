@@ -70,7 +70,7 @@ Beispiele für den einheitlichen Request:
   Seitenverhältnis dem Bild (`adaptive`).
 - **Ton:** `generate_audio` wird je Modell abgebildet (Seedance, Veo auf Vertex,
   Kling `audio`/`sound`). Omni erzeugt immer Ton.
-- **`parameter_policy`:** `strict` (Standard) lehnt nicht unterstützte Werte mit
+- **`parameter_policy`:** `strict` (Standard, änderbar über `DEFAULT_PARAMETER_POLICY`) lehnt nicht unterstützte Werte mit
   400 und den erlaubten Werten ab. `adapt` wählt den nächsten erlaubten Wert
   (Zahlen: bei Gleichstand der größere; Auflösung: bevorzugt nach unten), verwirft
   nicht unterstützte optionale Felder und schreibt jede Änderung nach
@@ -261,7 +261,9 @@ Löschen entfernt nur den lokalen Eintrag; der Anbieter-Job läuft weiter.
 ## Gemini Omni Flash
 
 Modelle: `gemini-omni-1.1-flash` (Gemini API), `gemini-omni-1.1-flash-preview` und
-`gemini-omni-flash-preview` (Vertex). Standard-Backend ist Vertex. Der Proxy nutzt
+`gemini-omni-flash-preview` (Vertex). Standard-Backend ist Vertex; mit
+`GOOGLE_OMNI_BACKEND=both` laufen GA-IDs über die Gemini API und `-preview`-IDs
+über Vertex. Der Proxy nutzt
 die Interactions API mit `background: true` und Polling.
 
 - Dauer 3–10 s; Auflösung 360p, 720p, 1080p, 4k (Flash Preview: nur 720p);

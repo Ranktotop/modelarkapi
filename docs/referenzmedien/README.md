@@ -38,8 +38,8 @@ zusätzlich die bisherigen Felder. Die Quellenregeln stehen in
 - `name` dient nur der Anzeige und geht nicht an den Anbieter. Kling-Prompts
   verweisen mit `<<<image_n>>>`, `<<<video_n>>>`, `<<<element_n>>>` und
   `<<<voice_n>>>` auf Referenzen (`n` ab 1 je Typ, in Array-Reihenfolge).
-- `real_human: true` aktiviert die Seedance-Asset-Verifizierung (siehe unten). Nur
-  Seedance wertet das Flag aus.
+- `real_human: true` aktiviert die Seedance-Asset-Verifizierung (siehe unten). Bei
+  anderen Anbietern ergibt es `400 unsupported_parameter` (`param: real_human`).
 
 ## Quellen und wie der Proxy sie bereitstellt
 
@@ -49,7 +49,7 @@ zusätzlich die bisherigen Felder. Die Quellenregeln stehen in
 | `data:`-URI | Seedance: Bild und Audio inline weitergegeben, Video über den Media-Store; Kling: Bilder und Lip-Sync-/Avatar-Audio als Base64, Videos über den Media-Store (`PUBLIC_BASE_URL`-Adresse) | dekodiert |
 | `upload_id` | Media-Store-URL | lokal gelesen |
 | `task_id` | Seedance: Ergebnis-URL eines `cgt-…`-Tasks; sonst lokale Datei über den Media-Store | lokale Datei bzw. Upstream-Referenz (Veo-Extension, Omni-Multi-Turn) |
-| `asset_id` | Seedance: `asset://asset-…`; Kling: Element oder Voice | nicht unterstützt (400) |
+| `asset_id` | Seedance: `asset://asset-…`; Kling: Element oder Voice (auch eine `char-…`/`character_…`-ID eines OpenAI-Characters) | nicht unterstützt (400) |
 
 Ohne `PUBLIC_BASE_URL` können Seedance und Kling nur `https://`-URLs nutzen;
 andere Quellen, die ein Hosting brauchen, ergeben `400 public_base_url_required`.

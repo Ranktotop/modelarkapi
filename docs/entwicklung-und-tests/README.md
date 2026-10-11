@@ -62,7 +62,7 @@ LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm
 ```
 
 Jede virtuelle Umgebung braucht `litellm[proxy]`. Getestet wurden LiteLLM 1.95.0,
-1.104.2 und 1.105.0. Die Ergebnisse (was LiteLLM durchreicht und was nicht) stehen
+1.104.2 und 1.105.0 (30 Tests, einschließlich OpenAI-Characters). Die Ergebnisse (was LiteLLM durchreicht und was nicht) stehen
 in der [LiteLLM-Integration](../litellm-integration/README.md#getestete-litellm-versionen).
 
 ## OpenAPI manuell prüfen

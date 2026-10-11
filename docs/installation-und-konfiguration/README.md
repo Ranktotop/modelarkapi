@@ -98,6 +98,7 @@ Ohne jeden Anbieter startet der Proxy mit einer Warnung.
 | `UPSTREAM_RETRY_BACKOFF_SECONDS` | `0.5` | Basiswartezeit des exponentiellen Retry-Backoffs |
 | `UPSTREAM_RETRY_MAX_BACKOFF_SECONDS` | `5` | Obergrenze einer einzelnen Retry-Wartezeit |
 | `PROMPT_GUIDES_DIR` | `./prompt_guides` | Ordner mit `manifest.yaml` und den Guides |
+| `DEFAULT_PARAMETER_POLICY` | `strict` | `strict` oder `adapt`; gilt für alle Anbieter, wenn der Request kein `parameter_policy` setzt |
 
 ### Credential-Prüfung
 
@@ -131,17 +132,19 @@ Ohne jeden Anbieter startet der Proxy mit einer Warnung.
 | `GOOGLE_APPLICATION_CREDENTIALS` | leer | Pfad der Service-Account-JSON; leer = Application Default Credentials |
 | `GOOGLE_VEO_BACKEND` | `vertex` | `vertex` oder `gemini` |
 | `GOOGLE_VEO_LOCATION` | `us-central1` | Vertex-Region für Veo (`global` ist erreichbar, siehe ADR-001) |
-| `GOOGLE_OMNI_BACKEND` | `vertex` | `vertex` oder `gemini` |
+| `GOOGLE_OMNI_BACKEND` | `vertex` | `vertex`, `gemini` oder `both` |
 | `GOOGLE_OMNI_LOCATION` | `global` | Vertex-Region für Omni |
 | `GOOGLE_DOWNLOAD_HOST_SUFFIXES` | `.googleapis.com,.googleusercontent.com` | erlaubte Hosts für Google-Ergebnisse |
 | `GOOGLE_CREDENTIALS_FILE` | leer | nur Compose: Dateiname in `./secrets` |
 
 Ein Backend ist nur aktiv, wenn dessen Zugang gesetzt ist (`vertex` braucht
 `VERTEX_PROJECT`, `gemini` braucht `GEMINI_API_KEY`). Für Veo und Omni kann je ein
-Backend gewählt werden; ein Wert wie `both` wird nicht unterstützt, das Backend
-bleibt dann leer. Die Modellliste wird je Backend live gebildet (Gemini:
-`models.list`; Vertex: Abruf der bekannten Publisher-Modelle). Veo-Preview-IDs
-der Gemini API enden laut Google am 22.10.2026.
+Backend gewählt werden. `GOOGLE_OMNI_BACKEND=both` nutzt beide: GA-Omni-IDs
+(`gemini-omni-1.1-flash`) laufen über die Gemini API, `-preview`-IDs über Vertex AI;
+dafür sind `GEMINI_API_KEY` und `VERTEX_PROJECT` nötig. Ein Job pollt immer das
+Backend, das ihn angelegt hat. Die Modellliste wird je Backend live gebildet
+(Gemini: `models.list`; Vertex: Abruf der bekannten Publisher-Modelle).
+Veo-Preview-IDs der Gemini API enden laut Google am 22.10.2026.
 
 ### Kling
 
@@ -149,6 +152,7 @@ der Gemini API enden laut Google am 22.10.2026.
 |---|---:|---|
 | `KLING_API_KEY` | leer | Kling API Key |
 | `KLING_BASE_URL` | `https://api-singapore.klingai.com` | API-Basis-URL |
+| `KLING_COSTS_MIN_INTERVAL_SECONDS` | `1.0` | Mindestabstand zwischen Aufrufen von `GET /v1/providers/kling/account/costs` (der Proxy wartet, lehnt nicht ab) |
 | `KLING_DOWNLOAD_HOST_SUFFIXES` | `.klingai.com,.kechuangai.com,.kwimgs.com,.inkwai.com` | erlaubte Hosts für Ergebnisse |
 
 ### Jobregister, Outputs und Webhooks

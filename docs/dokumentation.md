@@ -9,8 +9,7 @@ unverändert.
 
 Der verbindliche API-Vertrag steht in [SPEC.md](SPEC.md) (abgenommen am
 11.10.2026). Die Bereichsdokumente beschreiben, was der Code auf dem Branch
-`feature/multi-provider` tatsächlich tut; Abweichungen von der SPEC sind dort
-benannt.
+`feature/multi-provider` tatsächlich tut.
 
 ## Dokumentationsbereiche
 
@@ -68,9 +67,6 @@ Noch offen:
   Sie laufen nur auf ausdrückliche Anforderung; ein Serverstart berechtigt nie
   zu einer kostenpflichtigen oder biometrischen Generierung.
 - Seedance 1.x hat keinen Prompt Guide (Manifest deckt nur 2.5 und 2.0 ab).
-- Die Abweichungen zwischen Code und SPEC sind in den Bereichsdokumenten
-  vermerkt (u. a. Liste nur für ModelArk, keine nativen ModelArk-/Interactions-
-  Routen, kein `DEFAULT_PARAMETER_POLICY`).
 
 Die tatsächliche Verfügbarkeit einzelner Funktionen wird zusätzlich durch das
 aktivierte Modell, Account-Rechte, Regionen, Quoten und Anbieter-Richtlinien

@@ -58,7 +58,7 @@ Proxy (`src/modelark_proxy/`):
 - `webhooks.py`: Watches, signierte Auslieferung (Standard Webhooks) mit
   Wiederholung.
 - `credentials.py`, `google_auth.py`: Credential-Zustand je Anbieter, Vertex-Token.
-- `ids.py`: Video-IDs im LiteLLM-Format.
+- `ids.py`: Video-IDs (`video_…`) und Character-IDs (`character_…`) im LiteLLM-Format.
 - `prompt_guides.py`, `litellm_export.py`, `audio.py`: Prompt-Guide-Registry,
   `model_list`-Export, Audiolänge (mutagen) für Kling Lip Sync.
 - `client.py`, `assets.py`, `asset_jobs.py`: ModelArk-Client, HMAC-signierter
@@ -80,7 +80,7 @@ Außerdem:
 | Fläche | Pfad | Zweck |
 |---|---|---|
 | Einheitlich | `/v1/videos`, `/v1/models`, `/v1/audio/speech`, `/v1/assets`, `/v1/prompt-guides`, `/v1/litellm/config` | OpenAI-kompatibel, für LiteLLM und Apps |
-| Nativ | `/v1/providers/google/veo/…`, `/v1/providers/kling/…` | Original-Parameter des Anbieters; erzeugte Jobs landen im selben Register |
+| Nativ | `/v1/providers/modelark/tasks`, `/v1/providers/google/veo/…`, `/v1/providers/google/interactions`, `/v1/providers/kling/…` | Original-Parameter des Anbieters; erzeugte Jobs landen im selben Register |
 
 Beide Flächen teilen Jobregister, Media-Store, Download und Credential-Status.
 
@@ -160,10 +160,6 @@ blockiert nur sich selbst; die Proxy-API-Key-Prüfung bleibt global.
   Seedance und Kling.
 - Kling kennt keinen Abbruch: `DELETE` löscht nur lokal, der Anbieter-Job läuft
   weiter und wird berechnet. Das gilt auch für Veo.
-- Abweichungen vom Vertrag (SPEC): `GET /v1/videos` listet nur ModelArk-Tasks;
-  `/v1/providers/modelark/…`, `/v1/providers/google/interactions` und
-  `/v1/videos/characters` existieren nicht; `GOOGLE_OMNI_BACKEND=both` und
-  `DEFAULT_PARAMETER_POLICY` gibt es nicht.
 
 ## ADR-001: Multi-Provider-Plattform (AI Video Studio)
 
@@ -217,6 +213,9 @@ können, ohne ihren Code anzupassen.
 12. **Referenzen je Provider.** Seedance und Kling erhalten öffentliche URLs
     aus dem Media-Store; Google erhält lokale Inhalte (base64, Files API, GCS).
     Externe URLs für Google werden abgelehnt (keine SSRF-Fläche).
+    *Nachtrag:* Externe URLs für Google werden inzwischen gemäß SPEC 7.2
+    SSRF-geschützt vom Proxy abgerufen (nur `https`, öffentliche Adressen,
+    Größenlimit, Dateisignaturprüfung).
 
 ### Verifikation am 11.10.2026 (nur kostenfreie, lesende Aufrufe)
 

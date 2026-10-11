@@ -63,10 +63,10 @@ Header: `webhook-id`, `webhook-timestamp`, `webhook-signature` (`v1,<base64>` ü
 
 - Ohne `WEBHOOK_SECRET` wird `webhook_url` mit `400 invalid_request` abgelehnt;
   es gehen nie unsignierte Webhooks raus.
-- Beim Create wird nur geprüft, dass die URL ein absolutes `https` ist. Vor jeder
-  Auslieferung löst der Proxy den Host auf und liefert nicht an private,
-  Loopback- oder Link-Local-Adressen (SPEC 11.4 nennt die Prüfung schon beim
-  Create).
+- Beim Create muss die URL ein absolutes `https` sein und der Host auf eine
+  öffentliche Adresse auflösen (sonst `400`). Vor jeder Auslieferung prüft der
+  Proxy das erneut und liefert nicht an private, Loopback- oder
+  Link-Local-Adressen.
 - Ausstehende Auslieferungen liegen in SQLite (Datei `PROVIDER_JOB_DB`) und
   überleben Neustarts. Fehlgeschlagene Auslieferungen werden mit Backoff bis zu
   `WEBHOOK_MAX_ATTEMPTS` (Standard 8) wiederholt, dann verworfen. Erfolg ist jede
@@ -81,15 +81,18 @@ Header: `webhook-id`, `webhook-timestamp`, `webhook-signature` (`v1,<base64>` ü
 
 ```bash
 curl -H "Authorization: Bearer $PROXY_KEY" \
-  'http://127.0.0.1:8081/v1/videos?page_num=1&page_size=20&filter.status=running'
+  'http://127.0.0.1:8081/v1/videos?limit=20&provider=kling&status=completed'
 ```
 
-Die Liste umfasst ausschließlich ModelArk-Tasks (Seedance). Filter:
-`filter.status`, `filter.task_ids`, `filter.model`, `filter.service_tier`;
-`page_num` und `page_size` liegen zwischen 1 und 500. ModelArk stellt nur einen
-begrenzten historischen Zeitraum bereit; die Liste ist keine dauerhafte
-Jobdatenbank. Google- und Kling-Jobs sind nur über ihre ID abrufbar (SPEC 11.5
-sieht eine gemeinsame Liste vor; sie ist nicht umgesetzt).
+Ohne Altparameter vereint die Liste ModelArk-Tasks (die ersten 100) und das lokale
+Register aller Anbieter. Parameter: `limit` (1–100, Standard 20), `after`, `order`
+(`asc`/`desc`), `model`, `status`, `provider`. Die Antwort enthält `first_id`,
+`last_id`, `has_more` und `warnings[]` für ausgefallene Anbieter. Mit `page_num`,
+`page_size` oder `filter.*` gilt wie bisher das ModelArk-Paging (nur ModelArk,
+`page_num`/`page_size` 1–500, `filter.status`, `filter.task_ids`, `filter.model`,
+`filter.service_tier`). ModelArk stellt nur einen begrenzten historischen Zeitraum
+bereit; die Liste ist keine dauerhafte Jobdatenbank. Über LiteLLM ist die Liste
+nicht erreichbar.
 
 ## Abbrechen oder löschen
 
@@ -100,12 +103,15 @@ curl -X DELETE -H "Authorization: Bearer $PROXY_KEY" \
 
 | Anbieter | Wirkung |
 |---|---|
-| Seedance | wartend (`queued`): ModelArk bricht den Task ab, die Antwort meldet `cancelled`. Beendet: ModelArk löscht den Datensatz, die Antwort enthält `deleted: true`. Laufend (`running`): `409 video_running`, weder Abbruch noch Löschen möglich. Real-Human-Jobs werden abgebrochen und ihre temporären Assets gelöscht |
+| Seedance | wartend (`queued`): ModelArk bricht den Task ab, `provider_status` ist `cancelled`. Beendet: ModelArk löscht den Datensatz, `provider_status` bleibt der Task-Status. Laufend (`running`): `409 video_running`, weder Abbruch noch Löschen möglich. Real-Human-Jobs werden abgebrochen und ihre temporären Assets gelöscht |
 | Omni | laufender Job wird beim Anbieter abgebrochen (Teilkosten möglich), dann lokal gelöscht |
 | Veo | nur lokal gelöscht; der Anbieter-Job läuft weiter und wird berechnet |
 | Kling | nur lokal gelöscht (Kling hat keinen Abbruch); der Job läuft weiter und wird berechnet |
 
-Über LiteLLM ist `DELETE` nicht erreichbar (405).
+Die Antwort hat bei jedem Anbieter `object: "video.deleted"` und `deleted: true`
+plus die bisherigen Videofelder; die native Interaction-Route
+(`DELETE /v1/providers/google/interactions/{id}`) antwortet gleich. Über LiteLLM
+ist `DELETE` nicht erreichbar (405).
 
 ## Ergebnis laden
 

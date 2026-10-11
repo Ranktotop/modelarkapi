@@ -40,7 +40,10 @@ ohne LiteLLM. Sie speichert fertige Videos nicht dauerhaft auf dem Server.
   `/v1/videos/extensions`, `DELETE`
 - `POST /v1/audio/speech` (Kling TTS, Modell `kling-tts`)
 - `/v1/assets` für Kling-Elements und -Voices
-- native Routen: `/v1/providers/google/veo/…` und `/v1/providers/kling/…`
+- OpenAI-Characters (`/v1/videos/characters`) als Kling-Video-Elements
+- `GET /v1/videos` über ModelArk und das lokale Jobregister (alle Anbieter)
+- native Routen: `/v1/providers/modelark/tasks`, `/v1/providers/google/veo/…`,
+  `/v1/providers/google/interactions` und `/v1/providers/kling/…`
 - signierte Webhooks über `webhook_url` für alle Anbieter
 - temporäre Uploads über `POST /v1/media/references`
 - automatische temporäre Real-Human-Registrierung bei Seedance über
@@ -148,7 +151,8 @@ Wesentliche Variablen (vollständige Liste in
 | `GEMINI_API_KEY` | Gemini API (Omni; Veo nur bis zur Abschaltung der Preview-Modelle am 22.10.2026) |
 | `VERTEX_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS` | Vertex AI (Veo 3.1, Omni Preview); ohne Datei gelten Application Default Credentials |
 | `GOOGLE_VEO_BACKEND` / `GOOGLE_VEO_LOCATION` | `vertex` oder `gemini`, Region (Standard `us-central1`) |
-| `GOOGLE_OMNI_BACKEND` / `GOOGLE_OMNI_LOCATION` | `vertex` oder `gemini`, Region (Standard `global`) |
+| `GOOGLE_OMNI_BACKEND` / `GOOGLE_OMNI_LOCATION` | `vertex`, `gemini` oder `both` (GA-IDs → Gemini API, `-preview`-IDs → Vertex AI; braucht beide Zugänge), Region (Standard `global`) |
+| `DEFAULT_PARAMETER_POLICY` | `strict` (Standard) oder `adapt` für alle Anbieter |
 | `KLING_API_KEY`, `KLING_BASE_URL` | Kling (Standard-Endpunkt `https://api-singapore.klingai.com`) |
 | `WEBHOOK_SECRET` | Signaturschlüssel für `webhook_url` (`whsec_<base64>`) |
 | `PUBLIC_BASE_URL` | Öffentliche HTTPS-Basis-URL dieses Proxys; für Uploads Pflicht |
@@ -191,7 +195,7 @@ Die Antwort kommt sofort mit `queued` oder `in_progress`. Danach
 `GET /v1/videos/{id}` pollen (etwa alle 10 Sekunden) und bei `completed`
 `/content` laden. Welche Werte ein Modell akzeptiert, steht im
 Capability-Dokument unter `GET /v1/models`; nicht unterstützte Werte führen
-standardmäßig zu `400` (`parameter_policy: "strict"`), mit
+standardmäßig zu `400` (`parameter_policy: "strict"`, einstellbar über `DEFAULT_PARAMETER_POLICY`), mit
 `"parameter_policy": "adapt"` passt der Proxy sie an und meldet die Änderung
 unter `adjustments`.
 
@@ -217,8 +221,7 @@ nativ kennt, wird bewusst sein vorhandener `openai`-Video-Adapter benutzt.
 Apps lesen beides über `GET /v1/model/info`. Was über LiteLLM funktioniert und
 was nur direkt am Proxy (Liste, `DELETE`, `variant`), steht in der
 [LiteLLM-Integration](docs/litellm-integration/README.md). Die Beispieldatei
-`litellm-config.example.yaml` zeigt zwei Seedance-Einträge in der bisherigen
-Namensform.
+`litellm-config.example.yaml` zeigt vier Beispieleinträge im Format des Exports.
 
 Videogenerierung ist auch am LiteLLM Gateway asynchron. LiteLLM pollt einen
 gestarteten Job nicht selbstständig: Der aufrufende Client wiederholt
@@ -231,8 +234,7 @@ Seedance 2.0 akzeptiert ein Foto oder Video mit einer realen Person nicht als
 gewöhnliche URL oder Datei. Für das eigene Gesicht ist die private
 **Real-human Asset Library** vorgesehen. BytePlus führt dabei eine
 Echtzeit-Lebendprüfung durch und vergleicht spätere Uploads biometrisch mit der
-verifizierten Person. Das gilt nur für Seedance; das Flag `real_human` wertet
-kein anderer Anbieter aus.
+verifizierten Person. Das gilt nur für Seedance; bei anderen Anbietern führt `real_human` zu `400 unsupported_parameter` (`param: real_human`).
 
 Offizielle Dokumentation:
 
