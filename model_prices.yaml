@@ -2,7 +2,15 @@
 # the entry's `litellm_params`, so LiteLLM tracks the spend.
 # `model` is a model ID prefix; the longest matching prefix wins. Models
 # without a match get no price. Values in USD.
+# Basis: 720p, no video input; Veo and Omni with audio, Kling without audio.
+# Entries marked "researched" come from public price lists (2026-10-11);
+# check them against the provider console. Kling Effects, Multi-Elements,
+# Commerce and Video-to-Audio bill per request and have no price here.
 prices:
+  - model: dreamina-seedance-2-0          # researched: $7.00 per 1M tokens
+    output_cost_per_second: 0.1512
+  - model: dreamina-seedance-2-0-mini     # researched: $3.50 per 1M tokens
+    output_cost_per_second: 0.0756
   - model: dreamina-seedance-2-0-fast
     output_cost_per_second: 0.0907
   - model: dreamina-seedance-2-5
@@ -11,7 +19,11 @@ prices:
     output_cost_per_second: 0.4
   - model: veo-3.1-fast-generate
     output_cost_per_second: 0.1
+  - model: veo-3.1-lite-generate          # researched
+    output_cost_per_second: 0.05
   - model: gemini-omni-flash
+    output_cost_per_second: 0.1
+  - model: gemini-omni-1.1-flash          # researched
     output_cost_per_second: 0.1
   - model: kling-3.0
     output_cost_per_second: 0.084
@@ -19,3 +31,13 @@ prices:
     output_cost_per_second: 0.084
   - model: kling-3.0-turbo
     output_cost_per_second: 0.112
+  - model: kling-2.6                      # researched: 0.3 units
+    output_cost_per_second: 0.042
+  - model: kling-2.5-turbo                # researched: 0.3 units
+    output_cost_per_second: 0.042
+  - model: kling-o1                       # researched: 0.6 units
+    output_cost_per_second: 0.084
+  - model: kling-avatar                   # researched: 0.4 units
+    output_cost_per_second: 0.056
+  - model: kling-lip-sync                 # researched: $0.07 per 5 s
+    output_cost_per_second: 0.014
