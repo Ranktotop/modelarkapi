@@ -365,14 +365,10 @@ AUDIO_FORMATS = ("audio/mpeg", "audio/wav")
 VIRTUAL_MODELS = {
     "kling-lip-sync": "Kling Lip Sync",
     "kling-avatar": "Kling Avatar",
-    "kling-text-to-audio": "Kling Text to Audio",
     "kling-effects": "Kling Effects",
     "kling-multi-elements": "Kling Multi-Element Edit",
     "kling-commerce": "Kling Video Commerce",
     "kling-video-to-audio": "Kling Video to Audio",
-    # Only for POST /v1/audio/speech. Kling TTS voice IDs (e.g. oversea_male1)
-    # are a separate namespace from custom voices.
-    "kling-tts": "Kling Text to Speech",
 }
 
 
@@ -400,19 +396,6 @@ def _video_slot(role: str, min_seconds: int, max_seconds: int) -> ReferenceSlot:
 def virtual_capabilities(model_id: str) -> ModelCapabilities:
     if model_id == "kling-commerce":
         return commerce_capabilities()
-    if model_id == "kling-tts":
-        return ModelCapabilities(
-            provider="kling",
-            family=model_id,
-            launch_stage="ga",
-            prompt_max_chars=1000,
-            parameters={
-                "speed": Param(minimum=0.8, maximum=2.0, default=1.0),
-                "language": Param(values=("en", "zh"), default="en"),
-            },
-            tasks={},
-            output_types=("audio",),
-        )
     speech = ReferenceSlot(
         "speech",
         ("audio",),
@@ -494,12 +477,6 @@ def virtual_capabilities(model_id: str) -> ModelCapabilities:
             "quality": Param(values=tuple(QUALITY_RESOLUTIONS)),
             **watermark,
         }
-    elif model_id == "kling-text-to-audio":
-        task = "text_to_audio"
-        spec = TaskSpec()
-        parameters = {"seconds": Param(minimum=3.0, maximum=10.0, default=5)}
-        output_types = ("audio",)
-        prompt_max = 200
     else:
         task = "video_to_audio"
         spec = TaskSpec(

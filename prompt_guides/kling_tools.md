@@ -1,7 +1,7 @@
 # Kling Tools Prompting Guide (virtuelle Modelle)
 
 **Stand: 11. Oktober 2026**  
-**Fokus:** Kling-Spezialfunktionen, die dieser Proxy als virtuelle Modelle anbietet: `kling-lip-sync`, `kling-avatar`, `kling-effects`, `kling-multi-elements`, `kling-text-to-audio`, `kling-video-to-audio`, `kling-tts` und `kling-commerce` (Talking Agent, Goods Studio, Apparel Replicator)  
+**Fokus:** Kling-Spezialfunktionen, die dieser Proxy als virtuelle Modelle anbietet: `kling-lip-sync`, `kling-avatar`, `kling-effects`, `kling-multi-elements`, `kling-video-to-audio` und `kling-commerce` (Talking Agent, Goods Studio, Apparel Replicator)  
 **Ziel:** für jede Funktion wissen, **welche Eingabe die Arbeit macht**, was der Prompt überhaupt noch steuert und wie Skripte, Selling Points, Stimmen und Auswahlpunkte formuliert sein müssen
 
 > Die wichtigste Regel: Bei den Kling-Tools ist der Prompt **selten der Hauptkanal**. Bei Lip Sync steuert das Audio, bei Effects die Vorlage, bei Multi-Elements die Auswahl, bei Commerce das Skript und die Produktdaten. Gute Ergebnisse entstehen hier durch **saubere Eingaben** (Gesicht frontal, Audio sauber und richtig geschnitten, Produktbild freigestellt, Skript sprechbar) und durch einen kurzen Prompt, der nur das tut, wofür er gedacht ist.
@@ -24,7 +24,7 @@ Vieles bei diesen Tools ist nicht als „Prompt-Guide“ dokumentiert, nur als F
 
 ### Proxy-Bezug
 
-Die Tools laufen über `POST /v1/videos` mit dem jeweiligen virtuellen Modell (TTS über `POST /v1/audio/speech`). Der Task ergibt sich aus dem Modell, nur `kling-commerce` braucht `task`. Die Feldnamen in diesem Guide sind die des Proxys; die Kling-Namen stehen in Klammern.
+Die Tools laufen über `POST /v1/videos` mit dem jeweiligen virtuellen Modell. Reine Audio-Erzeugung (Text-to-Speech, Text-to-Audio) bietet die Plattform bewusst nicht an; Kling-TTS nutzt der Proxy nur intern für `speech.text` bei Lip Sync und Avatar. Der Task ergibt sich aus dem Modell, nur `kling-commerce` braucht `task`. Die Feldnamen in diesem Guide sind die des Proxys; die Kling-Namen stehen in Klammern.
 
 ---
 
@@ -36,23 +36,21 @@ Die Tools laufen über `POST /v1/videos` mit dem jeweiligen virtuellen Modell (T
 | `kling-avatar` | `avatar` | Bild `subject` + Audio `speech` **oder** `speech.text` | Mimik, Gesten, Kamera | Video |
 | `kling-effects` | `effect` | `effect` + 1 oder 2 Bilder `subject` | **nichts** | Video |
 | `kling-multi-elements` | `multi_element_edit` | Video `base_video` + `selections` + `edit_mode` (+ 1–2 Bilder) | die Änderung, mit `<<<video_1>>>`/`<<<image_1>>>` | Video |
-| `kling-text-to-audio` | `text_to_audio` | `prompt`, `seconds` 3–10 | Klang | Audio |
 | `kling-video-to-audio` | `video_to_audio` | Video `base_video` | SFX (`prompt`), Musik (`audio.bgm_prompt`) | Video mit Ton + Audio |
-| `kling-tts` | – (`/v1/audio/speech`) | `input`, `voice`, `language`, `speed` | – | MP3 |
 | `kling-commerce` | `commerce_talking_agent` | Avatar-Bild oder `commerce.avatar_id`, Produktbilder, `commerce.*` | Aktionen des Avatars | Video |
 | `kling-commerce` | `commerce_goods_studio` | 1–5 Produktbilder, Titel, Beschreibung | – (Titel/Beschreibung sind der Prompt) | Video 15/30/60 s |
 | `kling-commerce` | `commerce_apparel` | Quellvideo, 1–5 Produktbilder, optional Model-Bilder, BGM, Stimme | – (`commerce.product_info`) | Video |
 
 ---
 
-## 3. Text-to-Speech (`kling-tts`)
+## 3. Sprechtext für Lip Sync und Avatar (`speech.text`)
 
-TTS ist auch die Grundlage für Lip Sync und Avatar mit `speech.text`.
+Statt einer Audiodatei kann Lip Sync oder Avatar einen Text bekommen; der Proxy lässt ihn intern von Kling-TTS sprechen. Ein eigenes TTS-Modell gibt es nicht.
 
 ### 3.1 Fakten [Doku]
 
-- `POST /v1/audio/speech` mit `{"model": "kling-tts", "input": "…", "voice": "<tts-voice-id>", "language": "en", "speed": 1.0}`.
-- `input` ≤ **1000 Zeichen**; Kling prüft den Inhalt.
+- `speech: {"text": "…", "voice": "<tts-voice-id>", "language": "en", "speed": 1.0}`.
+- `text` ≤ **1000 Zeichen**; Kling prüft den Inhalt.
 - `language` ∈ {`zh`, `en`} und muss **zur Stimme passen**.
 - `speed` 0.8–2.0, eine Nachkommastelle.
 - Die Voice-IDs sind ein **eigener Namensraum** (z. B. `oversea_male1`). Custom/Preset-Voices für Videos (`asset-kling-voice-…`) und Commerce-Voices sind etwas anderes.
@@ -267,39 +265,16 @@ Using the context of <<<video_1>>>, seamlessly add the small brown terrier from
 
 ---
 
-## 8. Text-to-Audio (`kling-text-to-audio`)
+## 8. Video-to-Audio (`kling-video-to-audio`)
 
 ### 8.1 Fakten [Doku]
-
-- `prompt` **≤ 200 Zeichen**, `seconds` 3.0–10.0 (eine Nachkommastelle).
-- Ergebnis MP3 und WAV.
-- Laut 2.6-Guide gedacht für „standalone audio“ (Sound Effect Generation). Ob Sprache erzeugt wird, ist nicht dokumentiert; dafür ist TTS da.
-
-### 8.2 Prompt-Formel [User Guide, 2.6-Soundregeln]
-
-- **SFX:** `Quelle (Objekt/Handlung) + Zustand + Klangcharakter`, z. B. „a heavy wooden door suddenly slams, sharp bang with a short room echo“.
-- **Musik:** `Instrument + Genre + Emotion`, z. B. „solo piano, slow jazz, melancholic“.
-- **Atmo:** `Ort + Schichten`, z. B. „rainy night street, rain on awnings, distant traffic, occasional car horn“.
-
-### 8.3 Regeln [Empfehlung]
-
-- 200 Zeichen reichen für **ein** Klangereignis oder **eine** Atmo, nicht für eine Abfolge.
-- Akustik nennen: „close-miked“, „distant“, „in a small tiled bathroom“, „outdoors, dry“.
-- Dauer zum Ereignis passend wählen: ein Türknall braucht 3 s, eine Atmo 10 s.
-- Für längere Atmo mehrere Clips erzeugen und schneiden.
-
----
-
-## 9. Video-to-Audio (`kling-video-to-audio`)
-
-### 9.1 Fakten [Doku]
 
 - Video 3–20 s (Kling-Video ≤ 30 Tage oder mp4/mov ≤ 100 MB).
 - `prompt` → Kling `sound_effect_prompt` (≤ 200), `audio.bgm_prompt` (≤ 200), `audio.asmr` → `asmr_mode` („enhances detailed sound effects … suitable for highly immersive content“).
 - Ergebnis: das Video **mit Ton** und separate Audiodateien.
 - Laut Changelog für alle Kling-Videos und für eigene Uploads.
 
-### 9.2 Prompts aufteilen [Empfehlung]
+### 8.2 Prompts aufteilen [Empfehlung]
 
 | Kanal | Inhalt | Beispiel |
 |---|---|---|
@@ -320,11 +295,11 @@ Using the context of <<<video_1>>>, seamlessly add the small brown terrier from
 
 ---
 
-## 10. Video Commerce (`kling-commerce`)
+## 9. Video Commerce (`kling-commerce`)
 
 Drei Solutions mit eigenem Eingabemodell. Gemeinsam: Bilder jpg/png/webp bis 50 MB, ≥ 300 px, 1:2.5–2.5:1; Auflösung 720p/1080p.
 
-### 10.1 Talking Agent (`commerce_talking_agent`)
+### 9.1 Talking Agent (`commerce_talking_agent`)
 
 #### Was es tut [Doku]
 
@@ -422,7 +397,7 @@ she mentions it. Natural, relaxed movement.
 }
 ```
 
-### 10.2 Goods Studio (`commerce_goods_studio`)
+### 9.2 Goods Studio (`commerce_goods_studio`)
 
 #### Fakten [Doku]
 
@@ -449,7 +424,7 @@ morning light.
 - Längere Videos (60 s) brauchen mehr Material: mehr Ansichten und mehr Merkmale. Bei nur einem Bild lieber 15 s.
 - Keine Preise oder Rabattcodes in die Beschreibung, wenn sie nicht im Bild erscheinen sollen. Ob Text eingeblendet wird, ist nicht dokumentiert.
 
-### 10.3 AI Apparel Replicator (`commerce_apparel`)
+### 9.3 AI Apparel Replicator (`commerce_apparel`)
 
 #### Fakten [Doku]
 
@@ -483,7 +458,7 @@ the knee. Relaxed fit, lightweight, slightly sheer in bright light.
 
 ---
 
-## 11. Häufige Fehler
+## 10. Häufige Fehler
 
 | Funktion | Symptom | Ursache | Abhilfe |
 |---|---|---|---|
@@ -492,15 +467,14 @@ the knee. Relaxed fit, lightweight, slightly sheer in bright light.
 | Lip Sync | Ablehnung wegen Zeiten | Ausschnitt < 2 s, Überlappung < 2 s, `end_ms` > Tonlänge | Zeiten prüfen, bei Upload `end_ms` setzen |
 | Lip Sync | zwei Stimmen hörbar | Originalton läuft mit | `original_volume` senken |
 | Avatar | steife Figur | kein Performance-Prompt | Emotion, Gesten, Kamera beschreiben |
-| TTS | falsche Aussprache | Sprache passt nicht zur Stimme, Akronyme klein | `language` passend, Akronyme groß |
+| `speech.text` | falsche Aussprache | Sprache passt nicht zur Stimme, Akronyme klein | `language` passend, Akronyme groß |
 | Effects | 400 Bildanzahl | Single/Dual verwechselt | Katalog prüfen (1 oder 2 Bilder) |
 | Effects | Vorlage existiert nicht | eingestellt | Katalog neu abfragen |
 | Multi-Elements | 400 Videolänge | 5–7 s oder > 10 s | auf 2–5 s oder 7–10 s schneiden |
 | Multi-Elements | falsches Objekt bearbeitet | Punkte auf Kante/Hintergrund | Punkte mittig, mehrere Punkte/Frames |
 | Multi-Elements | eingefügtes Objekt mit Hintergrundresten | Bild nicht zugeschnitten | Objekt vorher freistellen |
-| Text-to-Audio | Prompt abgelehnt | > 200 Zeichen | ein Ereignis, kürzer |
 | Video-to-Audio | ungewollte Musik | Musik nicht ausgeschlossen | `bgm_prompt` leer lassen, im SFX-Prompt „no music“ (Wirkung nicht garantiert) |
-| Talking Agent | 400 Stimme | Stimme bei `avatar_id` gesetzt oder fehlt bei Avatar-Bild | Regel §10.1 |
+| Talking Agent | 400 Stimme | Stimme bei `avatar_id` gesetzt oder fehlt bei Avatar-Bild | Regel §9.1 |
 | Talking Agent | 400 `speech_rate` | im Product-Modus gesetzt | weglassen |
 | Talking Agent | Video zu lang/teuer | Skript zu lang | Skript kürzen |
 | Goods Studio | eintönige 60 s | zu wenig Material | mehr Ansichten und Merkmale oder 15/30 s |
@@ -508,23 +482,23 @@ the knee. Relaxed fit, lightweight, slightly sheer in bright light.
 
 ---
 
-## 12. Checkliste
+## 11. Checkliste
 
 - [ ] Richtiges virtuelles Modell (und bei Commerce der richtige `task`)?
 - [ ] Prompt nur dort, wo er etwas steuert (nicht bei Lip Sync und Effects)?
-- [ ] TTS: Text ≤ 1000 Zeichen, Sprache zh/en passend zur Voice-ID, Satzzeichen für Pausen?
+- [ ] `speech.text`: Text ≤ 1000 Zeichen, Sprache zh/en passend zur Voice-ID, Satzzeichen für Pausen?
 - [ ] Lip Sync: Video 2–60 s, Audio 2–60 s, ein frontales Gesicht, Zeiten geprüft, `face_id` bei mehreren Personen?
 - [ ] Avatar: Performance-Prompt mit Emotion, Gesten, Kamera; Audio 2–300 s?
 - [ ] Effects: Vorlage im aktuellen Katalog, Bildanzahl 1 oder 2, links/rechts bedacht?
 - [ ] Multi-Elements: Video 2–5 oder 7–10 s, Punkte mittig, Bilder zugeschnitten, Schablone mit `<<<video_1>>>`/`<<<image_1>>>`?
-- [ ] Audio-Tools: ein Ereignis pro 200 Zeichen, SFX und Musik getrennt?
+- [ ] Video-to-Audio: ein Ereignis pro 200 Zeichen, SFX und Musik getrennt?
 - [ ] Talking Agent: Skript sprechbar, Länge = Dauer, `allow_polish` bewusst, Stimme/Avatar-Regel erfüllt, Selling Points konkret?
 - [ ] Goods Studio: Titel, Beschreibung mit Merkmalen, Bilder ≥ 1000 px, Dauer zum Material passend?
 - [ ] Apparel: passendes Referenzvideo, `product_info` beschreibt nur das Kleidungsstück, Stimme bewusst gewählt oder weggelassen?
 
 ---
 
-## 13. Behauptungen, die nicht pauschal als gesichert gelten
+## 12. Behauptungen, die nicht pauschal als gesichert gelten
 
 - Lip Sync könne mehrere Personen gleichzeitig synchronisieren (aktuell nur eine).
 - Der Prompt beeinflusse Lip Sync oder Effects.
@@ -532,14 +506,13 @@ the knee. Relaxed fit, lightweight, slightly sheer in bright light.
 - TTS spreche Deutsch.
 - Talking Agent spreche jede Sprache gleich gut (nicht dokumentiert, testen).
 - Video-to-Audio erzeuge ohne `bgm_prompt` sicher keine Musik.
-- Text-to-Audio erzeuge verständliche Sprache.
 - Die ComfyUI-Liste der TTS-Stimmen sei vollständig und aktuell.
 - Effect-Vorlagen blieben dauerhaft verfügbar.
 - Multi-Element-Koordinaten hätten den Ursprung sicher oben links (Doku-Formulierung uneindeutig).
 
 ---
 
-## 14. Quellen
+## 13. Quellen
 
 ### Primärquellen
 1. Avatar – https://kling.ai/document-api/api/video/avatar

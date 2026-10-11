@@ -55,7 +55,5 @@ guides:
       - kling-avatar
       - kling-effects
       - kling-multi-elements
-      - kling-text-to-audio
       - kling-video-to-audio
-      - kling-tts
       - kling-commerce

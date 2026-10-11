@@ -30,7 +30,6 @@ TASKS = (
     "effect",
     "multi_element_edit",
     "video_to_audio",
-    "text_to_audio",
     "commerce_talking_agent",
     "commerce_goods_studio",
     "commerce_apparel",

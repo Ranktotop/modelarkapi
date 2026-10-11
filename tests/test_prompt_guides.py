@@ -82,7 +82,7 @@ def test_every_offered_model_has_a_guide():
     assert guides.for_model("kling-3.0-turbo").id == "kling_3_0"
     assert guides.for_model("kling-3.0-omni").id == "kling_omni"
     assert guides.for_model("kling-2.5-turbo").id == "kling_2_x"
-    assert guides.for_model("kling-tts").id == "kling_tools"
+    assert guides.for_model("kling-video-to-audio").id == "kling_tools"
 
 
 @pytest.mark.parametrize(

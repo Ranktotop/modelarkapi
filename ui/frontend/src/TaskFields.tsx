@@ -14,7 +14,6 @@ export const TASK_MODES = [
   { id: "effect", label: "Effekt", hint: "Effekt-Vorlage anwenden", tooltip: "Wendet eine von über 200 Effekt-Vorlagen auf ein oder zwei Bilder an." },
   { id: "multi_element_edit", label: "Objekte", hint: "Objekte ergänzen, tauschen, entfernen", tooltip: "Markiert Objekte im Video per Klick und ergänzt, tauscht oder entfernt sie." },
   { id: "video_to_audio", label: "Vertonen", hint: "Ton für ein Video", tooltip: "Erzeugt Soundeffekte und Musik passend zu einem vorhandenen Video." },
-  { id: "text_to_audio", label: "Audio", hint: "Soundeffekt oder Musik aus Text", tooltip: "Erzeugt 3 bis 10 Sekunden Audio aus einer Beschreibung." },
   { id: "commerce_talking_agent", label: "Sprecher", hint: "Produktvideo mit Sprecher", tooltip: "Ein Avatar spricht dein Skript, optional mit Produktdaten." },
   { id: "commerce_goods_studio", label: "Produktfilm", hint: "Produktvideo aus Bildern", tooltip: "Erzeugt einen 15-, 30- oder 60-sekündigen Produktfilm aus Bildern und Titel." },
   { id: "commerce_apparel", label: "Kleidung", hint: "Outfit in ein Video übertragen", tooltip: "Überträgt Kleidungsstücke in ein Referenzvideo, optional mit Model und Musik." },

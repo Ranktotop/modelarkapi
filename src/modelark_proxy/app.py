@@ -21,7 +21,6 @@ from fastapi.responses import (
     FileResponse,
     JSONResponse,
     PlainTextResponse,
-    Response,
     StreamingResponse,
 )
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -1278,17 +1277,5 @@ def create_app(
     @app.delete("/v1/assets/{asset_id}")
     async def delete_asset(asset_id: str) -> dict[str, Any]:
         return await asset_provider("kling").delete(asset_id)
-
-    @app.post("/v1/audio/speech")
-    @app.post("/audio/speech", include_in_schema=False)
-    async def audio_speech(request: Request) -> Response:
-        body = await json_body(request)
-        model = str(body.get("model") or "")
-        provider = providers.for_model(model)
-        credentials.require(provider.name)
-        if not hasattr(provider, "speech"):
-            raise TranslationError(f"{model} cannot synthesize speech")
-        content, media_type = await provider.speech(body)
-        return Response(content, media_type=media_type)
 
     return app

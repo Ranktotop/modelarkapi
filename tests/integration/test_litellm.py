@@ -29,7 +29,7 @@ import yaml
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
 
-from .fake_upstream import MP3, SEEDANCE_VIDEO_URL, VIDEO, FakeUpstream
+from .fake_upstream import SEEDANCE_VIDEO_URL, VIDEO, FakeUpstream
 
 VENVS = [Path(p) for p in os.environ.get("LITELLM_VENVS", "").split(os.pathsep) if p]
 MASTER_KEY = "sk-integration"
@@ -37,7 +37,6 @@ MODELS = {
     "seedance": "dreamina-seedance-2-5-260628",
     "veo": "veo-3.1-fast-generate-preview",
     "kling": "kling-3.0",
-    "tts": "kling-tts",
 }
 
 pytestmark = [
@@ -198,7 +197,6 @@ def test_model_info_carries_guides_and_capabilities(stack: Stack):
         info = infos[stack.name(key)]
         assert info["prompt_guide"].startswith("# "), key
         assert info["capabilities"]["provider"] in {"modelark", "google", "kling"}
-    assert infos[stack.name("tts")]["mode"] == "audio_speech"
 
 
 @pytest.mark.parametrize(
@@ -287,20 +285,6 @@ def test_remix_edits_the_source_video(stack: Stack):
     body = stack.fake.created("ark.")[-1]
     assert body["omni_reference_task_type"] == "edit"
     assert body["content"][-1]["video_url"]["url"] == SEEDANCE_VIDEO_URL
-
-
-def test_speech_returns_the_audio(stack: Stack):
-    response = stack.client.post(
-        "/v1/audio/speech",
-        json={
-            "model": stack.name("tts"),
-            "input": "Hallo Welt",
-            "voice": "oversea_male1",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.content == MP3
 
 
 @pytest.mark.parametrize(

@@ -51,7 +51,8 @@ RUNNING = {"submitted", "processing"}
 # virtual try-on are out of scope by decision).
 NATIVE_PREFIXES = (
     "/v1/videos/",
-    "/v1/audio/",
+    # Video-to-audio scores a video; pure audio generation is out of scope.
+    "/v1/audio/video-to-audio",
     "/v1/general/",
     "/text-to-video/",
     "/image-to-video/",
@@ -245,7 +246,7 @@ class KlingProvider:
         if quality in QUALITY_RESOLUTIONS:
             request.params.setdefault("resolution", QUALITY_RESOLUTIONS[quality])
         request, adjustments = validate(caps, request)
-        if request.task in {"text_to_audio", "video_to_audio"}:
+        if request.task == "video_to_audio":
             return await self._create_audio(request, adjustments)
         if request.task.startswith("commerce_"):
             return await self._create_commerce(request, adjustments)
@@ -300,24 +301,17 @@ class KlingProvider:
     async def _create_audio(
         self, request: UnifiedRequest, adjustments: list[dict[str, Any]]
     ) -> VideoObject:
-        """Text-to-audio (sound effects, music) and video-to-audio (a soundtrack)."""
-        if request.task == "text_to_audio":
-            path = "/v1/audio/text-to-audio"
-            body: dict[str, Any] = {
-                "prompt": request.prompt,
-                "duration": float(request.params.get("seconds", 5)),
-            }
-        else:
-            path = "/v1/audio/video-to-audio"
-            options = request.params.get("audio") or {}
-            video = next(r for r in request.references if r["role"] == "base_video")
-            body = await self._video_source(video)
-            if request.prompt:
-                body["sound_effect_prompt"] = request.prompt
-            if options.get("bgm_prompt"):
-                body["bgm_prompt"] = options["bgm_prompt"]
-            if "asmr" in options:
-                body["asmr_mode"] = bool(options["asmr"])
+        """Video-to-audio: a soundtrack for a video, returned with the video."""
+        path = "/v1/audio/video-to-audio"
+        options = request.params.get("audio") or {}
+        video = next(r for r in request.references if r["role"] == "base_video")
+        body: dict[str, Any] = await self._video_source(video)
+        if request.prompt:
+            body["sound_effect_prompt"] = request.prompt
+        if options.get("bgm_prompt"):
+            body["bgm_prompt"] = options["bgm_prompt"]
+        if "asmr" in options:
+            body["asmr_mode"] = bool(options["asmr"])
         created = await self.client.call("POST", path, json=body)
         upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         return self._register(request.model, request, upstream, adjustments)
@@ -1269,7 +1263,7 @@ class KlingProvider:
     ) -> None:
         """Kling URLs are hotlink-protected and expire after 30 days, so keep copies.
 
-        Video-to-audio returns a video and its soundtrack; text-to-audio only audio.
+        Video-to-audio returns a video and its soundtrack.
         """
         video_id = job["id"]
         outputs: list[dict[str, Any]] = []
@@ -1378,62 +1372,3 @@ class KlingProvider:
             variant, "video/mp4"
         )
         return FileResponse(path, media_type=media)
-
-    # --- text-to-speech (OpenAI /v1/audio/speech) -------------------------------
-
-    async def speech(self, body: dict[str, Any]) -> tuple[bytes, str]:
-        model = canonical_model(strip_model_namespace(str(body.get("model", ""))))
-        if model != "kling-tts":
-            raise ContractError(
-                f"{body.get('model')} cannot synthesize speech", param="model"
-            )
-        text = body.get("input")
-        voice = body.get("voice")
-        speed = float(body.get("speed", 1.0))
-        language = body.get("language", "en")
-        if not isinstance(text, str) or not 1 <= len(text) <= 1000:
-            raise ContractError("input must have 1 to 1000 characters", param="input")
-        if not isinstance(voice, str) or not voice:
-            raise ContractError(
-                "voice is required (a Kling TTS voice ID)", param="voice"
-            )
-        if not 0.8 <= speed <= 2.0:
-            raise ContractError(
-                "speed must be between 0.8 and 2.0",
-                code="unsupported_parameter",
-                param="speed",
-            )
-        if language not in {"zh", "en"}:
-            raise ContractError(
-                "language must be zh or en",
-                code="unsupported_parameter",
-                param="language",
-            )
-        data = await self.client.call(
-            "POST",
-            "/v1/audio/tts",
-            json={
-                "text": text,
-                "voice_id": voice,
-                "voice_language": language,
-                "voice_speed": speed,
-            },
-        )
-        clip = ((data.get("task_result") or {}).get("audios") or [{}])[0]
-        url = clip.get("url")
-        if not url or not host_allowed(url, self.settings.kling_download_host_suffixes):
-            raise ApiError(
-                "Kling text-to-speech returned no downloadable audio",
-                502,
-                "upstream_error",
-            )
-        async with httpx.AsyncClient(
-            timeout=self.settings.download_timeout_seconds,
-            transport=self.download_transport,
-        ) as client:
-            response = await client.get(url)
-        if response.is_error:
-            raise ApiError(
-                "Kling audio download failed", 502, "upstream_error", retryable=True
-            )
-        return response.content, "audio/mpeg"

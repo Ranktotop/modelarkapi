@@ -108,7 +108,21 @@ def follow(path: str = ""):
     )
 
 
-async def test_speech_follows_the_openai_shape(tmp_path: Path):
+@pytest.mark.parametrize("model", ["kling-tts", "kling-text-to-audio"])
+async def test_audio_only_models_are_not_offered(tmp_path: Path, model: str):
+    # The platform generates and edits video; pure audio generation is out.
+    models, created = await run(
+        tmp_path,
+        FakeKling(),
+        lambda c, r, a: c.get("/v1/models"),
+        lambda c, r, a: c.post("/v1/videos", json={"model": model, "prompt": "rain"}),
+    )
+
+    assert model not in {m["id"] for m in models.json()["data"]}
+    assert created.status_code in {400, 404}
+
+
+async def test_speech_route_is_gone(tmp_path: Path):
     fake = FakeKling()
 
     (speech,) = await run(
@@ -116,95 +130,26 @@ async def test_speech_follows_the_openai_shape(tmp_path: Path):
         fake,
         lambda c, r, a: c.post(
             "/v1/audio/speech",
-            json={
-                "model": "kling-tts",
-                "input": "Hallo Welt",
-                "voice": "oversea_male1",
-                "speed": 1.2,
-                "language": "zh",
-            },
+            json={"model": "kling-tts", "input": "Hallo", "voice": "oversea_male1"},
         ),
     )
 
-    assert speech.status_code == 200
-    assert speech.headers["content-type"] == "audio/mpeg"
-    assert speech.content == MP3
-    assert fake.posted("/v1/audio/tts") == {
-        "text": "Hallo Welt",
-        "voice_id": "oversea_male1",
-        "voice_language": "zh",
-        "voice_speed": 1.2,
-    }
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"model": "kling-tts", "input": "x", "voice": "v", "speed": 3},
-        {"model": "kling-tts", "input": "x"},
-        {"model": "kling-3.0", "input": "x", "voice": "v"},
-        {"model": "kling-tts", "input": "x" * 1001, "voice": "v"},
-    ],
-)
-async def test_invalid_speech_requests_fail_fast(tmp_path: Path, body: dict[str, Any]):
-    fake = FakeKling()
-
-    (response,) = await run(
-        tmp_path, fake, lambda c, r, a: c.post("/v1/audio/speech", json=body)
-    )
-
-    assert response.status_code == 400
+    assert speech.status_code in {404, 405}
     assert not any(r.method == "POST" for r in fake.requests)
 
 
-async def test_text_to_audio_returns_audio_variants(tmp_path: Path):
-    fake = FakeKling()
-
-    created, done, mp3, wav, video = await run(
-        tmp_path,
-        fake,
-        lambda c, r, a: c.post(
-            "/v1/videos",
-            json={
-                "model": "kling-text-to-audio",
-                "prompt": "rain on a tin roof",
-                "seconds": 4.5,
-            },
-        ),
-        follow(),
-        follow("/content?variant=audio"),
-        follow("/content?variant=audio&format=wav"),
-        follow("/content"),
-    )
-
-    assert created.status_code == 200
-    assert fake.posted("/v1/audio/text-to-audio") == {
-        "prompt": "rain on a tin roof",
-        "duration": 4.5,
-    }
-    assert done.json()["status"] == "completed"
-    assert done.json()["outputs"][0]["variants"] == ["audio", "audio_wav"]
-    assert mp3.content == MP3
-    assert mp3.headers["content-type"] == "audio/mpeg"
-    assert wav.content == WAV
-    assert video.status_code == 404
-
-
-async def test_text_to_audio_limits(tmp_path: Path):
-    too_long, too_short = await run(
+async def test_text_to_audio_task_is_unknown(tmp_path: Path):
+    (response,) = await run(
         tmp_path,
         FakeKling(),
         lambda c, r, a: c.post(
-            "/v1/videos", json={"model": "kling-text-to-audio", "prompt": "x" * 201}
-        ),
-        lambda c, r, a: c.post(
             "/v1/videos",
-            json={"model": "kling-text-to-audio", "prompt": "x", "seconds": 2},
+            json={"model": "kling-3.0", "prompt": "rain", "task": "text_to_audio"},
         ),
     )
 
-    assert too_long.status_code == 400
-    assert too_short.status_code == 400
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_task"
 
 
 async def test_video_to_audio_scores_an_earlier_kling_video(tmp_path: Path):
@@ -266,16 +211,14 @@ async def test_video_to_audio_scores_an_earlier_kling_video(tmp_path: Path):
 
 
 async def test_unknown_variants_are_rejected(tmp_path: Path):
-    _, _, response = await run(
-        tmp_path,
-        FakeKling(),
-        lambda c, r, a: c.post(
-            "/v1/videos",
-            json={"model": "kling-text-to-audio", "prompt": "rain", "seconds": 4},
-        ),
-        follow(),
-        follow("/content?variant=thumbnail"),
-    )
+    def finished_job(client, results, app):
+        job = app.state.provider_jobs.create(
+            "kling", "kling-3.0", "text_to_video", {}, upstream={"api": "legacy"}
+        )
+        app.state.provider_jobs.update(job["id"], status="completed")
+        return client.get(f"/v1/videos/{job['id']}/content?variant=thumbnail")
+
+    (response,) = await run(tmp_path, FakeKling(), finished_job)
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "unsupported_parameter"

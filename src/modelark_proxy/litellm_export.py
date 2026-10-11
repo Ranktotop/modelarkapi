@@ -14,7 +14,6 @@ from .prompt_guides import PromptGuides
 
 VENDOR_PREFIXES = ("dreamina-", "bytedance-")
 DROPPED_TOKENS = {"generate"}
-AUDIO_SPEECH_MODELS = {"kling-tts"}
 
 
 def family_slug(family: str) -> str:
@@ -61,9 +60,7 @@ def export_model_list(
                     "api_key": "os.environ/MODELARK_PROXY_API_KEY",
                 },
                 "model_info": {
-                    "mode": "audio_speech"
-                    if model["id"] in AUDIO_SPEECH_MODELS
-                    else "video_generation",
+                    "mode": "video_generation",
                     "provider": capabilities.get("provider", model.get("owned_by")),
                     "capabilities": capabilities,
                     "prompt_guide": guide.markdown() if guide else None,
