@@ -1,4 +1,4 @@
-"""Kling text-to-speech, text-to-audio and video-to-audio (T19)."""
+"""Kling video-to-audio, and the removed audio-only models (T19)."""
 
 from __future__ import annotations
 

@@ -23,8 +23,10 @@ from fastapi.responses import (
     PlainTextResponse,
     StreamingResponse,
 )
+from fastapi.routing import APIRoute
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from . import __version__
 from .asset_jobs import AssetJobManager
 from .assets import AssetAPIError, AssetClient
 from .client import ModelArkClient, ModelArkError
@@ -241,6 +243,60 @@ def with_public_id(video: VideoObject, model: str | None = None) -> VideoObject:
     """Expose the LiteLLM-routable ID; see ids.py for why."""
     video.id = encode_video_id(video.id, model or video.model)
     return video
+
+
+API_DESCRIPTION = (
+    "OpenAI-compatible video API for BytePlus Seedance, Google Veo 3.1, "
+    "Gemini Omni and Kling, usable directly or behind LiteLLM. Video "
+    "generation and editing only; there are no text-to-speech or audio-only "
+    "endpoints. Native provider routes live under `/v1/providers/`."
+)
+
+# Tags by path prefix, most specific first.
+OPENAPI_TAGS = [
+    {
+        "name": "Videos",
+        "description": "OpenAI Videos API: create, edit, extend, remix, list, download.",
+    },
+    {
+        "name": "Characters",
+        "description": "Reusable Kling characters for `/v1/videos`.",
+    },
+    {
+        "name": "Models",
+        "description": "Models, capabilities, prompt guides and LiteLLM config.",
+    },
+    {
+        "name": "Media",
+        "description": "Reference uploads and provider assets (Kling elements, voices, real humans).",
+    },
+    {"name": "ModelArk native", "description": "Seedance task API passthrough."},
+    {
+        "name": "Google native",
+        "description": "Veo operations and Gemini Omni interactions.",
+    },
+    {"name": "Kling native", "description": "Kling API passthrough."},
+    {"name": "System", "description": "Health check."},
+]
+_TAG_PREFIXES = (
+    ("/v1/videos/characters", "Characters"),
+    ("/v1/videos", "Videos"),
+    ("/v1/models", "Models"),
+    ("/v1/prompt-guides", "Models"),
+    ("/v1/litellm", "Models"),
+    ("/v1/media", "Media"),
+    ("/v1/assets", "Media"),
+    ("/v1/real-human", "Media"),
+    ("/v1/providers/modelark", "ModelArk native"),
+    ("/v1/providers/google", "Google native"),
+    ("/v1/providers/kling", "Kling native"),
+)
+
+
+def _tag_for(path: str) -> str:
+    return next(
+        (tag for prefix, tag in _TAG_PREFIXES if path.startswith(prefix)), "System"
+    )
 
 
 def create_app(
@@ -500,7 +556,11 @@ def create_app(
             await kling_http.aclose()
 
     app = FastAPI(
-        title="ModelArk OpenAI Video Proxy", version="0.2.0", lifespan=lifespan
+        title="AI Video Studio API",
+        version=__version__,
+        description=API_DESCRIPTION,
+        openapi_tags=OPENAPI_TAGS,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.ark = ark
@@ -1202,7 +1262,8 @@ def create_app(
         kling_provider()
         return {"object": "list", "data": EFFECTS}
 
-    @app.api_route("/v1/providers/kling/{path:path}", methods=["GET", "POST"])
+    @app.get("/v1/providers/kling/{path:path}", operation_id="native_kling_get")
+    @app.post("/v1/providers/kling/{path:path}", operation_id="native_kling_post")
     async def native_kling(path: str, request: Request) -> dict[str, Any]:
         body = None
         if request.method == "POST":
@@ -1305,4 +1366,7 @@ def create_app(
     async def delete_asset(asset_id: str) -> dict[str, Any]:
         return await asset_provider("kling").delete(asset_id)
 
+    for route in app.routes:
+        if isinstance(route, APIRoute) and not route.tags:
+            route.tags = [_tag_for(route.path)]
     return app

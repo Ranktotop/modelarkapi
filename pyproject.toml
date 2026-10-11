@@ -1,6 +1,6 @@
 [project]
 name = "modelark-openai-video-proxy"
-version = "0.2.0"
+version = "0.3.0"
 description = "AI Video Studio: OpenAI-compatible video API for Seedance, Veo, Gemini Omni and Kling"
 readme = "README.md"
 requires-python = ">=3.11"
