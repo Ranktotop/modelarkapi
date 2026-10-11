@@ -312,7 +312,10 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     setModel(modelId);
     const next = config.models.find(option => option.id === modelId);
     if (!next) return;
-    const nextMode = modeUnavailableFor(next.capabilities, mode) ? "text" : mode;
+    // Keep the workflow if the new model offers it, otherwise take its first one.
+    const nextMode = modeUnavailableFor(next.capabilities, mode)
+      ? availableModes(next.capabilities, MODES).find(item => !modeUnavailableFor(next.capabilities, item.id))?.id ?? "text"
+      : mode;
     const nextTask = MODE_TASKS[nextMode];
     setDuration(Number(parameterDefault(next.capabilities, nextTask, "seconds") ?? 5));
     setResolution(String(parameterDefault(next.capabilities, nextTask, "resolution") ?? "720p"));
@@ -320,6 +323,15 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     setOutputFormat(String(parameterValues(next.capabilities, nextTask, "output_format")[0] ?? "mp4"));
     setMode(nextMode);
   }
+
+  // Start with the first model of the list so the workflows match a real model.
+  useEffect(() => {
+    if (model || !config.models.length) return;
+    const first = groupModels(config.models)[0]?.models[0];
+    if (first) selectModel(first.id);
+    // selectModel only reads state that is current on this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, config.models]);
 
   function validationError(): string | null {
     if (!model) return "Bitte wähle ein Modell aus.";
@@ -511,7 +523,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
     <main className="studio-grid">
       <section className="composer panel">
-        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label><button className="action guide-button" onClick={openGuide} disabled={!selectedModel?.prompt_guide} title={selectedModel?.prompt_guide ? "Prompt Guide für dieses Modell öffnen" : "Für dieses Modell gibt es noch keinen Prompt Guide"}><Icon name="info" /> Prompt Guide</button></div>
+        <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}>{!config.models.length && <option value="">Keine Modelle verfügbar</option>}{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label><button className="action guide-button" onClick={openGuide} disabled={!selectedModel?.prompt_guide} title={selectedModel?.prompt_guide ? "Prompt Guide für dieses Modell öffnen" : "Für dieses Modell gibt es noch keinen Prompt Guide"}><Icon name="info" /> Prompt Guide</button></div>
 
         <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{visibleModes.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame" && item.id !== "extend") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 

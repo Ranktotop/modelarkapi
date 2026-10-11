@@ -23,6 +23,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-even
 #root { min-height: 100vh; }
 button, input, textarea, select { font: inherit; }
 select option { color: #dad9de; background: var(--ink-850); }
+select optgroup { color: var(--lime-soft); background: var(--ink-850); font-style: normal; font-weight: 600; }
 select option:disabled { color: var(--muted); }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { color: inherit; }
