@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
+import { availableModes, extendsVideos, feature, groupModels, hasParameter, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterRange, parameterValues, promptRequired, billingParty, providerLabel, providerOf, referenceLimit, resultVariants, rolesFor } from "./capabilities";
 import { AssetLibrary } from "./AssetLibrary";
 import type { AssetRef } from "./AssetLibrary";
 import { EMPTY_EXTRAS, TASK_MODES, TaskFields, taskError, taskPayload } from "./TaskFields";
@@ -20,9 +20,9 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 const MODES = [
-  { id: "text", label: "Text", hint: "Nur aus einer Beschreibung", tooltip: "Erzeugt ein Video ausschließlich aus deinem Prompt. Es werden keine Referenzdateien an Seedance gesendet." },
-  { id: "first_frame", label: "Startbild", hint: "Ein Bild als exakter Anfang", tooltip: "Verwendet genau ein Bild als erstes Frame. Seedance animiert die Szene von diesem festen Ausgangspunkt aus." },
-  { id: "first_last", label: "Start + Ende", hint: "Zwei feste Schlüsselbilder", tooltip: "Verwendet das erste Bild als Start- und das zweite als Endframe. Seedance erzeugt den Übergang zwischen beiden Bildern." },
+  { id: "text", label: "Text", hint: "Nur aus einer Beschreibung", tooltip: "Erzeugt ein Video ausschließlich aus deinem Prompt. Es werden keine Referenzdateien gesendet." },
+  { id: "first_frame", label: "Startbild", hint: "Ein Bild als exakter Anfang", tooltip: "Verwendet genau ein Bild als erstes Frame. Das Modell animiert die Szene von diesem festen Ausgangspunkt aus." },
+  { id: "first_last", label: "Start + Ende", hint: "Zwei feste Schlüsselbilder", tooltip: "Verwendet das erste Bild als Start- und das zweite als Endframe. Das Modell erzeugt den Übergang zwischen beiden Bildern." },
   { id: "multimodal", label: "Referenzen", hint: "Bilder, Videos und Audio kombinieren", tooltip: "Kombiniert Bild-, Video- und Audioreferenzen. Nenne sie im Prompt möglichst eindeutig, zum Beispiel „Bild 1“ oder „Video 1“." },
   { id: "edit", label: "Bearbeiten", hint: "Inhalt oder Stil eines Videos ändern", tooltip: "Bearbeitet ein hochgeladenes Referenzvideo anhand deines Prompts. Mindestens ein Video ist erforderlich." },
   { id: "extend", label: "Verlängern", hint: "Eine Szene weiterführen", tooltip: "Führt ein Referenzvideo zeitlich weiter. Beschreibe im Prompt, wie Handlung und Kamerabewegung fortgesetzt werden sollen." },
@@ -47,20 +47,20 @@ const ROLE_NAMES: Record<string, string> = {
 const VARIANT_LABELS: Record<string, string> = { video: "Video", audio: "MP3", watermarked: "Mit Wasserzeichen" };
 
 const TOOLTIPS = {
-  model: "Bestimmt die Seedance-Modellvariante. Mit dem Modell ändern sich die verfügbaren Auflösungen, Seitenverhältnisse und Videolängen.",
-  workflow: "Legt fest, wie Seedance deinen Prompt und die hochgeladenen Medien interpretiert. Der gewählte Workflow bestimmt außerdem, welche Referenzen erforderlich sind.",
-  references: "Referenzen geben Seedance Motive, Stil, Bewegung oder Ton vor. Je nach Workflow gelten unterschiedliche Anzahlen und Medientypen.",
-  upload: "Lade Bilder, Videos oder Audio hoch, die Seedance als Eingabe verwenden soll. Die Dateien werden temporär bereitgestellt und später automatisch gelöscht.",
+  model: "Bestimmt Anbieter und Modell. Mit dem Modell ändern sich die verfügbaren Auflösungen, Seitenverhältnisse und Videolängen.",
+  workflow: "Legt fest, wie das Modell deinen Prompt und die hochgeladenen Medien interpretiert. Der gewählte Workflow bestimmt außerdem, welche Referenzen erforderlich sind.",
+  references: "Referenzen geben dem Modell Motive, Stil, Bewegung oder Ton vor. Je nach Workflow gelten unterschiedliche Anzahlen und Medientypen.",
+  upload: "Lade Bilder, Videos oder Audio hoch, die das Modell als Eingabe verwenden soll. Die Dateien werden temporär bereitgestellt und später automatisch gelöscht.",
   realHuman: "Aktivieren, wenn auf dieser Referenz eine reale Person erkennbar ist. Die Datei wird dann vor der Generierung automatisch als Real-Human-Asset registriert und verifiziert.",
   prompt: "Beschreibe Motiv, Handlung, Kameraführung, Licht, Stil und Ton möglichst konkret. Verweise bei mehreren Medien auf „Bild 1“, „Video 1“ oder „Audio 1“.",
-  duration: "Legt die Länge des erzeugten Videos fest. „Automatisch“ überlässt Seedance die Wahl innerhalb der Grenzen des ausgewählten Modells.",
+  duration: "Legt die Länge des erzeugten Videos fest. „Automatisch“ überlässt dem Modell die Wahl innerhalb der Grenzen des ausgewählten Modells.",
   resolution: "Bestimmt die Bildauflösung des fertigen Videos. Höhere Auflösungen können mehr Verarbeitungszeit und Kosten verursachen.",
   ratio: "Bestimmt das Seitenverhältnis. 16:9 eignet sich meist für Querformat, 9:16 für Hochformat und „adaptive“ orientiert sich an Prompt oder Referenz.",
   ratioLocked: "In diesem Workflow übernimmt das Modell das Seitenverhältnis der Vorlage. Deshalb ist nur „adaptive“ möglich.",
   durationLocked: "Beim Bearbeiten behält das Ergebnis die Länge des Originalvideos. Deshalb ist nur „Automatisch“ möglich.",
   outputFormat: "MP4 ist überall abspielbar. MOV liefert höhere Farbpräzision für die Postproduktion und wird nur von neueren Modellen unterstützt.",
   priority: "Steuert die Reihenfolge innerhalb deiner ModelArk-Warteschlange. Höhere Werte werden gegenüber niedrigeren priorisiert; 0 ist der Standard.",
-  audio: "Lässt Seedance synchrones Mono-Audio passend zur Szene erzeugen, einschließlich Geräuschen, Sprache oder Musik, wenn der Prompt dies beschreibt.",
+  audio: "Lässt das Modell synchrones Audio passend zur Szene erzeugen, einschließlich Geräuschen, Sprache oder Musik, wenn der Prompt dies beschreibt.",
   watermark: "Kennzeichnet die Ausgabe mit dem vom Anbieter vorgesehenen AI-Wasserzeichen.",
   lastFrame: "Fordert zusätzlich das letzte Videoframe als PNG an. Damit kannst du das Ergebnis später nahtlos über „Fortsetzen“ weiterführen.",
 } as const;
@@ -143,7 +143,7 @@ function Login({ onSuccess }: { onSuccess: () => Promise<boolean> }) {
       <div className="login-brand">
         <img src={logoWhite} alt="Marc Meese" />
         <span />
-        <h1>Seedance Studio</h1>
+        <h1>AI Video Studio</h1>
         <p>Melde dich an, um fortzufahren</p>
       </div>
       <div className="login-field"><label htmlFor="username">Benutzername</label><input id="username" autoFocus autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /></div>
@@ -499,7 +499,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
 
   return <div className="studio-shell">
     <header className="topbar">
-      <div className="brand"><a className="brand-logo" href="https://marcmeese.de" target="_blank" rel="noreferrer" aria-label="Marc Meese Website"><img src={logoWhite} alt="Marc Meese" /></a><div><strong>Seedance Studio</strong><span>ModelArk · Private workspace</span></div></div>
+      <div className="brand"><a className="brand-logo" href="https://marcmeese.de" target="_blank" rel="noreferrer" aria-label="Marc Meese Website"><img src={logoWhite} alt="Marc Meese" /></a><div><strong>AI Video Studio</strong><span>Seedance · Veo · Omni · Kling</span></div></div>
       <div className="topbar-actions"><span className="retention-pill"><i /> Alles wird nach 24 h gelöscht</span><button className="icon-button" onClick={logout} title="Abmelden"><Icon name="logout" /></button></div>
     </header>
 
@@ -521,7 +521,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>}
         </div>}
 
-        <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit Seedance Sprache und Lippenbewegung synchronisiert.</p></div>
+        <div className="field-group"><div className="label-row"><SettingLabel htmlFor="prompt" tooltip={TOOLTIPS.prompt}>Prompt</SettingLabel><span>{prompt.length} Zeichen</span></div><textarea id="prompt" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Beschreibe Motiv, Handlung, Kamera, Licht und gewünschten Ton …" rows={6}/><p className="prompt-tip"><Icon name="spark" /> Dialog am besten in Anführungszeichen setzen, damit das Modell Sprache und Lippenbewegung synchronisiert.</p></div>
 
         <AssetLibrary caps={capabilities} task={task} selected={assetRefs} onChange={setAssetRefs} references={references} />
         <TaskFields task={task} caps={capabilities} extras={extras} onChange={setExtras} references={references} />
@@ -543,7 +543,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
         <div className="results-header"><div><p className="eyebrow">OUTPUT</p><h2>Generierungen</h2></div><span>{jobs.length}</span></div>
         {selected ? <>
           <div className={`preview ${selected.provider.status}`} style={previewRatio ? { "--preview-ratio": previewRatio } as CSSProperties : undefined}>
-            {selected.provider.status === "completed" ? (isAudioOnly(selected) ? <div className="preview-state"><div className="render-orb"><Icon name="play" /></div><audio key={selected.id} controls src={`/api/videos/${encodeURIComponent(selected.id)}/content?variant=audio`} /></div> : <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} />) : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : "Seedance verarbeitet deine Szene.")}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
+            {selected.provider.status === "completed" ? (isAudioOnly(selected) ? <div className="preview-state"><div className="render-orb"><Icon name="play" /></div><audio key={selected.id} controls src={`/api/videos/${encodeURIComponent(selected.id)}/content?variant=audio`} /></div> : <video key={selected.id} controls playsInline src={`/api/videos/${encodeURIComponent(selected.id)}/content`} onLoadedMetadata={event => setPreviewRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight || null)} />) : <div className="preview-state"><div className={selected.provider.status === "failed" ? "failed-orb" : "render-orb"}><Icon name={selected.provider.status === "failed" ? "trash" : "spark"}/></div><strong>{statusTitle(selected.provider.status, selected.provider.provider_status)}</strong><span>{selected.provider.error?.message || (selected.provider.provider_status === "asset_processing" ? "BytePlus prüft und registriert deine Real-Human-Referenz." : `${providerLabel(capabilitiesOf(selected))} verarbeitet deine Szene.`)}</span>{selected.provider.status !== "failed" && <div className="progress-track"><i style={{ width: `${selected.provider.progress || 18}%` }}/></div>}</div>}
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           <div className="result-actions">
@@ -566,11 +566,11 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           {SOCIAL_LINKS.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer"><b>{link.short}</b>{link.label}</a>)}
         </nav>
       </div>
-      <div className="footer-meta"><span>Seedance Studio</span><span className="footer-version">Version {APP_VERSION}</span></div>
+      <div className="footer-meta"><span>AI Video Studio</span><span className="footer-version">Version {APP_VERSION}</span></div>
     </footer>
 
     {guide && <div className="modal-backdrop" onMouseDown={() => setGuide(null)}><div className="details-modal guide-modal" role="dialog" aria-modal="true" aria-label={guide.title} onMouseDown={event => event.stopPropagation()}><div className="guide-header"><p className="eyebrow">PROMPT GUIDE</p><button className="icon-button" onClick={() => setGuide(null)} aria-label="Schließen" title="Schließen">✕</button></div><h2>{guide.title}</h2><div className="guide-body">{guide.markdown}</div></div></div>}
-    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei BytePlus verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
+    {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei {billingParty(capabilities)} verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
     {detailsJob && <JobDetails job={detailsJob} config={config} onClose={() => setDetailsId(null)} />}
   </div>;
 }
@@ -586,7 +586,8 @@ function JobDetails({ job, config, onClose }: { job: Job; config: StudioConfig; 
   const modelLabel = config.models.find(option => option.id === modelId)?.label || modelId || "Unbekannt";
   const modeId = request.ui_mode || job.mode;
   const modeEntry = MODES.find(item => item.id === modeId);
-  const duration = request.duration;
+  const caps = config.models.find(option => option.id === modelId)?.capabilities;
+  const duration = request.duration ?? (typeof request.seconds === "number" ? request.seconds : undefined);
   const failed = provider.status === "failed";
   const errorMessage = provider.error?.message
     || (failed ? "Der Anbieter hat keine Fehlermeldung mitgeliefert." : "");
@@ -617,11 +618,14 @@ function JobDetails({ job, config, onClose }: { job: Job; config: StudioConfig; 
       <div className="details-section">
         <h3>Konfiguration</h3>
         <div className="detail-grid">
+          <DetailRow label="Anbieter" value={providerLabel(caps)} />
           <DetailRow label="Modell" value={modelLabel} />
+          {typeof request.task === "string" && <DetailRow label="Task" value={request.task} />}
+          {caps?.backend && <DetailRow label="Backend" value={caps.backend === "vertex" ? "Vertex AI" : "Gemini API"} />}
           <DetailRow label="Workflow" value={modeEntry?.label || String(modeId)} />
           <DetailRow label="Dauer" value={duration === undefined || duration === -1 ? "Automatisch" : `${duration} Sekunden`} />
           <DetailRow label="Auflösung" value={request.resolution || "—"} />
-          <DetailRow label="Seitenverhältnis" value={request.ratio || "—"} />
+          <DetailRow label="Seitenverhältnis" value={String(request.ratio || request.aspect_ratio || "—")} />
           <DetailRow label="Dateiformat" value={String(request.output_format || "mp4").toUpperCase()} />
           {request.omni_reference_task_type && <DetailRow label="Task-Typ" value={String(request.omni_reference_task_type)} />}
           <DetailRow label="Priorität" value={String(request.priority ?? 0)} />

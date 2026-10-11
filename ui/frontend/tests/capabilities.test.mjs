@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   availableModes,
+  billingParty,
+  providerLabel,
   continuationOf,
   hasParameter,
   parameterRange,
@@ -190,4 +192,13 @@ test("result variants are listed per output", () => {
     { output: 0, variant: "product_image_1" },
   ]);
   assert.deepEqual(resultVariants(undefined), [{ output: 0, variant: "video" }]);
+});
+
+test("provider labels and billing party follow the selected model", () => {
+  assert.equal(providerLabel(undefined), "BytePlus ModelArk");
+  assert.equal(providerLabel({ provider: "kling" }), "Kling");
+  assert.equal(billingParty({ provider: "modelark" }), "BytePlus");
+  assert.equal(billingParty({ provider: "google", backend: "vertex" }), "Google Cloud (Vertex AI)");
+  assert.equal(billingParty({ provider: "google", backend: "gemini" }), "Google (Gemini API)");
+  assert.equal(billingParty({ provider: "kling" }), "Kling");
 });

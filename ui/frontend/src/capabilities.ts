@@ -40,6 +40,19 @@ export function providerOf(caps: ModelCapabilities | undefined): string {
   return caps?.provider ?? "modelark";
 }
 
+export function providerLabel(caps: ModelCapabilities | undefined): string {
+  const provider = providerOf(caps);
+  return PROVIDER_LABELS[provider] ?? provider;
+}
+
+// Who bills a generation; Google bills either the Gemini API key or the Cloud project.
+export function billingParty(caps: ModelCapabilities | undefined): string {
+  const provider = providerOf(caps);
+  if (provider === "modelark") return "BytePlus";
+  if (provider === "google") return caps?.backend === "vertex" ? "Google Cloud (Vertex AI)" : "Google (Gemini API)";
+  return providerLabel(caps);
+}
+
 export function modeUnavailable(caps: ModelCapabilities | undefined, mode: string): string | null {
   if (!caps) return null;
   if (caps.tasks) {

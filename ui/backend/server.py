@@ -386,7 +386,7 @@ def create_app(
             await proxy.aclose()
             store.close()
 
-    app = FastAPI(title="Seedance Studio UI", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AI Video Studio UI", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.proxy = proxy
