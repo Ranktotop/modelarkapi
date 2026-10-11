@@ -237,3 +237,27 @@ async def test_create_returns_litellm_id_usable_for_follow_up_calls(
         "/api/v3/contents/generations/tasks/cgt-123",
         "/api/v3/contents/generations/tasks/cgt-123",
     ]
+
+
+async def test_json_with_form_strings_is_coerced_like_multipart(settings: Settings):
+    # LiteLLM < 1.100 turns a form request without a file into JSON strings.
+    typed: list[httpx.Request] = []
+    stringly: list[httpx.Request] = []
+    body = {"model": "dreamina-seedance-2-5-260628", "prompt": "fox"}
+
+    await call(
+        settings,
+        typed,
+        lambda c: c.post(
+            "/v1/videos", json={**body, "generate_audio": False, "seed": 7}
+        ),
+    )
+    await call(
+        settings,
+        stringly,
+        lambda c: c.post(
+            "/v1/videos", json={**body, "generate_audio": "false", "seed": "7"}
+        ),
+    )
+
+    assert json.loads(stringly[0].content) == json.loads(typed[0].content)

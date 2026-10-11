@@ -36,3 +36,4 @@ addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests", "ui/tests"]
 pythonpath = ["ui/backend"]
+markers = ["litellm: end-to-end suite against real LiteLLM proxies (needs LITELLM_VENVS)"]

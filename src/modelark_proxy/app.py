@@ -206,7 +206,10 @@ async def parse_create_request(
         raise HTTPException(
             status_code=400, detail="Request body must be a JSON object"
         )
-    return normalize_fields(body), None
+    # LiteLLM < 1.100 forwards form fields as JSON strings; type them as for forms.
+    return normalize_fields(
+        {key: _coerce(key, value) for key, value in body.items()}
+    ), None
 
 
 # SPEC 11.7: no provider renders thumbnails or sprite sheets. Other variant
