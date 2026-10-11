@@ -316,6 +316,42 @@ class GoogleProvider:
         )
         return {**operation, "proxy_job_id": job["id"]}
 
+    async def create_native_omni(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Native interaction; `background` and `store` are forced (SPEC 16.3)."""
+        model = await self._model(str(body.get("model") or ""))
+        backend = self._model_backend(model)
+        if family_of(model) != "omni" or backend is None:
+            raise ProviderUnavailable(f"Model '{model}' is not an Omni model")
+        payload = {**body, "model": model, "background": True, "store": True}
+        if backend.name == "gemini":
+            # The proxy downloads Gemini results by URI (see build_omni_body).
+            payload["response_format"] = {
+                **(payload.get("response_format") or {}),
+                "delivery": "uri",
+            }
+        interaction = await backend.start_omni(payload)
+        texts = [
+            str(part.get("text"))
+            for part in payload.get("input") or []
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        job = self._register(
+            model,
+            "native",
+            " ".join(texts),
+            {},
+            {"kind": "omni", "interaction": interaction["id"], "backend": backend.name},
+        )
+        return {**interaction, "proxy_job_id": job["id"]}
+
+    async def native_cancel(self, video_id: str) -> dict[str, Any]:
+        job = self._job(video_id)
+        if job["upstream"]["kind"] != "omni":
+            raise ApiError(
+                "Only Omni interactions can be cancelled", 400, "invalid_request"
+            )
+        return await self._backend_for(job).cancel_omni(job["upstream"]["interaction"])
+
     # --- status -------------------------------------------------------------
 
     def _job(self, video_id: str) -> dict[str, Any]:

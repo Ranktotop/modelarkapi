@@ -1012,6 +1012,70 @@ def create_app(
         video_id = decode_video_id(video_id)
         return await video_provider(video_id).native_operation(video_id)
 
+    def google_provider() -> Any:
+        credentials.require("google")
+        google = providers.providers.get("google")
+        if google is None:
+            raise ProviderUnavailable("The 'google' provider is not configured")
+        return google
+
+    @app.post("/v1/providers/google/interactions")
+    async def native_interaction_create(request: Request) -> dict[str, Any]:
+        result = await google_provider().create_native_omni(await json_body(request))
+        job_id = result.pop("proxy_job_id")
+        public_id = encode_video_id(
+            job_id, strip_model_namespace(result.get("model") or "")
+        )
+        return {
+            **result,
+            "proxy": {"id": public_id, "status_url": f"/v1/videos/{public_id}"},
+        }
+
+    @app.get("/v1/providers/google/interactions/{video_id}")
+    async def native_interaction_get(video_id: str) -> dict[str, Any]:
+        return await google_provider().native_operation(decode_video_id(video_id))
+
+    @app.post("/v1/providers/google/interactions/{video_id}/cancel")
+    async def native_interaction_cancel(video_id: str) -> dict[str, Any]:
+        return await google_provider().native_cancel(decode_video_id(video_id))
+
+    @app.delete("/v1/providers/google/interactions/{video_id}")
+    async def native_interaction_delete(video_id: str) -> VideoObject:
+        return await delete_video(video_id)
+
+    def modelark_provider() -> Any:
+        credentials.require(DEFAULT_PROVIDER)
+        provider = providers.providers.get(DEFAULT_PROVIDER)
+        if provider is None:
+            raise ProviderUnavailable("The 'modelark' provider is not configured")
+        return provider
+
+    @app.post("/v1/providers/modelark/tasks")
+    async def native_task_create(request: Request) -> dict[str, Any]:
+        body = await json_body(request)
+        result = await modelark_provider().native_create(body)
+        public_id = encode_video_id(
+            str(result["id"]), strip_model_namespace(str(body.get("model") or ""))
+        )
+        return {
+            **result,
+            "proxy": {"id": public_id, "status_url": f"/v1/videos/{public_id}"},
+        }
+
+    @app.get("/v1/providers/modelark/tasks")
+    async def native_task_list(request: Request) -> dict[str, Any]:
+        return await modelark_provider().native_list(
+            list(request.query_params.multi_items())
+        )
+
+    @app.get("/v1/providers/modelark/tasks/{task_id}")
+    async def native_task_get(task_id: str) -> dict[str, Any]:
+        return await modelark_provider().native_get(decode_video_id(task_id))
+
+    @app.delete("/v1/providers/modelark/tasks/{task_id}")
+    async def native_task_delete(task_id: str) -> dict[str, Any]:
+        return await modelark_provider().native_delete(decode_video_id(task_id))
+
     def kling_provider() -> Any:
         credentials.require("kling")
         kling = providers.providers.get("kling")

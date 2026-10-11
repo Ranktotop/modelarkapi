@@ -834,6 +834,47 @@ class SeedanceProvider:
             model=payload["model"],
         )
 
+    # --- native routes (SPEC 16.2) ------------------------------------------
+
+    async def _native_url(self, url: str, kind: str) -> str:
+        """Upload IDs and inline videos become URLs ModelArk can fetch."""
+        if url.startswith(("http://", "https://", "asset://")):
+            return url
+        if url.startswith("data:") and kind != "video":
+            return url
+        if not url.startswith("data:"):
+            if self.media.resolve(url) is None or not self.settings.public_base_url:
+                raise TranslationError(f"Unknown or unpublished reference '{url}'")
+            return f"{self.settings.public_base_url.rstrip('/')}/media/reference/{url}"
+        if self.references is None:
+            raise TranslationError("This reference source is not available")
+        return await self.references.public_url({"type": kind, "url": url})
+
+    async def native_create(self, body: dict[str, Any]) -> dict[str, Any]:
+        """`POST /contents/generations/tasks` with a raw `content` array."""
+        payload = deepcopy(body)
+        model = payload.get("model")
+        if not isinstance(model, str) or not model.strip():
+            raise TranslationError("model is required")
+        payload["model"] = self.settings.resolve_model(model.strip())
+        for item in payload.get("content") or []:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("type", "")).removesuffix("_url")
+            media = item.get(f"{kind}_url")
+            if kind in ASSET_KINDS and isinstance(media, dict) and media.get("url"):
+                media["url"] = await self._native_url(str(media["url"]), kind)
+        return await self.ark.create_task(payload)
+
+    async def native_get(self, task_id: str) -> dict[str, Any]:
+        return await self.ark.get_task(task_id)
+
+    async def native_list(self, params: list[tuple[str, str]]) -> dict[str, Any]:
+        return await self.ark.list_tasks(params)
+
+    async def native_delete(self, task_id: str) -> dict[str, Any]:
+        return await self.ark.delete_task(task_id)
+
     async def list_videos(self, request: Request) -> VideoList:
         allowed = {
             "page_num",
