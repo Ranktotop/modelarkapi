@@ -1,7 +1,8 @@
 # Illustrative excerpt of `GET /v1/litellm/config` (add ?format=yaml). Generate the
 # real list from your proxy; it contains every active model. The export also fills
 # `capabilities` (capability document v2) and, when PUBLIC_BASE_URL is set,
-# `prompt_guide_url` in `model_info`. The guide route needs no proxy key.
+# `prompt_guide_url` in `model_info`, plus the prices from model_prices.yaml
+# in `litellm_params`. The guide route needs no proxy key.
 # LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
 model_list:
   - model_name: seedance_25_api            # name_template default: {family_slug}_api

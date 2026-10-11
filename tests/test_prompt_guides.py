@@ -11,9 +11,11 @@ import yaml
 from modelark_proxy.app import create_app
 from modelark_proxy.config import Settings
 from modelark_proxy.litellm_export import family_slug
+from modelark_proxy.model_prices import ModelPrices
 from modelark_proxy.prompt_guides import PromptGuides
 
 REPO_GUIDES = Path(__file__).resolve().parents[1] / "prompt_guides"
+REPO_PRICES = Path(__file__).resolve().parents[1] / "model_prices.yaml"
 
 
 @pytest.fixture
@@ -85,6 +87,27 @@ def test_every_offered_model_has_a_guide():
     assert guides.for_model("kling-video-to-audio").id == "kling_tools"
 
 
+def test_repository_prices_match_the_longest_prefix():
+    prices = ModelPrices(REPO_PRICES)
+
+    assert prices.for_model("openai/kling-3.0-turbo") == {
+        "output_cost_per_second": 0.112
+    }
+    assert prices.for_model("veo-3.1-generate-001") == {"output_cost_per_second": 0.4}
+    assert prices.for_model("veo-3.1-fast-generate-001") == {
+        "output_cost_per_second": 0.1
+    }
+    assert prices.for_model("veo-3.1-lite-generate-001") == {}
+
+
+def test_invalid_price_entry_fails_at_startup(tmp_path: Path):
+    path = tmp_path / "model_prices.yaml"
+    path.write_text("prices:\n  - model: kling-3.0\n    output_cost_per_second: cheap\n")
+
+    with pytest.raises(ValueError, match="kling-3.0"):
+        ModelPrices(path)
+
+
 @pytest.mark.parametrize(
     ("family", "slug"),
     [
@@ -102,7 +125,22 @@ def test_family_slugs_follow_the_existing_litellm_names(family: str, slug: str):
 
 
 @pytest.fixture
-def settings(tmp_path: Path, guides_dir: Path) -> Settings:
+def prices_file(tmp_path: Path) -> Path:
+    path = tmp_path / "model_prices.yaml"
+    path.write_text(
+        """
+prices:
+  - model: dreamina-seedance-2-0
+    output_cost_per_second: 0.05
+  - model: dreamina-seedance-2-0-fast
+    output_cost_per_second: 0.0907
+"""
+    )
+    return path
+
+
+@pytest.fixture
+def settings(tmp_path: Path, guides_dir: Path, prices_file: Path) -> Settings:
     return Settings(
         ark_api_key="ark-test",
         byteplus_access_key_id="ak-test",
@@ -115,6 +153,7 @@ def settings(tmp_path: Path, guides_dir: Path) -> Settings:
         provider_job_db=tmp_path / "provider-jobs.db",
         output_dir=tmp_path / "outputs",
         prompt_guides_dir=guides_dir,
+        model_prices_file=prices_file,
     )
 
 
@@ -230,6 +269,7 @@ async def test_litellm_export_carries_capabilities_and_guide_link(settings: Sett
         "model": "openai/dreamina-seedance-2-0-fast-260128",
         "api_base": "https://modelark.example.com/v1",
         "api_key": "os.environ/MODELARK_PROXY_API_KEY",
+        "output_cost_per_second": 0.0907,
     }
     info = entry["model_info"]
     assert info["mode"] == "video_generation"

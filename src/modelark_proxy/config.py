@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     provider_status_min_interval_seconds: float = Field(default=2.0, ge=0)
     output_dir: Path = Path("./data/outputs")
     prompt_guides_dir: Path = Path("./prompt_guides")
+    model_prices_file: Path = Path("./model_prices.yaml")
     # SPEC 9: `strict` rejects unsupported values, `adapt` fits them to the model.
     default_parameter_policy: Literal["strict", "adapt"] = "strict"
     # Kling allows account/costs at most once per second.

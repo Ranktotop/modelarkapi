@@ -7,6 +7,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY prompt_guides ./prompt_guides
+COPY model_prices.yaml ./
 RUN pip install --no-cache-dir .
 
 RUN useradd --create-home --uid 10001 appuser \

@@ -101,6 +101,7 @@ Ohne jeden Anbieter startet der Proxy mit einer Warnung.
 | `UPSTREAM_RETRY_BACKOFF_SECONDS` | `0.5` | Basiswartezeit des exponentiellen Retry-Backoffs |
 | `UPSTREAM_RETRY_MAX_BACKOFF_SECONDS` | `5` | Obergrenze einer einzelnen Retry-Wartezeit |
 | `PROMPT_GUIDES_DIR` | `./prompt_guides` | Ordner mit `manifest.yaml` und den Guides |
+| `MODEL_PRICES_FILE` | `./model_prices.yaml` | Preise je Modell für den LiteLLM-Export |
 | `DEFAULT_PARAMETER_POLICY` | `strict` | `strict` oder `adapt`; gilt für alle Anbieter, wenn der Request kein `parameter_policy` setzt |
 
 ### Credential-Prüfung
