@@ -245,6 +245,7 @@ können, ohne ihren Code anzupassen.
 | Kling 2.5 Turbo, 5 s, 720p (nach Aufladen) | Mit eigener `external_task_id` angenommen, nach 43 s fertig, 1280×720, 5,04 s, über den Proxy gespeichert und abrufbar. |
 | Vertex Omni (`gemini-omni-1.1-flash-preview`, 3 s, 360p), 1. Versuch | `POST …/interactions` lieferte trotz `background: true` über 60 s keine Antwort; der Proxy brach mit einem unbehandelten `ReadTimeout` ab (500). Ob Google die Generierung abgerechnet hat, ist offen. Seitdem: eigenes Create-Timeout (`OMNI_CREATE_TIMEOUT_SECONDS`, 600 s) und 504 `upstream_timeout` statt 500. |
 | Vertex Omni, 2. Versuch | Create kam sofort zurück, Video (640×360, 3 s, mit Ton) nach 23 s fertig und über den Proxy abrufbar; 5 793 Output-Tokens. Der Hänger beim ersten Versuch war ein Ausreißer. |
+| Vertex Omni mit Stream-Create (`stream` + `background`) | Die ID kam aus dem ersten Ereignis (`interaction.created`) in derselben Sekunde; Video (640×360, 3 s, mit Ton) nach 23 s fertig und abrufbar. |
 
 Nicht im Log festgehalten: ob der Create-Aufruf sofort mit `in_progress`
 zurückkam. Polling per `GET` funktioniert jedenfalls, daher wird Omni
