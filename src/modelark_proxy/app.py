@@ -36,6 +36,7 @@ from .providers import seedance
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
+from .webhooks import WebhookDispatcher, validate_webhook_url
 from .workers import JobRunner
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,7 @@ def create_app(
     ark_transport: httpx.AsyncBaseTransport | None = None,
     asset_transport: httpx.AsyncBaseTransport | None = None,
     download_transport: httpx.AsyncBaseTransport | None = None,
+    webhook_transport: httpx.AsyncBaseTransport | None = None,
     validate_startup_credentials: bool = True,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -233,6 +235,13 @@ def create_app(
         settings.provider_job_db, settings.provider_job_ttl_seconds
     )
     outputs = OutputStore(settings.output_dir)
+    webhooks = WebhookDispatcher(
+        settings.provider_job_db,
+        settings.webhook_secret,
+        transport=webhook_transport,
+        timeout_seconds=settings.webhook_timeout_seconds,
+        max_attempts=settings.webhook_max_attempts,
+    )
     job_runner = JobRunner(
         provider_jobs,
         settings.provider_worker_concurrency,
@@ -248,6 +257,19 @@ def create_app(
                 await asyncio.sleep(settings.media_cleanup_interval_seconds)
                 media.cleanup()
                 purge_expired(provider_jobs, outputs)
+
+        async def get_public_video(video_id: str) -> VideoObject:
+            video = await providers.for_video(video_id).get_video(video_id)
+            return with_public_id(video)
+
+        async def deliver_webhooks() -> None:
+            while True:
+                await asyncio.sleep(settings.webhook_interval_seconds)
+                try:
+                    await webhooks.check(get_public_video)
+                    await webhooks.deliver_due()
+                except Exception:
+                    logger.exception("Webhook maintenance failed")
 
         async def maintain_asset_jobs() -> None:
             while True:
@@ -361,6 +383,7 @@ def create_app(
                 await refresh_credential_state()
 
         cleanup_task: asyncio.Task[None] | None = None
+        webhook_task: asyncio.Task[None] | None = None
         asset_task: asyncio.Task[None] | None = None
         credential_task: asyncio.Task[None] | None = None
         try:
@@ -370,6 +393,7 @@ def create_app(
             purge_expired(provider_jobs, outputs)
             job_runner.resume()
             cleanup_task = asyncio.create_task(cleanup_media())
+            webhook_task = asyncio.create_task(deliver_webhooks())
             asset_task = asyncio.create_task(maintain_asset_jobs())
             if validate_startup_credentials:
                 credential_task = asyncio.create_task(maintain_credential_state())
@@ -379,6 +403,11 @@ def create_app(
                 cleanup_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await cleanup_task
+            if webhook_task is not None:
+                webhook_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await webhook_task
+            await webhooks.close()
             if asset_task is not None:
                 asset_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -405,6 +434,7 @@ def create_app(
     app.state.provider_jobs = provider_jobs
     app.state.outputs = outputs
     app.state.job_runner = job_runner
+    app.state.webhooks = webhooks
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
@@ -592,7 +622,19 @@ def create_app(
         source_id = data.get("input_reference_task_id")
         if isinstance(source_id, str):
             data["input_reference_task_id"] = decode_video_id(source_id)
+        webhook_url = data.pop("webhook_url", None)
+        if webhook_url is not None:
+            if not settings.webhook_secret:
+                raise TranslationError(
+                    "webhook_url requires WEBHOOK_SECRET to be configured on the proxy"
+                )
+            try:
+                validate_webhook_url(str(webhook_url))
+            except ValueError as exc:
+                raise TranslationError(str(exc)) from exc
         video = await providers.for_model(model).create_video(data, upload)
+        if webhook_url is not None:
+            webhooks.watch(video.id, str(webhook_url), video.status)
         return with_public_id(video, strip_model_namespace(model))
 
     app.add_api_route(

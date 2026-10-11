@@ -316,7 +316,7 @@ Redirect-Prüfung.
 **Abh.:** T3 · **Dateien:** `provider_jobs.py`, `outputs.py`, `workers.py`, Tests · **Umfang:** M
 
 #### T6b: Ausgehende Webhooks
-**Beschreibung:** `callback_url` am Request; der Proxy sendet bei
+**Beschreibung:** `webhook_url` am Request (`callback_url` bleibt Seedance-nativ); der Proxy sendet bei
 Statuswechseln das Video-Objekt nach *Standard Webhooks* (Signatur mit
 `WEBHOOK_SECRET`, Wiederholungen mit Backoff, Zustellstatus im Register).
 **Akzeptanz:** Signatur ist mit der Referenzbibliothek prüfbar; Wiederholungen nach Fehlern; ein Neustart verliert keine ausstehende Zustellung.

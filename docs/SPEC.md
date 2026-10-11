@@ -202,7 +202,7 @@ Vorrang. LiteLLM selbst zieht `extra_body` vorher flach.
 | `output_format` | enum | nein | `mp4`, `mov` (Seedance 2.5) |
 | `return_last_frame` | bool | nein | Seedance |
 | `parameter_policy` | enum | nein | `strict` oder `adapt` (Abschnitt 9) |
-| `callback_url` | string | nein | Ausgehender Webhook des Proxys (Abschnitt 11.4) |
+| `webhook_url` | string | nein | Ausgehender Webhook des Proxys (Abschnitt 11.4) |
 | `provider_options` | object | nein | Native Zusatzfelder (Abschnitt 10) |
 | `user` | string | nein | OpenAI-Feld; wird an Seedance als `safety_identifier` weitergegeben |
 | `metadata` | object | nein | Wird gespeichert und zurückgegeben (nur bei Direktaufrufen; LiteLLM entfernt das Feld) |
@@ -563,15 +563,22 @@ Fehler-Antworten (HTTP ≥ 400) und `error` im Video-Objekt haben dieselbe Form:
 | `output_expired` | 410 | Ergebnis abgelaufen | – |
 | `interrupted` | – (nur im Job) | Job durch Neustart verloren | – |
 
-### 11.4 Ausgehende Webhooks (`callback_url`)
+### 11.4 Ausgehende Webhooks (`webhook_url`)
 
-Ist `callback_url` gesetzt, sendet der Proxy bei jedem Wechsel auf
+Ist `webhook_url` gesetzt, sendet der Proxy bei jedem Wechsel auf
 `in_progress`, `completed` oder `failed` einen `POST` mit dem Video-Objekt.
 Format und Signatur folgen *Standard Webhooks* (`webhook-id`,
 `webhook-timestamp`, `webhook-signature`; Secret `WEBHOOK_SECRET`), mit
 Wiederholungen bei Fehlern. Der Event-Typ lautet `video.in_progress`,
 `video.completed` bzw. `video.failed` (OpenAI-Namen). Provider-eigene
 Callbacks nutzt der Proxy nicht; er pollt.
+
+- Ohne konfiguriertes `WEBHOOK_SECRET` wird `webhook_url` mit
+  `400 invalid_request` abgelehnt; es gehen nie unsignierte Webhooks raus.
+- Ziele müssen `https` sein und dürfen nicht auf private, Loopback- oder
+  Link-Local-Adressen auflösen.
+- `callback_url` bleibt das native Seedance-Feld (Abschnitt 17): ModelArk ruft
+  den Client dann direkt im ModelArk-Format auf.
 
 ### 11.5 Liste
 
@@ -843,6 +850,7 @@ Bewusst **nicht** angeboten: Bild-Endpunkte, `/solutions/virtual_try_on`
 | `ratio` | `aspect_ratio` |
 | `duration`, `frames`, `camera_fixed`, `service_tier`, `execution_expires_after`, `priority`, `safety_identifier` | ModelArk-Felder; bei anderen Providern 400 bzw. bei `adapt` ignoriert |
 | `real_human` (oberste Ebene) | gilt für `input_reference_url` bzw. den Upload |
+| `callback_url` | unverändert an ModelArk durchgereicht (nativer Callback); für einheitliche Webhooks dient `webhook_url` |
 | Antwortfelder `provider_status`, `last_frame_available`, `service_tier` | bleiben erhalten |
 | `GET /v1/videos?page_num&page_size&filter.*` | bleibt gültig |
 | IDs `cgt-…` | werden weiter angenommen; Antworten enthalten künftig `video_…` (3.1) |
@@ -921,7 +929,7 @@ Jede Fähigkeit aus den Research-Berichten ist genau einer Stelle zugeordnet.
 | Kling Effects (219), Multi-Elements, Image Recognition, AI Multi-Shot | `effect`, `multi_element_edit`, native Routen |
 | Kling Elements, Voices (Custom/Preset, CRUD) | `/v1/assets`, native Routen |
 | Kling Commerce (Talking Agent, Goods Studio, Apparel) | Commerce-Tasks |
-| Kling `watermark_info`, `external_task_id`, `callback_url` | `watermark`; `external_task_id` und Callback verwaltet der Proxy |
+| Kling `watermark_info`, `external_task_id`, `callback_url` | `watermark`; `external_task_id` verwaltet der Proxy; Benachrichtigung über `webhook_url` |
 | Kling Account (Costs, Billing) | Health; `/v1/providers/kling/account/costs` |
 | Kling Video-Extend, Multi-Image2Video, `camera_control`, Motion Brush, Legacy-Lip-Sync, alte Elements | **nicht angeboten**: nicht mehr dokumentiert; die Felder stehen auch nicht in der `provider_options`-Allowlist |
 | Kling Bild-Endpunkte, Virtual Try-On | **ausgeschlossen** (Nutzerentscheidung) |
@@ -940,4 +948,5 @@ Jede Fähigkeit aus den Research-Berichten ist genau einer Stelle zugeordnet.
    wählbar.
 2. **Alle Antworten liefern IDs im `video_…`-Format** (Abschnitt 3.1);
    eingehend werden beide Formen akzeptiert.
-3. **Ausgehende Webhooks** (Abschnitt 11.4) werden umgesetzt (Task T6b).
+3. **Ausgehende Webhooks** (Abschnitt 11.4) werden umgesetzt (Task T6b),
+   über das eigene Feld `webhook_url`; `callback_url` bleibt Seedance-nativ.
