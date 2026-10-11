@@ -34,7 +34,7 @@ from .credentials import (
     kling_check,
     modelark_check,
 )
-from .errors import openai_error
+from .errors import ApiError, openai_error
 from .google_auth import TokenSource, VertexTokenSource
 from .ids import decode_video_id, encode_video_id
 from .litellm_export import export_model_list
@@ -50,6 +50,8 @@ from .providers import (
     strip_model_namespace,
 )
 from .providers import seedance
+from .providers.google import GoogleProvider
+from .providers.google_backends import GeminiBackend, GoogleBackend, VertexBackend
 from .providers.seedance import SeedanceProvider
 from .schemas import MediaReference, MediaReferenceList, VideoList, VideoObject
 from .translation import TranslationError
@@ -266,16 +268,43 @@ def create_app(
         ),
         media.remove,
     )
-    providers = ProviderRegistry(
-        [SeedanceProvider(settings, ark, asset_jobs, media, download_transport)]
-        if settings.modelark_configured
-        else []
-    )
     provider_jobs = ProviderJobStore(
         settings.provider_job_db, settings.provider_job_ttl_seconds
     )
     outputs = OutputStore(settings.output_dir)
     prompt_guides = PromptGuides(settings.prompt_guides_dir)
+    google_api = httpx.AsyncClient(
+        timeout=settings.request_timeout_seconds,
+        transport=google_transport,
+        limits=httpx.Limits(
+            max_connections=settings.max_upstream_connections,
+            max_keepalive_connections=settings.max_keepalive_connections,
+        ),
+    )
+    veo_backend: GoogleBackend | None = None
+    if settings.google_veo_backend == "vertex" and settings.vertex_project:
+        assert vertex_token_source is not None
+        veo_backend = VertexBackend(
+            settings, google_api, vertex_token_source, settings.google_veo_location
+        )
+    elif settings.google_veo_backend == "gemini" and settings.gemini_api_key:
+        veo_backend = GeminiBackend(settings, google_api)
+    enabled_providers: list[VideoProvider] = []
+    if settings.modelark_configured:
+        enabled_providers.append(
+            SeedanceProvider(settings, ark, asset_jobs, media, download_transport)
+        )
+    if settings.google_configured:
+        enabled_providers.append(
+            GoogleProvider(
+                settings,
+                veo_backend,
+                provider_jobs,
+                outputs,
+                download_transport or google_transport,
+            )
+        )
+    providers = ProviderRegistry(enabled_providers)
     webhooks = WebhookDispatcher(
         settings.provider_job_db,
         settings.webhook_secret,
@@ -378,6 +407,7 @@ def create_app(
             await assets.close()
             await ark.close()
             await google_http.aclose()
+            await google_api.aclose()
             await kling_http.aclose()
 
     app = FastAPI(
@@ -413,7 +443,14 @@ def create_app(
         except AssetAPIError as exc:
             return openai_error(str(exc), 502, "modelark_asset_error")
         except TranslationError as exc:
-            return openai_error(str(exc), 400, "invalid_request")
+            return openai_error(
+                str(exc),
+                400,
+                getattr(exc, "code", "invalid_request"),
+                getattr(exc, "param", None),
+            )
+        except ApiError as exc:
+            return openai_error(str(exc), exc.status, exc.code)
         except ProviderUnavailable as exc:
             return openai_error(str(exc), 404, "model_unavailable")
         except ProviderCredentialsError as exc:
@@ -430,11 +467,8 @@ def create_app(
             "providers": credentials.snapshot(),
         }
 
-    async def collect_models() -> list[dict[str, Any]]:
+    async def modelark_models() -> list[dict[str, Any]]:
         nonlocal model_cache, model_cache_expires_at
-        if not credentials.enabled("modelark"):
-            return []
-        credentials.require("modelark")
         if not settings.model_management_configured:
             raise HTTPException(
                 status_code=503,
@@ -447,21 +481,41 @@ def create_app(
                 if model_cache is None or now >= model_cache_expires_at:
                     model_cache = await assets.list_available_seedance_models()
                     model_cache_expires_at = now + settings.model_cache_ttl_seconds
-        models = []
-        for model in model_cache:
-            guide = prompt_guides.for_model(model["id"])
-            models.append(
-                {
-                    "id": model["id"],
-                    "object": "model",
-                    "owned_by": "modelark",
-                    "name": model["label"],
-                    "capabilities": model["capabilities"],
-                    "links": {
-                        "prompt_guide": guide.summary()["url"] if guide else None
-                    },
-                }
+        return [
+            {
+                "id": model["id"],
+                "object": "model",
+                "owned_by": "modelark",
+                "name": model["label"],
+                "capabilities": model["capabilities"],
+            }
+            for model in model_cache
+        ]
+
+    async def collect_models() -> list[dict[str, Any]]:
+        """Models of every usable provider; fails only if none can answer."""
+        sources = [
+            (name, loader)
+            for name, loader in (
+                ("modelark", modelark_models),
+                ("google", lambda: providers.providers["google"].list_models()),
             )
+            if credentials.enabled(name) and name in providers.providers
+        ]
+        models: list[dict[str, Any]] = []
+        failures: list[Exception] = []
+        for name, loader in sources:
+            try:
+                credentials.require(name)
+                models.extend(await loader())
+            except (ProviderCredentialsError, ApiError, HTTPException) as exc:
+                logger.warning("Model discovery for %s failed: %s", name, exc)
+                failures.append(exc)
+        if failures and len(failures) == len(sources):
+            raise failures[0]
+        for model in models:
+            guide = prompt_guides.for_model(model["id"])
+            model["links"] = {"prompt_guide": guide.summary()["url"] if guide else None}
         return models
 
     @app.get("/v1/models")
@@ -728,13 +782,17 @@ def create_app(
     )
 
     async def stream_task_output(
-        video_id: str, field: str, media_type: str
+        video_id: str, field: str, media_type: str, output: int = 0
     ) -> StreamingResponse | JSONResponse:
         video_id = decode_video_id(video_id)
-        return await video_provider(video_id).stream_output(video_id, field, media_type)
+        return await video_provider(video_id).stream_output(
+            video_id, field, media_type, output=output
+        )
 
-    async def video_content(video_id: str):
-        return await stream_task_output(video_id, "video_url", "video/mp4")
+    async def video_content(video_id: str, output: int = 0):
+        return await stream_task_output(
+            video_id, "video_url", "video/mp4", output=output
+        )
 
     async def last_frame_content(video_id: str):
         return await stream_task_output(video_id, "last_frame_url", "image/png")
@@ -755,5 +813,27 @@ def create_app(
         methods=["GET"],
         include_in_schema=False,
     )
+
+    @app.post("/v1/providers/google/veo/{model}:predictLongRunning")
+    async def native_veo_create(model: str, request: Request) -> dict[str, Any]:
+        credentials.require("google")
+        google = providers.providers.get("google")
+        if google is None:
+            raise ProviderUnavailable("The 'google' provider is not configured")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise TranslationError("Request body must be a JSON object")
+        result = await google.create_native_veo(model, body)
+        job_id = result.pop("proxy_job_id")
+        public_id = encode_video_id(job_id, strip_model_namespace(model))
+        return {
+            **result,
+            "proxy": {"id": public_id, "status_url": f"/v1/videos/{public_id}"},
+        }
+
+    @app.get("/v1/providers/google/veo/operations/{video_id}")
+    async def native_veo_operation(video_id: str) -> dict[str, Any]:
+        video_id = decode_video_id(video_id)
+        return await video_provider(video_id).native_operation(video_id)
 
     return app

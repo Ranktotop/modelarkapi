@@ -57,7 +57,7 @@ class VideoProvider(Protocol):
     async def delete_video(self, video_id: str) -> VideoObject: ...
 
     async def stream_output(
-        self, video_id: str, field: str, media_type: str
+        self, video_id: str, field: str, media_type: str, output: int = 0
     ) -> StreamingResponse | JSONResponse: ...
 
 

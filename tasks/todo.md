@@ -18,7 +18,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [ ] **Checkpoint 1:** Tests und Build grün, Seedance unverändert, Vertrag abgenommen
 
 ## Phase 2: Google
-- [ ] T9: Gemini- und Vertex-Backend; Veo Text→Video mit allen Parametern (M)
+- [x] T9: Gemini- und Vertex-Backend; Veo Text→Video mit allen Parametern (M)
 - [ ] T10: Veo Bild→Video, Start+Ende und Referenzbilder (M)
 - [ ] T11: Veo-Extension (beide Backends) (S)
 - [ ] T12: Omni Text→Video, Bild→Video und Start+Ende (Interactions, background) (M)

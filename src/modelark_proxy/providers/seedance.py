@@ -616,8 +616,10 @@ class SeedanceProvider:
         return byteplus_to_openai(result)
 
     async def stream_output(
-        self, video_id: str, field: str, media_type: str
+        self, video_id: str, field: str, media_type: str, output: int = 0
     ) -> StreamingResponse | JSONResponse:
+        if output != 0:
+            return openai_error("Seedance tasks have a single output", 404, "not_found")
         local = self.asset_jobs.get_video(video_id)
         if local:
             provider_id = self.asset_jobs.provider_id(video_id)

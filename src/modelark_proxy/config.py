@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     provider_job_ttl_seconds: int = Field(default=172_800, gt=0)
     provider_worker_concurrency: int = Field(default=10, ge=1)
     provider_poll_interval_seconds: float = Field(default=5.0, gt=0)
+    provider_status_min_interval_seconds: float = Field(default=2.0, ge=0)
     output_dir: Path = Path("./data/outputs")
     prompt_guides_dir: Path = Path("./prompt_guides")
     webhook_secret: str = ""
