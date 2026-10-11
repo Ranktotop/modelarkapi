@@ -1,6 +1,6 @@
 # Veo 3.1 Prompting Guide
 
-**Stand: 4. September 2026**  
+**Stand: 11. Oktober 2026**  
 **Fokus:** Google Veo 3.1 für Text-to-Video, Image-to-Video, First/Last Frame, Referenzbilder („Ingredients to Video“), Video-Extension, Timestamp-Regie und nativen Ton  
 **Ziel:** aus einer Idee eine überprüfbare Regieanweisung für **einen einzigen durchgehenden Take** machen, die Veo möglichst wenig interpretieren muss
 
@@ -40,20 +40,21 @@ Veo 3.1 ist Googles Videomodell mit **nativer, synchroner Tonspur** und mehreren
 
 | Bereich | Offiziell bestätigter Stand |
 |---|---|
-| Modell-ID (Gemini API) | `veo-3.1-generate-preview` |
+| Modell-ID (Gemini API) | `veo-3.1-generate-preview` (Abschaltung der Preview-IDs am **22.10.2026**; Vertex AI nutzt die GA-IDs `…-001`) |
 | Schnelle Variante | `veo-3.1-fast-generate-preview` |
-| Sparvariante | Veo 3.1 Lite (kein 4K, keine Extension) |
+| Sparvariante | Veo 3.1 Lite (kein 4K; Extension nur auf Vertex AI) |
+| Modell-IDs in diesem Proxy | `veo-3.1-generate`, `veo-3.1-fast-generate`, `veo-3.1-lite-generate` – der Proxy wählt die passende Preview- oder GA-ID des eingestellten Backends |
 | Dauer | **4, 6 oder 8 Sekunden** – keine Zwischenwerte |
 | Auflösung | 720p (Default), 1080p, 4K (nicht bei Lite) |
 | Zwang zu 8 s | bei 1080p, 4K und bei Referenzbildern |
 | Seitenverhältnis | 16:9 (Default) oder 9:16 – **kein 1:1** |
 | Ton | nativ, synchron, bei 3.1 standardmäßig aktiv |
-| Videos pro Request | 1 |
+| Videos pro Request | 1 auf der Gemini API, **1–4** auf Vertex AI (`n`) |
 | Referenzbilder | bis zu **3** Asset-Bilder |
 | Style-Referenz | **nicht** bei Veo 3.1 (nur `veo-2.0-generate-exp`) |
 | First/Last Frame | unterstützt; `lastFrame` nur zusammen mit `image` |
 | Extension | +7 s pro Schritt, bis zu 20 Schritte, max. ca. 148 s gesamt |
-| Extension-Input | max. 141 s, 720p, 16:9 oder 9:16, muss von Veo stammen |
+| Extension-Input | Gemini API: max. 141 s, 720p, 16:9 oder 9:16, muss von Veo stammen. Vertex AI: Input 1–30 s, 720p/1080p/4K, Ergebnis höchstens 37 s |
 | Add/Remove Object | läuft über **Veo 2**, erzeugt **keinen Ton** |
 | Wasserzeichen | SynthID in jeder Ausgabe |
 | Serverseitige Aufbewahrung | 2 Tage; eine Extension setzt die Frist neu |
@@ -65,7 +66,7 @@ Veo 3.1 ist Googles Videomodell mit **nativer, synchroner Tonspur** und mehreren
 
 - **`veo-3.1-generate-preview`** – die Qualitätsvariante. Nimm sie für den finalen Take, für Dialogszenen und für alles, was Hautdetails, Lippensynchronität oder komplexe Materialien zeigt.
 - **`veo-3.1-fast-generate-preview`** – die Iterationsvariante. Nimm sie, um Prompts, Kamerawege und Ton zu testen. Sie versteht **dieselbe** Promptsprache; wechsle erst zum Schluss, und ändere beim Wechsel **nichts** außer dem Modellnamen.
-- **Veo 3.1 Lite** – kein 4K, keine Extension. Für Massenvarianten in 720p.
+- **Veo 3.1 Lite** – kein 4K; Extension nur auf Vertex AI. Für Massenvarianten in 720p.
 
 Das ist der wichtigste Kostenhebel: In Fast entstehen die Entscheidungen, in der Vollvariante das Master.
 
@@ -277,7 +278,7 @@ Das Modell befolgt Felder zuverlässiger als Sätze. Alles, wofür ein Feld exis
 | `negativePrompt` | Substantivliste | siehe §13 |
 | `personGeneration` | `dont_allow`, `allow_adult`, `allow_all` | `allow_all` nur bei Text-to-Video/Extension; Bildmodi maximal `allow_adult`; in EU/UK/CH/MENA gilt `allow_adult` als Obergrenze |
 | `generateAudio` | Bool (Vertex) | bei 3.1 ist Ton der Normalfall |
-| `sampleCount` / `numberOfVideos` | `1` | mehr geht bei 3.1 nicht |
+| `sampleCount` / `numberOfVideos` (Proxy: `n`) | `1` (Gemini API), `1`–`4` (Vertex AI) | mehrere Varianten in einem Aufruf nur über Vertex AI |
 | `seed` | Ganzzahl | erhöht Ähnlichkeit, garantiert **keine** Reproduzierbarkeit |
 | `storageUri` | GCS-Pfad (Vertex) | sonst 2-Tage-Ablage bei Google |
 
@@ -683,8 +684,9 @@ Der offizielle Workflow ist bewusst zweistufig: Erst mit **Gemini 2.5 Flash Imag
 - Eingabe ist ein **von Veo erzeugtes** Video.
 - Jede Extension hängt **7 Sekunden** an.
 - Bis zu **20** Extensions, damit maximal rund **148 Sekunden** Gesamtlänge.
-- Der Input darf höchstens **141 Sekunden** lang sein, muss **720p** sein und 16:9 oder 9:16 haben.
-- Verfügbar bei Veo 3.1 und 3.1 Fast, **nicht** bei Lite.
+- Gemini API: Der Input darf höchstens **141 Sekunden** lang sein, muss **720p** sein und 16:9 oder 9:16 haben.
+- Vertex AI: Input **1–30 Sekunden**, 720p, 1080p oder 4K; das Ergebnis ist höchstens **37 Sekunden** lang.
+- Auf der Gemini API bei Veo 3.1 und 3.1 Fast, **nicht** bei Lite. Auf Vertex AI unterstützt auch Lite die Extension.
 - Das Quellvideo liegt nur **2 Tage** auf dem Server; jede Extension setzt die Frist neu.
 
 ### 17.2 Was der Extension-Prompt leisten muss
@@ -1038,7 +1040,7 @@ Dialog (höchstens ein Satz pro Sprecher), SFX, Ambience, plus Verbote für Musi
 
 ### Pass 7: Best-of-N statt Seed-Jagd
 
-`sampleCount` ist 1, also sind Varianten separate Aufrufe. Drei Aufrufe desselben guten Prompts schlagen zehn Aufrufe mit jeweils neuen Formulierungen. Ein `seed` erhöht die Ähnlichkeit, aber ist keine Garantie – behandle ihn als Werkzeug für Variantennähe, nicht für Reproduzierbarkeit.
+Auf der Gemini API ist `sampleCount` 1, also sind Varianten separate Aufrufe (auf Vertex AI liefert `n` bis zu 4 Varianten in einem Aufruf). Drei Aufrufe desselben guten Prompts schlagen zehn Aufrufe mit jeweils neuen Formulierungen. Ein `seed` erhöht die Ähnlichkeit, aber ist keine Garantie – behandle ihn als Werkzeug für Variantennähe, nicht für Reproduzierbarkeit.
 
 ---
 
@@ -1150,7 +1152,7 @@ Zu viele Qualitätswörter, zu wenig Licht und Material. Streiche `cinematic, 8K
 - [ ] Verbote im Prompt positiv umformuliert?
 
 ### Extension
-- [ ] Quellvideo von Veo, 720p, ≤141 s, ≤2 Tage alt?
+- [ ] Quellvideo von Veo, 720p, ≤141 s, ≤2 Tage alt (Gemini API) bzw. 1–30 s (Vertex AI)?
 - [ ] Endet es ruhig und mit vollständig sichtbarem Subjekt?
 - [ ] Kamera und Licht im Prompt fortgeschrieben?
 - [ ] Stimme in der letzten Sekunde vorhanden, falls sie weiterlaufen soll?

@@ -40,9 +40,9 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T22: Seedance-Lückenanalyse und Abbildung auf den Vertrag (M)
 
 ## Phase 5: Prompt Guides (parallel ab Checkpoint 1)
-- [ ] T23: Guide Gemini Omni Flash (M)
-- [ ] T24: Guides Kling (3.0/Turbo, 3.0 Omni/O1, 2.6/2.5 Turbo, Spezial-Tasks) (M)
-- [ ] T25: Veo-Guide korrigieren, Seedance-Zuordnung prüfen, Lücken schließen (S–M)
+- [x] T23: Guide Gemini Omni Flash (M)
+- [x] T24: Guides Kling (3.0/Turbo, 3.0 Omni/O1, 2.6/2.5 Turbo, Spezial-Tasks) (M)
+- [x] T25: Veo-Guide korrigieren, Seedance-Zuordnung prüfen, Lücken schließen (S–M)
 
 ## Phase 6: UI und Integration
 - [ ] T26: UI-Assetbibliotheken, Effekt-Galerie, Spezialformulare, Multi-Output (L, aufteilen)

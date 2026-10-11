@@ -66,6 +66,25 @@ def test_repository_manifest_matches_the_guide_files():
     assert guides.for_model("veo-3.1-fast-generate-001").id == "veo_3_1"
 
 
+def test_every_offered_model_has_a_guide():
+    from modelark_proxy.models import MODEL_SPECS
+    from modelark_proxy.providers import omni, veo
+    from modelark_proxy.providers.kling.models import MODELS, VIRTUAL_MODELS
+
+    guides = PromptGuides(REPO_GUIDES)
+    # Seedance 1.x is not activated on the account and has no guide.
+    seedance = [
+        family for family, spec in MODEL_SPECS.items() if not spec.first_generation
+    ]
+    offered = [*seedance, *veo.LABELS, *omni.LABELS, *MODELS, *VIRTUAL_MODELS]
+
+    assert [model for model in offered if guides.for_model(model) is None] == []
+    assert guides.for_model("kling-3.0-turbo").id == "kling_3_0"
+    assert guides.for_model("kling-3.0-omni").id == "kling_omni"
+    assert guides.for_model("kling-2.5-turbo").id == "kling_2_x"
+    assert guides.for_model("kling-tts").id == "kling_tools"
+
+
 @pytest.mark.parametrize(
     ("family", "slug"),
     [
