@@ -148,6 +148,13 @@ class KlingProvider:
             created = await self.client.call("POST", path, json=body)
             upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
             return self._register(model_id, request, upstream, adjustments)
+        if request.task == "motion_control":
+            assert model.legacy_name is not None
+            path = "/v1/videos/motion-control"
+            body = await self._motion_body(request, model.legacy_name, options)
+            created = await self.client.call("POST", path, json=body)
+            upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
+            return self._register(model_id, request, upstream, adjustments)
         images = {
             reference["role"]: await self._image(reference)
             for reference in request.references
@@ -194,6 +201,35 @@ class KlingProvider:
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    async def _motion_body(
+        self, request: UnifiedRequest, model_name: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
+        """`/v1/videos/motion-control`: a character moves like the motion video."""
+        subject = next((r for r in request.references if r["role"] == "subject"), None)
+        motion = next(r for r in request.references if r["role"] == "motion")
+        steering = self._steering(request, {}, require_frame=False)
+        if subject is None and not steering:
+            raise ContractError(
+                "Motion control needs a character image or element",
+                code="reference_limit",
+                param="references",
+            )
+        body: dict[str, Any] = {"model_name": model_name}
+        if request.prompt:
+            body["prompt"] = request.prompt
+        if subject is not None:
+            body["image_url"] = await self._image(subject)
+        body.update(steering)
+        body["video_url"] = await self.references.public_url(motion)
+        # Required by Kling; "image" keeps the character's orientation.
+        body["character_orientation"] = options.get("character_orientation", "image")
+        if "keep_original_sound" in options:
+            body["keep_original_sound"] = options["keep_original_sound"]
+        body["mode"] = RESOLUTION_MODES[request.params.get("resolution", "720p")]
+        if request.params.get("watermark"):
+            body["watermark_info"] = {"enabled": True}
+        return body
 
     async def _omni_body(
         self, request: UnifiedRequest, model: KlingModel, options: dict[str, Any]

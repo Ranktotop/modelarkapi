@@ -39,6 +39,7 @@ class KlingModel:
     voices: bool = False
     # Served by /v1/videos/omni-video (references, video edits).
     omni: bool = False
+    motion: bool = False
 
 
 MODELS: dict[str, KlingModel] = {
@@ -62,6 +63,7 @@ MODELS: dict[str, KlingModel] = {
             audio=True,
             multi_shot=True,
             elements=True,
+            motion=True,
         ),
         KlingModel(
             "kling-2.6",
@@ -73,6 +75,7 @@ MODELS: dict[str, KlingModel] = {
             audio_needs_1080p=True,
             first_last_needs_1080p=True,
             voices=True,
+            motion=True,
         ),
         KlingModel(
             "kling-2.5-turbo",
@@ -106,6 +109,7 @@ MODELS: dict[str, KlingModel] = {
 }
 VIDEO_FORMATS = ("video/mp4", "video/quicktime")
 OMNI_OPTIONS = ("keep_original_sound",)
+MOTION_OPTIONS = ("character_orientation", "keep_original_sound")
 ALIASES = {
     model.legacy_name: model.id for model in MODELS.values() if model.legacy_name
 }
@@ -171,6 +175,33 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
             references=(frame("first_frame", 0), *steering) if legacy else (),
             prompt_required=False,
         )
+    if model.motion:
+        # The output follows the motion video's length; 4K is not offered.
+        tasks["motion_control"] = TaskSpec(
+            references=(
+                frame("subject", 0),
+                ReferenceSlot(
+                    "motion",
+                    ("video",),
+                    1,
+                    1,
+                    max_bytes=100 * 1024 * 1024,
+                    formats=VIDEO_FORMATS,
+                    min_seconds=3,
+                    max_seconds=30,
+                ),
+                *(
+                    (ReferenceSlot("reference", ("element",), 0, 1),)
+                    if model.elements
+                    else ()
+                ),
+            ),
+            parameters={
+                "seconds": Param(values=("auto",), default="auto"),
+                "resolution": Param(values=("720p", "1080p"), default="720p"),
+            },
+            prompt_required=False,
+        )
     constraints = [
         Constraint(
             when={"task": ("text_to_video", "multi_shot")},
@@ -178,7 +209,7 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
             message="Text-based Kling tasks support 16:9, 9:16 and 1:1",
         ),
         Constraint(
-            when={"task": ("image_to_video", "first_last_frame")},
+            when={"task": ("image_to_video", "first_last_frame", "motion_control")},
             then={"aspect_ratio": ("adaptive",)},
             message="Kling takes the aspect ratio from the input image",
         ),
@@ -211,6 +242,7 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
         tasks=tasks,
         constraints=tuple(constraints),
         features={"watermark": True},
+        provider_options=MOTION_OPTIONS if model.motion else (),
     )
 
 

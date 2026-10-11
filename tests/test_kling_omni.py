@@ -256,3 +256,104 @@ async def test_omni_rules_fail_fast(tmp_path: Path, body: dict[str, Any], code: 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == code
     assert not any(r.method == "POST" for r in fake.requests)
+
+
+# --- T16: motion control -------------------------------------------------------
+
+
+async def post_motion(
+    tmp_path: Path, body: dict[str, Any]
+) -> tuple[httpx.Response, dict[str, Any] | None]:
+    response, fake = await post(tmp_path, body)
+    posted = [r for r in fake.requests if r.method == "POST"]
+    if not posted:
+        return response, None
+    assert posted[0].url.path == "/v1/videos/motion-control"
+    return response, json.loads(posted[0].content)
+
+
+async def test_motion_control_moves_the_character_like_the_video(tmp_path: Path):
+    response, body = await post_motion(
+        tmp_path,
+        {
+            "model": "kling-3.0",
+            "prompt": "dance",
+            "resolution": "1080p",
+            "references": [
+                {"type": "image", "url": PNG_URI, "role": "subject"},
+                {"type": "video", "url": VIDEO_URL, "role": "motion"},
+            ],
+            "provider_options": {
+                "kling": {"character_orientation": "video", "keep_original_sound": "no"}
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert body == {
+        "model_name": "kling-v3",
+        "prompt": "dance",
+        "image_url": PNG_B64,
+        "video_url": VIDEO_URL,
+        "character_orientation": "video",
+        "keep_original_sound": "no",
+        "mode": "pro",
+    }
+
+
+async def test_motion_control_defaults_and_elements(tmp_path: Path):
+    response, body = await post_motion(
+        tmp_path,
+        {
+            "model": "kling-3.0",
+            "references": [
+                {"asset_id": "asset-kling-element-123"},
+                {"type": "video", "url": VIDEO_URL, "role": "motion"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert body["element_list"] == [{"element_id": 123}]
+    assert body["character_orientation"] == "image"
+    assert body["mode"] == "std"
+    assert "image_url" not in body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {
+            "model": "kling-2.5-turbo",
+            "references": [
+                {"type": "image", "url": PNG_URI},
+                {"type": "video", "url": VIDEO_URL, "role": "motion"},
+            ],
+        },
+        {
+            "model": "kling-3.0",
+            "references": [{"type": "video", "url": VIDEO_URL, "role": "motion"}],
+        },
+        {
+            "model": "kling-3.0",
+            "resolution": "4k",
+            "references": [
+                {"type": "image", "url": PNG_URI},
+                {"type": "video", "url": VIDEO_URL, "role": "motion"},
+            ],
+        },
+        {
+            "model": "kling-2.6",
+            "seconds": 5,
+            "references": [
+                {"type": "image", "url": PNG_URI},
+                {"type": "video", "url": VIDEO_URL, "role": "motion"},
+            ],
+        },
+    ],
+)
+async def test_motion_control_rules(tmp_path: Path, body: dict[str, Any]):
+    response, posted = await post_motion(tmp_path, body)
+
+    assert response.status_code in {400, 404}
+    assert posted is None
