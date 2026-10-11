@@ -601,3 +601,153 @@ async def test_gemini_image_modes_send_allow_adult(tmp_path: Path):
 
     assert created.status_code == 200
     assert google.created()["parameters"]["personGeneration"] == "allow_adult"
+
+
+# --- T11: extension -----------------------------------------------------------
+
+MP4_URI = "data:video/mp4;base64," + base64.b64encode(VIDEO_BYTES).decode()
+
+
+async def test_vertex_extends_an_earlier_job_without_a_duration(tmp_path: Path):
+    google = FakeGoogle(polls=[vertex_done()])
+
+    first, _, extension = await run(
+        settings_for(tmp_path, "vertex"),
+        google,
+        create({"model": "veo-3.1-generate-001", "prompt": "a boat"}),
+        follow(),
+        lambda client, results: client.post(
+            "/v1/videos",
+            json={
+                "model": "veo-3.1-generate-001",
+                "task": "extend",
+                "prompt": "the boat sails on",
+                "references": [
+                    {"task_id": results[0].json()["id"], "role": "base_video"}
+                ],
+            },
+        ),
+    )
+
+    assert extension.status_code == 200
+    body = [
+        json.loads(r.content)
+        for r in google.requests
+        if r.url.path.endswith(":predictLongRunning")
+    ][1]
+    assert body["instances"][0]["video"] == {
+        "bytesBase64Encoded": base64.b64encode(VIDEO_BYTES + b"\x00").decode(),
+        "mimeType": "video/mp4",
+    }
+    assert "durationSeconds" not in body["parameters"]
+
+
+async def test_vertex_extends_uploaded_videos(tmp_path: Path):
+    google = FakeGoogle(polls=[vertex_done()])
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        google,
+        create(
+            {
+                "model": "veo-3.1-lite-generate-001",
+                "task": "extend",
+                "prompt": "continue",
+                "references": [{"type": "video", "url": MP4_URI}],
+            }
+        ),
+    )
+
+    assert created.status_code == 200
+    assert google.created()["instances"][0]["video"]["mimeType"] == "video/mp4"
+
+
+def gemini_done() -> dict[str, Any]:
+    return {
+        "done": True,
+        "response": {
+            "generateVideoResponse": {
+                "generatedSamples": [
+                    {
+                        "video": {
+                            "uri": f"https://{GEMINI_HOST}/v1beta/files/abc:download?alt=media"
+                        }
+                    }
+                ]
+            }
+        },
+    }
+
+
+async def test_gemini_extends_its_own_videos_inline(tmp_path: Path):
+    google = FakeGoogle(polls=[gemini_done()])
+
+    _, _, extension, too_sharp = await run(
+        settings_for(tmp_path, "gemini"),
+        google,
+        create({"model": "veo-3.1-fast-generate-preview", "prompt": "a boat"}),
+        follow(),
+        lambda client, results: client.post(
+            "/v1/videos",
+            json={
+                "model": "veo-3.1-fast-generate-preview",
+                "task": "extend",
+                "prompt": "on and on",
+                "references": [{"task_id": results[0].json()["id"]}],
+            },
+        ),
+        lambda client, results: client.post(
+            "/v1/videos",
+            json={
+                "model": "veo-3.1-fast-generate-preview",
+                "task": "extend",
+                "resolution": "1080p",
+                "references": [{"task_id": results[0].json()["id"]}],
+            },
+        ),
+    )
+
+    assert extension.status_code == 200
+    body = [
+        json.loads(r.content)
+        for r in google.requests
+        if r.url.path.endswith(":predictLongRunning")
+    ][1]
+    assert body["instances"][0]["video"] == {
+        "inlineData": {
+            "mimeType": "video/mp4",
+            "data": base64.b64encode(VIDEO_BYTES).decode(),
+        }
+    }
+    assert body["parameters"]["durationSeconds"] == 8
+    assert body["parameters"]["resolution"] == "720p"
+    assert too_sharp.status_code == 400
+
+
+async def test_gemini_cannot_extend_foreign_videos(tmp_path: Path):
+    (response,) = await run(
+        settings_for(tmp_path, "gemini"),
+        FakeGoogle(),
+        create(
+            {
+                "model": "veo-3.1-fast-generate-preview",
+                "task": "extend",
+                "references": [{"type": "video", "url": MP4_URI}],
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reference_limit"
+
+
+async def test_veo_models_advertise_video_extension(tmp_path: Path):
+    (models,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeGoogle(),
+        lambda client, _: client.get("/v1/models"),
+    )
+
+    caps = models.json()["data"][0]["capabilities"]
+    assert caps["continuation"] == "video_extension"
+    assert caps["tasks"]["extend"]["references"][0]["role"] == "base_video"

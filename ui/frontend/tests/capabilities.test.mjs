@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  continuationOf,
   feature,
   groupModels,
   lockedValue,
@@ -116,4 +117,11 @@ test("models are grouped by provider in a stable order", () => {
     ["BytePlus ModelArk", ["s25", "s20"]],
     ["Google", ["veo"]],
   ]);
+});
+
+test("continuation follows the document and defaults to the last frame", () => {
+  assert.equal(continuationOf(seedance25), "last_frame");
+  assert.equal(continuationOf({ ...veo, continuation: "video_extension" }), "video_extension");
+  assert.equal(continuationOf(v1Only), "last_frame");
+  assert.equal(continuationOf(undefined), "none");
 });

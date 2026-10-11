@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
+import { continuationOf, feature, groupModels, lockedValue, MODE_TASKS, modeUnavailable, parameterDefault, parameterValues, providerOf, referenceLimit } from "./capabilities";
 import type { JSX } from "react";
 import { api } from "./api";
 import { loginBackground, logoWhite } from "./assets";
@@ -214,7 +214,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const outputFormats = parameterValues(capabilities, task, "output_format").map(String);
   const allKinds = useMemo(() => [
     ...references.map(item => item.kind),
-    ...(continuationTaskId ? ["image" as MediaKind] : []),
+    ...(continuationTaskId ? [(mode === "extend" ? "video" : "image") as MediaKind] : []),
   ], [references, continuationTaskId]);
 
   const loadJobs = useCallback(async () => {
@@ -328,7 +328,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   // Unified request (SPEC section 5) for every provider other than ModelArk.
   function buildUnifiedPayload() {
     let imageIndex = 0;
-    let baseVideoTaken = false;
+    let baseVideoTaken = mode === "extend" && Boolean(continuationTaskId);
     const roleFor = (kind: MediaKind) => {
       if (mode === "first_frame") return "first_frame";
       if (mode === "first_last" && kind === "image") return imageIndex++ === 0 ? "first_frame" : "last_frame";
@@ -339,6 +339,8 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       return "reference";
     };
     const includeReferences = mode !== "text";
+    const continuation = mode === "extend" && continuationTaskId ? [{ task_id: continuationTaskId, role: "base_video" }] : [];
+    const uploaded = includeReferences ? references.map(item => ({ type: item.kind, url: item.url, role: roleFor(item.kind) })) : [];
     return {
       model,
       ui_mode: mode,
@@ -350,7 +352,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       ...(outputFormats.length > 1 ? { output_format: outputFormat } : {}),
       ...(feature(capabilities, "generate_audio") ? { generate_audio: generateAudio } : {}),
       ...(feature(capabilities, "watermark") ? { watermark } : {}),
-      ...(includeReferences && references.length ? { references: references.map(item => ({ type: item.kind, url: item.url, role: roleFor(item.kind) })) } : {}),
+      ...(continuation.length || uploaded.length ? { references: [...continuation, ...uploaded] } : {}),
       ...(includeReferences && references.length ? { ui_references: references.map(item => ({ filename: item.filename, kind: item.kind })) } : {}),
     };
   }
@@ -411,7 +413,21 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     if (selectedId === job.id) setSelectedId(null);
   }
 
+  function capabilitiesOf(job: Job): ModelCapabilities | undefined {
+    const modelId = job.request?.model || job.model;
+    return config.models.find(option => option.id === modelId)?.capabilities;
+  }
+
   function continueFrom(job: Job) {
+    if (continuationOf(capabilitiesOf(job)) === "video_extension") {
+      selectModel(job.request?.model || job.model);
+      setMode("extend");
+      setReferences([]);
+      setContinuationTaskId(job.id);
+      setPrompt("Continue the scene seamlessly. ");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     setMode("first_frame");
     setReferences([]);
     setContinuationTaskId(job.id);
@@ -443,7 +459,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
       <section className="composer panel">
         <div className="section-heading"><div><p className="eyebrow">NEW GENERATION</p><h1>Bring deine Szene in Bewegung.</h1></div><label className="model-picker"><span className="setting-label">Modell<Tooltip text={TOOLTIPS.model} /></span><select value={model} onChange={event => selectModel(event.target.value)} disabled={!config.models.length}><option value="">{config.models.length ? "Modell auswählen …" : "Keine Modelle verfügbar"}</option>{groupModels(config.models).map(group => <optgroup key={group.provider} label={group.label}>{group.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</optgroup>)}</select></label><button className="action guide-button" onClick={openGuide} disabled={!selectedModel?.prompt_guide} title={selectedModel?.prompt_guide ? "Prompt Guide für dieses Modell öffnen" : "Für dieses Modell gibt es noch keinen Prompt Guide"}><Icon name="info" /> Prompt Guide</button></div>
 
-        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
+        <div className="field-group"><SettingLabel tooltip={TOOLTIPS.workflow}>Workflow</SettingLabel><div className="mode-grid">{MODES.map(item => <button key={item.id} className={`mode-card ${mode === item.id ? "active" : ""}`} disabled={Boolean(isModeUnavailable(item.id))} data-tooltip={isModeUnavailable(item.id) || item.tooltip} aria-label={`${item.label}: ${isModeUnavailable(item.id) || item.tooltip}`} onClick={() => { setMode(item.id); if (item.id !== "first_frame" && item.id !== "extend") setContinuationTaskId(null); }}><strong>{item.label}<i className="mode-info" aria-hidden="true">?</i></strong><span>{item.hint}</span></button>)}</div></div>
 
         {mode !== "text" && <div className="field-group">
           <div className="label-row"><SettingLabel tooltip={TOOLTIPS.references}>Referenzen</SettingLabel><span>{allKinds.length} hinzugefügt</span></div>
@@ -451,7 +467,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
             <input ref={fileInput} hidden multiple type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,audio/mpeg,audio/wav" onChange={e => e.target.files && uploadFiles(e.target.files)} />
             <div className="drop-icon"><Icon name="upload" /></div><div><strong>{uploading ? "Dateien werden vorbereitet …" : "Bilder, Videos oder Audio ablegen"}</strong><span>PNG, JPG, WEBP, GIF · MP4, MOV · MP3, WAV</span></div>
           </div>
-          {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>Letztes Frame aus vorherigem Job</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
+          {continuationTaskId && <div className="continuation-card"><div className="media-symbol image"><Icon name="play" /></div><div><strong>{mode === "extend" ? "Video aus vorherigem Job" : "Letztes Frame aus vorherigem Job"}</strong><span>{continuationTaskId}</span></div><button onClick={() => setContinuationTaskId(null)}><Icon name="trash" /></button></div>}
           {references.length > 0 && <div className="reference-list">
             {references.map((item, index) => <div className="reference-card" key={item.id}><div className={`media-symbol ${item.kind}`}>{item.kind === "video" ? "▶" : item.kind === "audio" ? "♫" : index + 1}</div><div><strong>{item.filename || `${kindLabel[item.kind]} ${index + 1}`}</strong><span>{kindLabel[item.kind]} · temporärer Upload</span>{feature(capabilities, "real_human") && <div className="biometric-row"><label className="biometric-toggle"><input type="checkbox" checked={Boolean(item.real_human)} onChange={() => toggleRealHuman(item.id)}/><span>Reale Person · automatisch verifizieren</span></label><Tooltip text={TOOLTIPS.realHuman} /></div>}</div><button onClick={() => removeReference(item)} aria-label={`${item.filename || kindLabel[item.kind]} entfernen`} title="Referenz entfernen"><Icon name="trash" /></button></div>)}
           </div>}
@@ -479,7 +495,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
           </div>
           <div className="selected-meta"><div><Status status={selected.provider.status}/><span>{new Date(selected.created_at * 1000).toLocaleString("de-DE")}</span></div><p>{selected.prompt}</p><code>{selected.id}</code></div>
           <div className="result-actions">
-            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}</>}
+            {selected.provider.status === "completed" && <><a className="action primary" href={`/api/videos/${encodeURIComponent(selected.id)}/content`} download><Icon name="download" /> {String(selected.request?.output_format || "mp4").toUpperCase()} laden</a>{selected.provider.last_frame_available && <><a className="action" href={`/api/videos/${encodeURIComponent(selected.id)}/last-frame`} download><Icon name="download" /> Frame</a><button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Fortsetzen</button></>}{continuationOf(capabilitiesOf(selected)) === "video_extension" && <button className="action" onClick={() => continueFrom(selected)}><Icon name="play" /> Verlängern</button>}</>}
             <button className="action" onClick={() => setDetailsId(selected.id)} title="Einstellungen und Statusdetails dieses Jobs anzeigen"><Icon name="info" /> Details</button>
           </div>
         </> : <div className="empty-state"><div className="empty-visual"><Icon name="play" /></div><strong>Noch kein Video</strong><span>Deine aktuelle Generierung erscheint hier.</span></div>}

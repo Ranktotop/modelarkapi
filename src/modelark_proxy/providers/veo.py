@@ -87,6 +87,35 @@ def veo_capabilities(model: str, backend: str) -> ModelCapabilities:
             prompt_required=False,
         ),
     }
+    if vertex:
+        # Vertex extends any 1-30 s MP4 by a fixed 7 s segment (Lite included).
+        tasks["extend"] = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "base_video",
+                    ("video",),
+                    1,
+                    1,
+                    formats=("video/mp4",),
+                    min_seconds=1,
+                    max_seconds=30,
+                ),
+            ),
+            parameters={"seconds": Param(values=(7,), default=7)},
+            prompt_required=False,
+        )
+    elif not lite:
+        # The Gemini API extends its own Veo videos by 7 s, returning the whole clip.
+        tasks["extend"] = TaskSpec(
+            references=(
+                ReferenceSlot("base_video", ("video",), 1, 1, formats=("video/mp4",)),
+            ),
+            parameters={
+                "seconds": Param(values=(8,), default=8),
+                "resolution": Param(values=("720p",), default="720p"),
+            },
+            prompt_required=False,
+        )
     if not lite:
         tasks["reference_to_video"] = TaskSpec(
             references=(
@@ -125,6 +154,7 @@ def veo_capabilities(model: str, backend: str) -> ModelCapabilities:
         tasks=tasks,
         constraints=tuple(constraints),
         max_outputs=4 if vertex else 1,
+        continuation="video_extension" if "extend" in tasks else "none",
         provider_options=VERTEX_OPTIONS if vertex else (),
     )
 
@@ -144,6 +174,9 @@ def build_veo_body(
         for name, field in PARAMETER_FIELDS.items()
         if params.get(name) is not None
     }
+    if request.task == "extend" and caps.backend == "vertex":
+        # Vertex extensions have a fixed length and take no duration.
+        parameters.pop("durationSeconds", None)
     parameters["sampleCount"] = params.get("n", 1)
     parameters.update(request.provider_options.get("google") or {})
     instance: dict[str, Any] = {"prompt": request.prompt}
@@ -152,6 +185,8 @@ def build_veo_body(
         instance["image"] = images["first_frame"][0]
     if images.get("last_frame"):
         instance["lastFrame"] = images["last_frame"][0]
+    if images.get("base_video"):
+        instance["video"] = images["base_video"][0]
     if images.get("reference"):
         instance["referenceImages"] = [
             {"image": image, "referenceType": "asset"} for image in images["reference"]

@@ -133,3 +133,10 @@ export function groupModels<T extends { capabilities: ModelCapabilities }>(model
     .sort(([left], [right]) => (order.indexOf(left) + 1 || 99) - (order.indexOf(right) + 1 || 99))
     .map(([provider, items]) => ({ provider, label: PROVIDER_LABELS[provider] ?? provider, models: items }));
 }
+
+// How a finished job is continued: Seedance reuses the last frame, Veo
+// extends the video itself. v1 documents only know the last-frame way.
+export function continuationOf(caps: ModelCapabilities | undefined): string {
+  if (!caps) return "none";
+  return caps.continuation ?? "last_frame";
+}

@@ -25,9 +25,6 @@ from .base import ProviderUnavailable, strip_model_namespace
 from .google_backends import GoogleBackend
 from .veo import build_veo_body, parse_operation, veo_capabilities, veo_label
 
-# Gemini API files are deleted after two days (tasks/research/google.md).
-GEMINI_FILE_TTL_SECONDS = 2 * 86_400
-
 
 class GoogleProvider:
     name = "google"
@@ -131,7 +128,19 @@ class GoogleProvider:
     ) -> dict[str, list[dict[str, str]]]:
         slots = {slot.role: slot for slot in caps.tasks[request.task].references}
         images: dict[str, list[dict[str, str]]] = {}
+        backend = caps.backend
         for reference in request.references:
+            if (
+                reference["role"] == "base_video"
+                and backend == "gemini"
+                and not reference.get("task_id")
+            ):
+                raise ContractError(
+                    "The Gemini API only extends Veo videos generated through this "
+                    "proxy; pass the earlier job as task_id",
+                    code="reference_limit",
+                    param="references",
+                )
             media = await self.references.fetch(reference)
             slot = slots[reference["role"]]
             if slot.formats and media.mime_type not in slot.formats:
@@ -147,9 +156,16 @@ class GoogleProvider:
                     code="reference_limit",
                     param="references",
                 )
-            images.setdefault(reference["role"], []).append(
-                {"bytesBase64Encoded": media.base64, "mimeType": media.mime_type}
-            )
+            if reference["role"] == "base_video" and backend == "gemini":
+                content: dict[str, Any] = {
+                    "inlineData": {"mimeType": media.mime_type, "data": media.base64}
+                }
+            else:
+                content = {
+                    "bytesBase64Encoded": media.base64,
+                    "mimeType": media.mime_type,
+                }
+            images.setdefault(reference["role"], []).append(content)
         return images
 
     def _register(
@@ -242,10 +258,26 @@ class GoogleProvider:
                     )
                     entry["stored"] = True
                 else:
-                    entry["uri"] = output["uri"]
-                    expires_at = min(
-                        expires_at, int(time.time()) + GEMINI_FILE_TTL_SECONDS
+                    # Keep a copy: Gemini deletes files after two days, and
+                    # extensions need the bytes of the earlier video.
+                    assert self.veo_backend is not None
+                    response = await stream_remote(
+                        output["uri"],
+                        headers=await self.veo_backend.headers(),
+                        allowed_host_suffixes=self.settings.google_download_host_suffixes,
+                        transport=self.download_transport,
+                        timeout=self.settings.download_timeout_seconds,
+                        media_type=output["mime_type"],
                     )
+                    await self.outputs.save(
+                        video_id,
+                        index,
+                        "video",
+                        response.body_iterator,
+                        output["mime_type"],
+                    )
+                    entry["stored"] = True
+                    entry["uri"] = output["uri"]
                 outputs.append(entry)
             self.jobs.update(
                 video_id,
