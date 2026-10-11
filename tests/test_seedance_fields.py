@@ -224,3 +224,30 @@ def test_capabilities_follow_the_research():
         "shutdown_at": "2026-11-11T09:00:00Z",
         "replacement": "dreamina-seedance-2-0-mini",
     }
+
+
+@pytest.mark.parametrize(
+    ("model", "resolution", "ratio", "size"),
+    [
+        (V25, "480p", "16:9", "854x480"),
+        (V25, "480p", "9:16", "480x854"),
+        (V20, "480p", "16:9", "864x496"),
+        (V10, "720p", "16:9", "1248x704"),
+        (V10, "1080p", "9:16", "1088x1920"),
+        (V25, "720p", "16:9", "1280x720"),
+    ],
+)
+def test_size_follows_the_model_family(model, resolution, ratio, size):
+    from modelark_proxy.translation import byteplus_to_openai
+
+    video = byteplus_to_openai(
+        {
+            "id": "cgt-1",
+            "model": model,
+            "status": "running",
+            "resolution": resolution,
+            "ratio": ratio,
+        }
+    )
+
+    assert video.size == size

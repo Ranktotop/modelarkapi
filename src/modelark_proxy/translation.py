@@ -32,6 +32,25 @@ SIZE_TO_FORMAT: dict[str, tuple[str, str]] = {
 }
 
 FORMAT_TO_SIZE = {value: key for key, value in SIZE_TO_FORMAT.items()}
+# Pixel sizes that differ from the 2.0 table above (research/seedance.md §2.4,
+# landscape listed; portrait is the same size turned).
+FAMILY_SIZES: dict[str, dict[str, tuple[int, int]]] = {
+    "dreamina-seedance-2-5": {"480p": (854, 480)},
+    "seedance-1-0": {"480p": (864, 480), "720p": (1248, 704), "1080p": (1920, 1088)},
+}
+
+
+def size_for(model: str | None, resolution: Any, ratio: Any) -> str | None:
+    """`WIDTHxHEIGHT` of a Seedance task, using the family's own pixel table."""
+    family = next(
+        (name for name in FAMILY_SIZES if str(model or "").startswith(name)), None
+    )
+    landscape = FAMILY_SIZES.get(family or "", {}).get(str(resolution))
+    if landscape and ratio in {"16:9", "9:16"}:
+        width, height = landscape if ratio == "16:9" else landscape[::-1]
+        return f"{width}x{height}"
+    return FORMAT_TO_SIZE.get((resolution, ratio))
+
 
 STATUS_MAP = {
     "queued": "queued",
@@ -96,7 +115,7 @@ def byteplus_to_openai(data: dict[str, Any]) -> VideoObject:
 
     resolution = data.get("resolution")
     ratio = data.get("ratio")
-    size = FORMAT_TO_SIZE.get((resolution, ratio))
+    size = size_for(data.get("model"), resolution, ratio)
     created_at = data.get("created_at")
     updated_at = data.get("updated_at")
     completed_at = updated_at if status == "completed" else None
