@@ -33,7 +33,6 @@ model_list:
       mode: video_generation
       provider: google
       capabilities: {…}               # Capability-Dokument v2
-      prompt_guide: "…Markdown-Volltext…"
       prompt_guide_url: https://…/v1/prompt-guides/veo_3_1
 ```
 
@@ -41,6 +40,9 @@ model_list:
   bisherigen Namen bleiben erhalten: `seedance_25_api`, `seedance_20_fast_api`.
 - Virtuelle Kling-Modelle erscheinen wie echte. Alle Einträge haben
   `mode: video_generation`.
+- Der Guide steht nur als Link im Export. Der Proxy liefert unter dem Link
+  immer den aktuellen Text, ohne Proxy-Key. Eine Änderung am Guide braucht
+  keinen neuen Export.
 - `prompt_guide_url` ist nur gesetzt, wenn `PUBLIC_BASE_URL` konfiguriert ist.
 - Die Datei `litellm-config.example.yaml` im Repository zeigt vier Einträge im
   Format des Exports (Seedance, Veo, Kling); die vollständige
@@ -54,9 +56,10 @@ MODELARK_PROXY_API_KEY=<derselbe mindestens 32 Zeichen lange PROXY_API_KEY>
 
 ## Capabilities und Prompt Guides über LiteLLM
 
-Apps lesen beides aus `GET /v1/model/info` von LiteLLM (`model_info.capabilities`,
-`model_info.prompt_guide` als Markdown-Text) und filtern clientseitig nach
-`model_name`. Ein Pass-Through der Proxy-Routen ist nicht nötig.
+Apps lesen `GET /v1/model/info` von LiteLLM und filtern clientseitig nach
+`model_name`. `model_info.capabilities` enthält das Capability-Dokument.
+`model_info.prompt_guide_url` zeigt auf den Guide. Die App lädt den Guide dort
+ohne Key (`text/markdown`, mit `Accept: application/json` als Objekt).
 
 ## Gateway-Aufruf
 
@@ -118,7 +121,7 @@ LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm
 
 | Funktion | Anmerkung |
 |---|---|
-| `GET /v1/model/info` | `model_info.prompt_guide` (Text) und `capabilities` |
+| `GET /v1/model/info` | `model_info.prompt_guide_url` und `capabilities` |
 | `POST /v1/videos` | JSON und Multipart |
 | `GET /v1/videos/{id}` und `/content` | mit der ID aus der Create-Antwort |
 | Remix | auch mit `extra_body` |

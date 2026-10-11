@@ -6,7 +6,8 @@ anbietet.
 
 ## Authentifizierung
 
-Ist `PROXY_API_KEY` gesetzt, erwarten alle Routen außer `/health` und
+Ist `PROXY_API_KEY` gesetzt, erwarten alle Routen außer `/health`,
+`/v1/prompt-guides[/{guide}]` (öffentlich für LiteLLM-Clients) und
 `/media/reference/<token>` (öffentliche Capability-URL für Anbieter-Abrufe):
 
 ```http

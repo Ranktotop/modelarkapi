@@ -2,7 +2,9 @@
 
 Apps reach capabilities and prompt guides through LiteLLM's
 `GET /v1/model/info`, which returns each deployment's `model_info`, so the
-export puts both there.
+export puts both there. The guide is only linked, not copied: the public
+guide route always serves the current text, so a guide change needs no
+LiteLLM config change.
 """
 
 from __future__ import annotations
@@ -63,7 +65,6 @@ def export_model_list(
                     "mode": "video_generation",
                     "provider": capabilities.get("provider", model.get("owned_by")),
                     "capabilities": capabilities,
-                    "prompt_guide": guide.markdown() if guide else None,
                     "prompt_guide_url": guide_url,
                 },
             }

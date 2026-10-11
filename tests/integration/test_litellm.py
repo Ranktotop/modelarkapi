@@ -57,7 +57,7 @@ class Stack:
     def __init__(self, venv: Path, workdir: Path) -> None:
         self.fake = FakeUpstream()
         self.proxy_port = free_port()
-        proxy_url = f"http://127.0.0.1:{self.proxy_port}"
+        self.proxy_url = proxy_url = f"http://127.0.0.1:{self.proxy_port}"
         settings = Settings(
             ark_api_key="ark-test",
             byteplus_access_key_id="ak-test",
@@ -195,7 +195,8 @@ def test_model_info_carries_guides_and_capabilities(stack: Stack):
     }
     for key in MODELS:
         info = infos[stack.name(key)]
-        assert info["prompt_guide"].startswith("# "), key
+        assert info["prompt_guide_url"].startswith(stack.proxy_url), key
+        assert httpx.get(info["prompt_guide_url"]).text.startswith("# "), key
         assert info["capabilities"]["provider"] in {"modelark", "google", "kling"}
 
 

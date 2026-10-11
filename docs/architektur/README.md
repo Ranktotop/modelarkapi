@@ -208,8 +208,9 @@ können, ohne ihren Code anzupassen.
 10. **Prompt Guides als Ressource:** `prompt_guides/` plus Manifest,
     `GET /v1/prompt-guides[/{guide}]` und Volltext in `GET /v1/models/{id}`.
 11. **LiteLLM-Export:** erzeugt `model_list`-Einträge mit
-    `model_info.capabilities` und `model_info.prompt_guide` (Volltext). Apps
-    lesen beides über `GET /v1/model/info`; ein Pass-Through ist nicht nötig.
+    `model_info.capabilities` und `model_info.prompt_guide_url`. Apps lesen
+    beides über `GET /v1/model/info` und laden den Guide über die öffentliche
+    Guide-Route. So braucht eine Guide-Änderung keinen neuen Export.
 12. **Referenzen je Provider.** Seedance und Kling erhalten öffentliche URLs
     aus dem Media-Store; Google erhält lokale Inhalte (base64, Files API, GCS).
     Externe URLs für Google werden abgelehnt (keine SSRF-Fläche).

@@ -745,7 +745,8 @@ Regeln:
 - Zuordnung Modell → Guide über die Präfixe in `models`; der längste passende
   Präfix gewinnt, ein Modell hat höchstens einen Guide. Modelle ohne Guide:
   `links.prompt_guide = null`.
-- Authentifizierung wie alle anderen Routen (Proxy-Key).
+- Öffentlich, ohne Proxy-Key: Die Guides sind nicht geheim, und LiteLLM-Clients
+  folgen `prompt_guide_url` nur mit ihrem LiteLLM-Key.
 
 ---
 
@@ -766,9 +767,11 @@ Regeln:
       mode: video_generation
       provider: google
       capabilities: {…}                    # Abschnitt 13
-      prompt_guide: "…Markdown-Volltext…"
       prompt_guide_url: https://modelark.marcmeese.de/v1/prompt-guides/veo_3_1
   ```
+- Der Guide steht nur als Link im Export, nicht als Text. Eine Änderung am
+  Guide braucht deshalb keine Änderung an der LiteLLM-Config.
+  `prompt_guide_url` braucht `PUBLIC_BASE_URL`.
 - `name_template` (Default `{family_slug}_api`) bildet das bestehende
   Namensschema nach (z. B. `seedance_25_api`).
 - Der Export schreibt nichts in LiteLLM; er erzeugt nur die Config.
@@ -864,7 +867,7 @@ UI-Backend wird in T4 angepasst.
 
 1. Modell in LiteLLM aus dem Export registrieren (Abschnitt 15).
 2. Metadaten und Guide: `GET /v1/model/info` → `model_info.capabilities`,
-   `model_info.prompt_guide`.
+   `model_info.prompt_guide_url`. Den Guide unter dieser URL ohne Key laden.
 3. Create: alle Felder aus 5.1 auf oberster Ebene; **strukturierte Felder als
    JSON-String** senden.
 4. Dateien: als `data:`-URI in `references[].url` oder als öffentliche

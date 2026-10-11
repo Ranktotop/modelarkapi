@@ -21,6 +21,9 @@ erreichbar, weil die Anbieter keinen Proxy-Key mitsenden. Die Dateinamen enthalt
 Verzeichnisansicht, werden nicht gecacht und verschwinden nach der konfigurierten
 TTL.
 
+Auch `/v1/prompt-guides` ist ohne Bearer-Key erreichbar. Die Guides sind
+nicht geheim. LiteLLM-Clients laden sie über `model_info.prompt_guide_url`.
+
 Empfohlene öffentliche Reverse-Proxy-Regeln:
 
 - UI-Hostname → Studio-Container; Login mit Username und Passwort,

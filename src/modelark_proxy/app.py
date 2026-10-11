@@ -576,8 +576,10 @@ def create_app(
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
+        # Prompt guides are public so LiteLLM clients can follow
+        # `model_info.prompt_guide_url` without the proxy key.
         if settings.proxy_api_key and not request.url.path.startswith(
-            ("/health", "/media/reference/")
+            ("/health", "/media/reference/", "/v1/prompt-guides", "/prompt-guides")
         ):
             authorization = request.headers.get("authorization", "")
             expected = f"Bearer {settings.proxy_api_key}"
