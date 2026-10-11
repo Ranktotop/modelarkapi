@@ -546,6 +546,23 @@ def create_app(
             return openai_error(str(exc), 503, exc.code)
         except UploadTooLarge as exc:
             return openai_error(str(exc), 413, "upload_too_large")
+        except httpx.TimeoutException as exc:
+            # Not retried: a create may already be accepted (and billed) upstream.
+            logger.warning("Upstream timeout on %s: %r", request.url.path, exc)
+            return openai_error(
+                f"The provider did not answer within {settings.request_timeout_seconds:g} s. "
+                "The request may still have been accepted upstream; check the "
+                "provider before retrying.",
+                504,
+                "upstream_timeout",
+            )
+        except httpx.TransportError as exc:
+            logger.warning(
+                "Upstream connection failed on %s: %r", request.url.path, exc
+            )
+            return openai_error(
+                f"The provider could not be reached: {exc}", 502, "upstream_unavailable"
+            )
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

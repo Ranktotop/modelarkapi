@@ -596,3 +596,35 @@ async def test_both_backends_route_ga_to_gemini_and_previews_to_vertex(tmp_path:
         r.url.host for r in fake.requests if r.url.path.endswith("/interactions/v1_abc")
     ]
     assert polls[-1] == GEMINI_HOST
+
+
+async def test_an_upstream_timeout_is_a_504_and_not_retried(tmp_path: Path):
+    fake = FakeOmni()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/interactions") and request.method == "POST":
+            fake.requests.append(request)
+            raise httpx.ReadTimeout("no answer", request=request)
+        return fake(request)
+
+    app = create_app(
+        settings_for(tmp_path, "vertex"),
+        google_transport=httpx.MockTransport(handler),
+        vertex_token_source=token,
+        validate_startup_credentials=False,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client,
+    ):
+        response = await client.post(
+            "/v1/videos", json={"model": "gemini-omni-1.1-flash-preview", "prompt": "x"}
+        )
+
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "upstream_timeout"
+    assert "may" in response.json()["error"]["message"]
+    posts = [r for r in fake.requests if r.method == "POST"]
+    assert len(posts) == 1
