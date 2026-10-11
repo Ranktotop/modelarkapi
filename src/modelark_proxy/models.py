@@ -56,6 +56,7 @@ class ModelSpec:
     supports_last_frame_role: bool = True
     adaptive_ratio_for_frames: bool = False
     known: bool = True
+    provider: str = "modelark"
 
     @property
     def supports_references(self) -> bool:

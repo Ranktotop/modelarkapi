@@ -7,7 +7,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 - [x] T2: Einheitlicher API-Vertrag → [contract.md](contract.md) (abgenommen)
 
 ## Phase 1: Fundament
-- [ ] T3: Provider-Kern und Seedance-Adapter (Refactor ohne Verhaltensänderung) (M)
+- [x] T3: Provider-Kern und Seedance-Adapter (Refactor ohne Verhaltensänderung) (M)
 - [ ] T4: LiteLLM-robuster Eingang (Multipart-Klammern, JSON-Strings) und IDs im LiteLLM-Format (M)
 - [ ] T5: Config, Credentials und Health pro Provider; Backend und Region je Google-Familie (M)
 - [ ] T6: Jobregister, Output-Speicher und Worker-Framework (M)

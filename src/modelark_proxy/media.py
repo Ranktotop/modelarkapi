@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
 from pathlib import Path
+
+from fastapi import UploadFile
+
+
+async def upload_chunks(upload: UploadFile) -> AsyncIterator[bytes]:
+    while chunk := await upload.read(1024 * 1024):
+        yield chunk
 
 
 class UploadTooLarge(ValueError):
