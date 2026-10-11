@@ -254,11 +254,9 @@ def _infer_task(references: list[dict[str, Any]], params: dict[str, Any]) -> str
         return "edit"
     if {"first_frame", "last_frame"} <= roles:
         return "first_last_frame"
-    if (
-        len(references) == 1
-        and images
-        and images[0].get("role") in {None, "first_frame"}
-    ):
+    # Elements and voices steer a generation but are not media inputs.
+    media = [r for r in references if r["type"] in {"image", "video", "audio"}]
+    if len(media) == 1 and images and images[0].get("role") in {None, "first_frame"}:
         return "image_to_video"
     if references:
         return "reference_to_video"

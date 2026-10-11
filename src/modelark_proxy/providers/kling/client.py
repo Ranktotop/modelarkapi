@@ -62,8 +62,8 @@ class KlingClient:
     def base(self) -> str:
         return self.settings.kling_base_url.rstrip("/")
 
-    async def call(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Send a request and return its `data`, raising ApiError on failure."""
+    async def raw(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        """Send a request and return the whole Kling body, raising ApiError on failure."""
         headers = {"authorization": f"Bearer {self.settings.kling_api_key}"}
         response = await with_retry(
             lambda: self.http.request(
@@ -80,4 +80,8 @@ class KlingClient:
             body = {"message": response.text}
         if response.is_error or not isinstance(body, dict) or body.get("code", 0) != 0:
             raise kling_error(response.status_code, body)
-        return body.get("data")
+        return body
+
+    async def call(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Send a request and return its `data`, raising ApiError on failure."""
+        return (await self.raw(method, path, **kwargs)).get("data")

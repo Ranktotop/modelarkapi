@@ -69,6 +69,32 @@ class ReferenceResolver:
     def is_own_media(self, url: str) -> bool:
         return self._own_media_name(url) is not None
 
+    async def public_url(self, reference: dict[str, Any]) -> str:
+        """A URL the provider can fetch itself (Kling takes videos and audio only so).
+
+        External https URLs pass through; any other source is copied into the
+        media store and served from PUBLIC_BASE_URL.
+        """
+        url = reference.get("url")
+        if isinstance(url, str) and url.startswith("https://"):
+            return url
+        if not self.settings.public_base_url:
+            raise ContractError(
+                "PUBLIC_BASE_URL is required to hand this reference to the provider "
+                "by URL",
+                code="public_base_url_required",
+                param="references",
+            )
+        media = await self.fetch(reference)
+
+        async def chunks():
+            yield media.data
+
+        name, _ = await self.media.save(
+            chunks(), filename=None, declared_type=media.mime_type
+        )
+        return f"{self.settings.public_base_url.rstrip('/')}/media/reference/{name}"
+
     def _read_upload(self, name: str) -> bytes:
         path = self.media.resolve(name) or self.media.resolve(name.removeprefix("ref-"))
         if path is None:

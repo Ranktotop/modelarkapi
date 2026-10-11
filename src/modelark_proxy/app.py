@@ -937,4 +937,59 @@ def create_app(
         video_id = decode_video_id(video_id)
         return await video_provider(video_id).native_operation(video_id)
 
+    def kling_provider() -> Any:
+        credentials.require("kling")
+        kling = providers.providers.get("kling")
+        if kling is None:
+            raise ProviderUnavailable("The 'kling' provider is not configured")
+        return kling
+
+    @app.api_route("/v1/providers/kling/{path:path}", methods=["GET", "POST"])
+    async def native_kling(path: str, request: Request) -> dict[str, Any]:
+        body = None
+        if request.method == "POST":
+            body = await request.json() if await request.body() else {}
+            if not isinstance(body, dict):
+                raise TranslationError("Request body must be a JSON object")
+        raw, job = await kling_provider().native(
+            request.method, path, dict(request.query_params), body
+        )
+        if job is not None:
+            public_id = encode_video_id(job["id"], job["model"])
+            raw = {
+                **raw,
+                "proxy": {"id": public_id, "status_url": f"/v1/videos/{public_id}"},
+            }
+        return raw
+
+    def asset_provider(provider: str) -> Any:
+        if provider != "kling":
+            raise TranslationError(
+                "Reusable assets exist for the kling provider only; Seedance "
+                "real-human assets are managed per request"
+            )
+        return kling_provider().assets
+
+    @app.get("/v1/assets")
+    async def list_assets(
+        provider: str = "kling", type: str = "element", scope: str = "custom"
+    ) -> dict[str, Any]:
+        return {
+            "object": "list",
+            "data": await asset_provider(provider).list(type, scope),
+        }
+
+    @app.post("/v1/assets")
+    async def create_asset(request: Request) -> dict[str, Any]:
+        body = await json_body(request)
+        return await asset_provider(str(body.get("provider", "kling"))).create(body)
+
+    @app.get("/v1/assets/{asset_id}")
+    async def get_asset(asset_id: str) -> dict[str, Any]:
+        return await asset_provider("kling").get(asset_id)
+
+    @app.delete("/v1/assets/{asset_id}")
+    async def delete_asset(asset_id: str) -> dict[str, Any]:
+        return await asset_provider("kling").delete(asset_id)
+
     return app

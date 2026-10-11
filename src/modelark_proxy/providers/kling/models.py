@@ -113,15 +113,26 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
         parameters["negative_prompt"] = Param()
     if model.audio:
         parameters["generate_audio"] = Param(default=False)
+    # Elements (Kling 3.0, up to 3) and voices (Kling 2.6, up to 2) ride along
+    # with an image-to-video request; Kling allows only one of the two.
+    steering: tuple[ReferenceSlot, ...] = ()
+    if model.elements:
+        steering = (ReferenceSlot("reference", ("element",), 0, 3),)
+    elif model.voices:
+        steering = (ReferenceSlot("reference", ("voice",), 0, 2),)
     tasks: dict[str, TaskSpec] = {
         "text_to_video": TaskSpec(),
         "image_to_video": TaskSpec(
-            references=(frame("first_frame"),), prompt_required=False
+            references=(frame("first_frame"), *steering), prompt_required=False
         ),
     }
     if model.first_last:
         tasks["first_last_frame"] = TaskSpec(
-            references=(frame("first_frame"), frame("last_frame")),
+            references=(
+                frame("first_frame"),
+                frame("last_frame"),
+                *(steering if model.elements else ()),
+            ),
             prompt_required=False,
         )
     if model.multi_shot:
@@ -130,7 +141,7 @@ def kling_capabilities(model_id: str) -> ModelCapabilities:
         )
         parameters["shots"] = Param()
         tasks["multi_shot"] = TaskSpec(
-            references=(frame("first_frame", 0),) if legacy else (),
+            references=(frame("first_frame", 0), *steering) if legacy else (),
             prompt_required=False,
         )
     constraints = [

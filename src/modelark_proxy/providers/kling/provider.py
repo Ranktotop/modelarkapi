@@ -25,6 +25,7 @@ from ...schemas import VideoObject
 from ...unified import UnifiedRequest, normalize_request
 from ...validation import ContractError, validate
 from ..base import ProviderUnavailable, strip_model_namespace
+from .assets import KlingAssets, native_id, parse_asset_id
 from .client import KlingClient
 from .models import (
     MODELS,
@@ -36,6 +37,33 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 RUNNING = {"submitted", "processing"}
+# Documented Kling routes the native passthrough forwards (image APIs and
+# virtual try-on are out of scope by decision).
+NATIVE_PREFIXES = (
+    "/v1/videos/",
+    "/v1/audio/",
+    "/v1/general/",
+    "/text-to-video/",
+    "/image-to-video/",
+    "/omni-video/",
+    "/motion-control/",
+    "/tasks",
+    "/solutions",
+    "/account/costs",
+)
+NATIVE_EXCLUDED = ("/solutions/virtual_try_on",)
+NEW_API_KINDS = (
+    "/text-to-video/",
+    "/image-to-video/",
+    "/omni-video/",
+    "/motion-control/",
+)
+# Synchronous helpers that create no video task.
+SYNC_VIDEO_PATHS = (
+    "/v1/videos/identify-face",
+    "/v1/videos/image-recognize",
+    "/v1/videos/multi-elements/",
+)
 SUCCEEDED = {"succeed", "succeeded"}
 
 
@@ -58,6 +86,7 @@ class KlingProvider:
         self.references = references
         self.download_transport = download_transport
         self.last_polled: dict[str, float] = {}
+        self.assets = KlingAssets(client, references)
 
     def owns_video(self, video_id: str) -> bool:
         return video_id.startswith("vid-kling-")
@@ -99,24 +128,28 @@ class KlingProvider:
         caps = kling_capabilities(model_id)
         if request.task == "multi_shot":
             self._check_shots(request)
+        if any(r["type"] == "voice" for r in request.references):
+            # Kling only speaks with a voice when sound is on.
+            request.params.setdefault("generate_audio", True)
         request, adjustments = validate(caps, request)
         model = MODELS[model_id]
         images = {
             reference["role"]: await self._image(reference)
             for reference in request.references
+            if reference["type"] == "image"
         }
+        steering = self._steering(request, images)
         if model.legacy_name:
-            endpoint = "image2video" if images else "text2video"
+            path = "/v1/videos/image2video" if images else "/v1/videos/text2video"
             created = await self.client.call(
                 "POST",
-                f"/v1/videos/{endpoint}",
-                json=self._legacy_body(request, model.legacy_name, images),
+                path,
+                json={
+                    **self._legacy_body(request, model.legacy_name, images),
+                    **steering,
+                },
             )
-            upstream = {
-                "api": "legacy",
-                "endpoint": endpoint,
-                "task_id": created["task_id"],
-            }
+            upstream = {"api": "legacy", "path": path, "task_id": created["task_id"]}
         else:
             path = "image-to-video" if images else "text-to-video"
             created = await self.client.call(
@@ -137,6 +170,38 @@ class KlingProvider:
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    @staticmethod
+    def _steering(request: UnifiedRequest, images: dict[str, str]) -> dict[str, Any]:
+        """Legacy `element_list` / `voice_list` from element and voice assets."""
+        lists: dict[str, list[dict[str, Any]]] = {}
+        for reference in request.references:
+            if reference["type"] not in {"element", "voice"}:
+                continue
+            kind, value, is_task = parse_asset_id(str(reference.get("asset_id") or ""))
+            if is_task or kind != reference["type"]:
+                raise ContractError(
+                    f"{reference.get('asset_id')} is not a ready {reference['type']} asset",
+                    code="reference_unavailable",
+                    param="references",
+                )
+            key = "element_list" if kind == "element" else "voice_list"
+            # Element IDs are numbers; voice IDs are numeric strings.
+            identifier = native_id(value) if kind == "element" else value
+            lists.setdefault(key, []).append({f"{kind}_id": identifier})
+        if len(lists) > 1:
+            raise ContractError(
+                "Kling cannot combine elements and voices in one request",
+                code="reference_limit",
+                param="references",
+            )
+        if lists and not images:
+            raise ContractError(
+                "Kling uses elements and voices only together with a first frame",
+                code="reference_limit",
+                param="references",
+            )
+        return lists
 
     @staticmethod
     def _check_shots(request: UnifiedRequest) -> None:
@@ -254,6 +319,50 @@ class KlingProvider:
             body["options"] = {"watermark_info": {"enabled": True}}
         return body
 
+    # --- native passthrough ---------------------------------------------------
+
+    async def native(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any],
+        body: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Forward a documented Kling route; register video tasks it creates."""
+        path = "/" + path.lstrip("/")
+        if (
+            ".." in path
+            or not path.startswith(NATIVE_PREFIXES)
+            or path.startswith(NATIVE_EXCLUDED)
+        ):
+            raise ApiError(f"{path} is not an available Kling route", 404, "not_found")
+        raw = await self.client.raw(method, path, params=params or None, json=body)
+        if method != "POST" or not isinstance(raw.get("data"), dict):
+            return raw, None
+        data = raw["data"]
+        body = body or {}
+        upstream: dict[str, Any] | None = None
+        model = str(body.get("model_name") or "kling-native")
+        if (
+            path.startswith("/v1/videos/")
+            and not path.startswith(SYNC_VIDEO_PATHS)
+            and data.get("task_id")
+        ):
+            upstream = {"api": "legacy", "path": path, "task_id": data["task_id"]}
+        elif path.startswith(NEW_API_KINDS) and data.get("id"):
+            upstream = {"api": "new", "task_id": data["id"]}
+            model = path.rsplit("/", 1)[-1]
+        if upstream is None:
+            return raw, None
+        job = self.jobs.create(
+            "kling",
+            canonical_model(model) or model,
+            "native",
+            {"prompt": str(body.get("prompt") or "")},
+            upstream=upstream,
+        )
+        return raw, job
+
     # --- status -------------------------------------------------------------
 
     def _job(self, video_id: str) -> dict[str, Any]:
@@ -266,7 +375,9 @@ class KlingProvider:
         """Normalized task state: status, message, and result videos."""
         if upstream["api"] == "legacy":
             data = await self.client.call(
-                "GET", f"/v1/videos/{upstream['endpoint']}/{upstream['task_id']}"
+                "GET",
+                f"{upstream.get('path') or '/v1/videos/' + upstream['endpoint']}"
+                f"/{upstream['task_id']}",
             )
             result = data.get("task_result") or {}
             return {
@@ -381,6 +492,8 @@ class KlingProvider:
                     "mime_type": "video/mp4",
                     "stored": True,
                     "seconds": video.get("duration"),
+                    # Voices and lip sync refer to Kling's own video ID.
+                    "kling_video_id": video.get("id"),
                 }
             )
         self.jobs.update(

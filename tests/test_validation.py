@@ -501,3 +501,18 @@ def test_seedance_v2_document_agrees_with_seedance_validation(model, body, tmp_p
         engine_accepts = False
 
     assert engine_accepts == seedance_accepts
+
+
+def test_elements_and_voices_do_not_change_the_inferred_task():
+    request = normalize_request(
+        {
+            "model": "m",
+            "references": [
+                {"type": "image", "url": "https://e/a.png"},
+                {"type": "element", "asset_id": "asset-kling-element-1"},
+            ],
+        }
+    )
+
+    assert request.task == "image_to_video"
+    assert [r["role"] for r in request.references] == ["first_frame", "reference"]
