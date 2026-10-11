@@ -90,8 +90,8 @@ Modell-ID-Präfixen zu (der längste passende Präfix gewinnt):
 Seedance 1.x hat keinen Guide. Ein neuer Guide braucht eine Datei und einen
 Manifest-Eintrag (`id`, `file`, `title`, `language`, `updated`, `models`); fehlt
 die Datei, scheitert der Start. Die Guides sind über
-`GET /v1/prompt-guides`, `GET /v1/models/{id}` und den LiteLLM-Export
-(`model_info.prompt_guide`) abrufbar.
+`GET /v1/prompt-guides` (ohne Proxy-Key), `GET /v1/models/{id}` und den Link
+im LiteLLM-Export (`model_info.prompt_guide_url`) abrufbar.
 
 ## Live-Tests
 

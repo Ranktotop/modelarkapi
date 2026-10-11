@@ -1,7 +1,7 @@
 # Illustrative excerpt of `GET /v1/litellm/config` (add ?format=yaml). Generate the
 # real list from your proxy; it contains every active model. The export also fills
-# `capabilities` (capability document v2) and `prompt_guide` (Markdown) in
-# `model_info`, and `prompt_guide_url` when PUBLIC_BASE_URL is set.
+# `capabilities` (capability document v2) and, when PUBLIC_BASE_URL is set,
+# `prompt_guide_url` in `model_info`. The guide route needs no proxy key.
 # LiteLLM uses its OpenAI Videos adapter; this app translates upstream.
 model_list:
   - model_name: seedance_25_api            # name_template default: {family_slug}_api
@@ -13,7 +13,7 @@ model_list:
       mode: video_generation
       provider: modelark
       # capabilities: {...}   filled by GET /v1/litellm/config
-      # prompt_guide: "..."   filled by GET /v1/litellm/config
+      # prompt_guide_url: ... filled by GET /v1/litellm/config
   - model_name: veo_31_fast_api
     litellm_params:
       model: openai/veo-3.1-fast-generate-001

@@ -174,6 +174,22 @@ async def test_guides_are_listed_and_served_as_markdown(settings: Settings):
     assert traversal.status_code == 404
 
 
+async def test_guides_are_public_while_other_routes_need_the_key(
+    settings: Settings,
+):
+    protected = settings.model_copy(update={"proxy_api_key": "k" * 32})
+    listing, guide, models = await call(
+        protected,
+        lambda c: c.get("/v1/prompt-guides"),
+        lambda c: c.get("/v1/prompt-guides/seedance_2_0"),
+        lambda c: c.get("/v1/models"),
+    )
+
+    assert listing.status_code == 200
+    assert guide.text.startswith("# Seedance 2.0 Guide")
+    assert models.status_code == 401
+
+
 async def test_models_link_their_guide_and_single_model_embeds_it(settings: Settings):
     listing, single, missing = await call(
         settings,
@@ -192,7 +208,7 @@ async def test_models_link_their_guide_and_single_model_embeds_it(settings: Sett
     assert missing.json()["error"]["code"] == "model_unavailable"
 
 
-async def test_litellm_export_carries_capabilities_and_guide_text(settings: Settings):
+async def test_litellm_export_carries_capabilities_and_guide_link(settings: Settings):
     as_yaml, as_json = await call(
         settings,
         lambda c: c.get("/v1/litellm/config"),
@@ -218,7 +234,7 @@ async def test_litellm_export_carries_capabilities_and_guide_text(settings: Sett
     info = entry["model_info"]
     assert info["mode"] == "video_generation"
     assert info["provider"] == "modelark"
-    assert info["prompt_guide"] == "# Fast Guide\n"
+    assert "prompt_guide" not in info
     assert info["prompt_guide_url"] == (
         "https://modelark.example.com/v1/prompt-guides/seedance_2_0_fast"
     )
