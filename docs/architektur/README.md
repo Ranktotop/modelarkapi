@@ -3,18 +3,22 @@
 ## Datenfluss
 
 ```text
-Client → LiteLLM Gateway → ModelArk OpenAI Video Proxy → BytePlus ModelArk
-Browser → Seedance Web Studio ────────────────┘
-                                      ↓                         ↓
-                         temporäre Referenz-URL        asynchroner Seedance-Task
-                                      ↓
-                  optional: CreateAsset → Active → DeleteAsset
+Client → LiteLLM Gateway ─┐
+Direkter Client ──────────┼→ AI Video Studio Proxy (/v1/videos, /v1/models, …)
+Browser → Studio-Backend ─┘        │
+                                   ├→ BytePlus ModelArk   (Seedance)
+                                   ├→ Gemini API / Vertex (Veo 3.1, Gemini Omni Flash)
+                                   └→ Kling               (Video, Audio, Assets, Commerce)
+
+Referenzen:  temporäre Referenz-URL (Seedance, Kling)  |  Bytes direkt (Google)
+Ergebnisse:  ModelArk-URL (Seedance)  |  lokaler Output-Speicher (Google, Kling)
+Optional:    Seedance Real-Human: CreateAsset → Active → DeleteAsset
 ```
 
-LiteLLM verwendet seinen OpenAI-Videoadapter. Dieser Proxy nimmt die
-OpenAI-ähnliche Anfrage entgegen, baut daraus einen ModelArk-Task und gibt die
-Task-ID in einem OpenAI-Videoobjekt zurück. Status und Ergebnis werden danach
-über eigene GET-Endpunkte abgefragt.
+LiteLLM verwendet seinen OpenAI-Videoadapter. Der Proxy nimmt die OpenAI-ähnliche
+Anfrage entgegen, wählt den Anbieter über das Modellpräfix und gibt eine
+Video-ID im LiteLLM-Format zurück. Status und Ergebnis werden danach über
+eigene GET-Endpunkte abgefragt. Ein Modellwechsel ändert nur `model`.
 
 LiteLLM hält dabei keine Create-Verbindung bis zum fertigen Video offen und
 pollt gestartete Videojobs nicht automatisch im Hintergrund. Es kodiert
@@ -26,71 +30,140 @@ Vertex AI Veo dokumentierten Create-, Poll- und Downloadablauf.
 
 ## Komponenten
 
-- `app.py`: HTTP-Routen, Authentifizierung, Validierung und Streaming.
-- `translation.py`: Feld-, Format- und Statusübersetzung.
-- `client.py`: authentifizierter asynchroner ModelArk-Client.
-- `assets.py`: HMAC-signierter asynchroner ModelArk-Assets-Client.
-- `asset_jobs.py`: persistente Real-Human-Orchestrierung und Remote-Cleanup.
-- `media.py`: Signaturprüfung und zeitlich begrenzte Ablage von Uploads.
-- `config.py`: Konfiguration aus `.env` beziehungsweise Prozessumgebung.
-- `schemas.py`: OpenAI-nahe Video- und Listenobjekte.
+Proxy (`src/modelark_proxy/`):
+
+- `app.py`: HTTP-Routen, Authentifizierung, Eingangskodierung (JSON, Multipart,
+  Klammernotation, `extra_body`), Streaming und Hintergrundschleifen.
+- `providers/base.py`: Anbieter-Vertrag und Modellrouting. Präfixe `veo-` und
+  `gemini-omni-` gehen an Google, `kling-` an Kling, alles andere an ModelArk.
+  Ein Namensraum (`openai/`, `google/`, `kling/`, `modelark/`) wird entfernt.
+- `providers/seedance.py`: ModelArk-Tasks, `content`-Arrays, Draft-Modus,
+  Real-Human-Einbindung, Übersetzung des einheitlichen Vertrags.
+- `providers/google.py`, `google_backends.py`, `veo.py`, `omni.py`: Veo
+  (Operationen) und Omni (Interactions) über Gemini API oder Vertex AI;
+  Backend und Region je Familie.
+- `providers/kling/` (`provider.py`, `client.py`, `models.py`, `assets.py`,
+  `effects.json`): Kling-Client mit Fehlerabbildung, Modellkatalog, virtuelle
+  Modelle, mehrstufige Jobs, native Durchleitung, Elements und Voices.
+- `models.py`: Capability-Profile der Seedance-Familien (Datumssuffix wird
+  entfernt).
+- `capabilities.py`, `validation.py`, `unified.py`: Capability-Dokument v2,
+  Validierung (`strict`/`adapt`) und Normalisierung des einheitlichen Requests
+  inklusive Task-Ableitung.
+- `references.py`, `downloads.py`, `media.py`: Auflösung aller Referenzquellen zu
+  Bytes oder URLs, SSRF-geschützter Abruf, Upload-Ablage mit Signaturprüfung.
+- `provider_jobs.py`, `outputs.py`, `workers.py`: lokales Jobregister
+  (`vid-<anbieter>-<uuid>`, SQLite), Output-Speicher mit TTL und begrenzte,
+  neustartfeste Worker für mehrstufige Jobs.
+- `webhooks.py`: Watches, signierte Auslieferung (Standard Webhooks) mit
+  Wiederholung.
+- `credentials.py`, `google_auth.py`: Credential-Zustand je Anbieter, Vertex-Token.
+- `ids.py`: Video-IDs im LiteLLM-Format.
+- `prompt_guides.py`, `litellm_export.py`, `audio.py`: Prompt-Guide-Registry,
+  `model_list`-Export, Audiolänge (mutagen) für Kling Lip Sync.
+- `client.py`, `assets.py`, `asset_jobs.py`: ModelArk-Client, HMAC-signierter
+  Assets-Client und persistente Real-Human-Orchestrierung.
+- `translation.py`, `schemas.py`, `errors.py`, `config.py`: Feld- und
+  Statusübersetzung, Objekte, Fehlerformat, Konfiguration.
+
+Außerdem:
+
+- `prompt_guides/`: Markdown-Guides plus `manifest.yaml`.
 - `ui/backend/server.py`: Single-User-Session, temporäres Jobregister und
   serverseitige Kommunikation mit dem Proxy.
-- `ui/frontend`: React-/TypeScript-Studio, das als statische Anwendung vom
-  UI-Backend ausgeliefert wird.
+- `ui/frontend`: React-/TypeScript-Studio „AI Video Studio“, vom UI-Backend als
+  statische Anwendung ausgeliefert. Seine Formulare entstehen aus dem
+  Capability-Dokument.
 
-## Übersetzungsgrenze
+## Zwei API-Flächen, ein Kern
 
-Normale ModelArk-Jobs bleiben zustandsarm. Automatisch registrierte Real-Human-
-Referenzen benötigen dagegen eine lokale Zuordnung zwischen Referenz,
-temporärer Asset-ID und späterer Provider-Task-ID. Diese Zuordnung wird in
-SQLite im persistenten Proxy-Volume gespeichert und nach Ablauf der TTL
-entfernt.
+| Fläche | Pfad | Zweck |
+|---|---|---|
+| Einheitlich | `/v1/videos`, `/v1/models`, `/v1/audio/speech`, `/v1/assets`, `/v1/prompt-guides`, `/v1/litellm/config` | OpenAI-kompatibel, für LiteLLM und Apps |
+| Nativ | `/v1/providers/google/veo/…`, `/v1/providers/kling/…` | Original-Parameter des Anbieters; erzeugte Jobs landen im selben Register |
 
-Standardfelder werden übersetzt; ModelArk-Funktionen ohne OpenAI-Entsprechung
-werden als klar benannte Erweiterungen angenommen. Für Sonderfälle steht das
-rohe `content`-Array zur Verfügung. Es wird weitgehend unverändert an ModelArk
-weitergereicht, unterliegt aber den Referenz-Limits des Proxys.
+Beide Flächen teilen Jobregister, Media-Store, Download und Credential-Status.
+
+## Zustand
+
+Das Seedance-Verhalten bleibt zustandsarm: Task-ID gleich ModelArk-Task (`cgt-…`).
+Zustand hält der Proxy dort, wo es nötig ist:
+
+| Speicher | Inhalt | Standardpfad |
+|---|---|---|
+| `provider_jobs` (SQLite) | Jobs von Google und Kling, mehrstufige Zustände, Webhook-Watches und -Auslieferungen | `./data/provider-jobs.db` |
+| Output-Speicher | Ergebnisse, die als Bytes kommen (Vertex, Omni) oder hotlink-geschützte URLs haben (Kling) | `./data/outputs` |
+| Asset-Jobs (SQLite) | Zuordnung Real-Human-Referenz, temporäre Asset-ID, Task-ID | `./data/proxy-jobs.db` |
+| Media-Store | temporäre Uploads | `./data/references` |
+
+Im Docker-Stack liegen Datenbanken und Outputs im Volume `server_state`
+(`/app/state`). Jobs und Outputs laufen nach `PROVIDER_JOB_TTL_SECONDS` ab
+(Standard 48 Stunden).
+
+Standardfelder werden übersetzt; ModelArk-Funktionen ohne einheitliche
+Entsprechung bleiben als Altfelder oder über `provider_options` erreichbar. Für
+Sonderfälle steht bei Seedance das rohe `content`-Array zur Verfügung. Es wird
+weitgehend unverändert an ModelArk weitergereicht, unterliegt aber den
+Referenz-Limits des Proxys.
 
 ## Parallelität
 
 Proxy und UI-Backend verwenden durchgehend asynchrone HTTP-Clients. Ein
-Create-Aufruf wartet nur auf die ModelArk-Task-ID und niemals auf die eigentliche
-Videogenerierung. Während Seedance einen Task rendert, hält der Container keine
-offene Generierungsanfrage und kann weitere Tasks, Statusabfragen, Uploads und
-Downloads annehmen.
+Create-Aufruf wartet nur auf die Annahme beim Anbieter und niemals auf die
+eigentliche Videogenerierung. Während ein Anbieter rendert, hält der Container
+keine offene Generierungsanfrage und kann weitere Tasks, Statusabfragen, Uploads
+und Downloads annehmen.
+
+Statusabfragen von Google- und Kling-Jobs sind lazy: Der Proxy fragt den Anbieter
+bei `GET /v1/videos/{id}`, höchstens alle `PROVIDER_STATUS_MIN_INTERVAL_SECONDS`
+je Job. Mehrstufige Abläufe (Kling Lip Sync, Multi-Element-Edit) und
+Real-Human-Jobs laufen dagegen in begrenzten Hintergrundworkern
+(`PROVIDER_WORKER_CONCURRENCY`, `ASSET_WORKER_CONCURRENCY`) weiter, auch wenn
+niemand den Status abfragt. Webhook-Watches pollen ebenfalls im Hintergrund.
 
 Beide internen HTTP-Pools erlauben standardmäßig 100 gleichzeitige
 Upstream-Verbindungen. Das Status-Polling der UI verarbeitet laufende Jobs in
 begrenzten parallelen Gruppen, damit ein langsamer Statusaufruf nicht alle
-anderen Jobs verzögert und ModelArk trotzdem nicht mit unbegrenzten Abfragen
-überlastet wird.
+anderen Jobs verzögert und die Anbieter trotzdem nicht mit unbegrenzten
+Abfragen überlastet werden.
 
 Bei Real-Human-Aufrufen gibt `POST /v1/videos` bereits vor Abschluss von
-`CreateAsset` eine lokale Job-ID zurück. Begrenzte Hintergrundworker pollen
-Assets und Provider-Jobs parallel. Dadurch blockiert eine langsame
-Gesichtsprüfung weder den HTTP-Worker noch andere Generierungen.
-
-Das interne Real-Human-Polling und das externe Client-Polling haben
-unterschiedliche Aufgaben: Die Proxy-Worker treiben Verifizierung und
-Generierung unabhängig von Statusanfragen weiter; Client beziehungsweise UI
-fragen lediglich den persistierten aktuellen Zustand ab. Das UI-Backend pollt
-aktive Jobs standardmäßig alle 10 Sekunden, während das Browser-Frontend die
-angezeigte Jobliste alle 5 Sekunden aktualisiert.
+`CreateAsset` eine lokale Job-ID zurück. Das interne Polling und das externe
+Client-Polling haben unterschiedliche Aufgaben: Die Proxy-Worker treiben
+Verifizierung und Generierung unabhängig von Statusanfragen weiter; Client
+beziehungsweise UI fragen lediglich den persistierten aktuellen Zustand ab. Das
+UI-Backend pollt aktive Jobs standardmäßig alle 10 Sekunden, während das
+Browser-Frontend die angezeigte Jobliste alle 5 Sekunden aktualisiert.
 
 Der UI-Container läuft absichtlich mit einem Uvicorn-Prozess: Die Arbeit ist
 I/O-lastig, und mehrere Prozesse würden das SQLite-Jobregister sowie Cleanup-
 Schleifen unnötig duplizieren. Horizontale UI-Replikation ist für diesen
 Single-User-Betrieb nicht vorgesehen.
 
+## Credentials je Anbieter
+
+`credentials.py` prüft jeden konfigurierten Anbieter mit einem kostenfreien
+Read-only-Aufruf (ModelArk: API-Key und IAM; Google: `models.list` und/oder
+Vertex-`interactions`; Kling: `account/costs`). Ein Anbieter ohne Zugangsdaten
+ist `disabled` und wird weder gelistet noch geroutet. Ein ungültiger Anbieter
+blockiert nur sich selbst; die Proxy-API-Key-Prüfung bleibt global.
+
 ## Grenzen
 
 - Er umgeht keine Gesichts-, Rechte- oder Inhaltsprüfung.
-- Er kann Assets nur in einer bereits verifizierten und konfigurierten Gruppe
-  erstellen; die Lebendprüfung selbst bleibt bei BytePlus.
-- Er speichert Ergebnisse nicht dauerhaft.
+- Er kann Seedance-Assets nur in einer bereits verifizierten und konfigurierten
+  Gruppe erstellen; die Lebendprüfung selbst bleibt bei BytePlus.
+- Er speichert Ergebnisse nicht dauerhaft; Google- und Kling-Ergebnisse liegen nur
+  bis zum Ablauf des Jobs (`PROVIDER_JOB_TTL_SECONDS`) im Output-Speicher.
 - Er wartet bei `POST /v1/videos` nicht auf die fertige Generierung.
-- Er ersetzt keine öffentlich erreichbare Medienablage für Video-Uploads.
+- Er ersetzt keine öffentlich erreichbare Medienablage für Video-Uploads bei
+  Seedance und Kling.
+- Kling kennt keinen Abbruch: `DELETE` löscht nur lokal, der Anbieter-Job läuft
+  weiter und wird berechnet. Das gilt auch für Veo.
+- Abweichungen vom Vertrag (SPEC): `GET /v1/videos` listet nur ModelArk-Tasks;
+  `/v1/providers/modelark/…`, `/v1/providers/google/interactions` und
+  `/v1/videos/characters` existieren nicht; `GOOGLE_OMNI_BACKEND=both` und
+  `DEFAULT_PARAMETER_POLICY` gibt es nicht.
 
 ## ADR-001: Multi-Provider-Plattform (AI Video Studio)
 

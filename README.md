@@ -1,42 +1,76 @@
-# ModelArk OpenAI Video Proxy
+# AI Video Studio (ModelArk OpenAI Video Proxy)
 
-Dieser Dienst übersetzt die von LiteLLM verwendete OpenAI Videos API in die
-asynchrone Video-API von BytePlus ModelArk. Damit lässt sich Seedance hinter
-einem bestehenden LiteLLM Gateway wie ein OpenAI-kompatibles Videomodell
-verwenden.
+Dieser Dienst stellt eine einzige OpenAI-kompatible Video-API bereit – mit
+zusätzlichen nativen Routen je Anbieter. Er übersetzt Anfragen, die LiteLLM oder
+ein direkter Client an `/v1/videos` sendet, in die asynchronen APIs von:
 
-Die vollständige, thematisch gegliederte Dokumentation beginnt unter
+| Anbieter | Modelle | Zugang |
+|---|---|---|
+| BytePlus ModelArk | Seedance 2.5, 2.0 (Fast, Mini), 1.5 Pro, 1.0 Pro (Fast) | `ARK_API_KEY` plus IAM-AK/SK für die Modellliste |
+| Google | Veo 3.1 (Standard, Fast, Lite), Gemini Omni Flash | Gemini API und/oder Vertex AI, Backend und Region je Familie |
+| Kling | Kling 3.0 (Turbo), 3.0 Omni, O1, 2.6, 2.5 Turbo sowie Lip Sync, Avatar, Effekte, Multi-Element-Edit, Audio, Video-Commerce | `KLING_API_KEY` |
+
+Kling-Bild-APIs und Virtual Try-On sind bewusst nicht enthalten. Paket- und
+Docker-Image-Namen (`modelark-openai-video-proxy`, `ranktotop/modelarkapi`)
+bleiben unverändert.
+
+Der Vertrag (Tasks, Referenzen mit Rollen, Parameter, `parameter_policy`,
+Capability-Dokument v2, IDs, Webhooks, Assets, LiteLLM-Export, Prompt Guides) ist
+in [docs/SPEC.md](docs/SPEC.md) festgeschrieben. Die vollständige, thematisch
+gegliederte Dokumentation beginnt unter
 [docs/dokumentation.md](docs/dokumentation.md).
 
-Zusätzlich enthält das Projekt ein temporäres
-[Seedance Web Studio](docs/web-studio/README.md) als separaten Docker-Container.
-Es ermöglicht direkte Single-User-Generierungen ohne LiteLLM und speichert
-fertige Videos nicht dauerhaft auf dem Server.
+Zusätzlich enthält das Projekt das [AI Video Studio](docs/web-studio/README.md)
+als separaten Container: eine Single-User-Oberfläche für direkte Generierungen
+ohne LiteLLM. Sie speichert fertige Videos nicht dauerhaft auf dem Server.
 
-Unterstützt sind:
+## Funktionsumfang
 
-- `POST /v1/videos` (JSON oder Multipart, inklusive `input_reference`)
-- `GET /v1/models` (live verfügbare Seedance-Modelle des BytePlus-Kontos)
-- `POST /v1/media/references` (mehrere temporäre Bild-/Video-/Audio-Uploads)
-- `GET /v1/videos` (Taskliste und Filter)
-- `GET /v1/videos/{id}` (Status)
-- `GET /v1/videos/{id}/content` (MP4-Download als Stream)
-- `GET /v1/videos/{id}/last_frame` (optionales PNG-Endframe)
-- `DELETE /v1/videos/{id}` (Abbruch/Löschen bei ModelArk)
-- Text-to-video, Bildreferenz und eine hochgeladene MP4/MOV-Videoreferenz
-- zusätzliche Referenzen als öffentliche URLs (`reference_urls`)
-- automatische temporäre Registrierung neuer Real-Human-Referenzen über
-  `real_human: true`, einschließlich Status-Polling und `DeleteAsset`-Cleanup
-- Übersetzung von `seconds` → `duration` und `size` → `resolution` + `ratio`
+- `POST /v1/videos` (JSON oder Multipart) für alle Modelle mit denselben Feldern;
+  ein Modellwechsel ändert nur `model`
+- Tasks: Text-, Bild-, First/Last-Frame-, Referenz-, Multi-Shot-Video, Edit,
+  Extend, Stitch, Motion Control, Lip Sync, Avatar, Effekte, Multi-Element-Edit,
+  Video-to-Audio, Text-to-Audio und Kling-Video-Commerce
+- `references[]` mit Typ (`image`, `video`, `audio`, `element`, `voice`) und
+  Rolle; Quellen: `url`, `data:`-URI, `upload_id`, `task_id`, `asset_id`
+- `GET /v1/models` mit Capability-Dokument v2 je Modell, `GET /v1/prompt-guides`
+  und `GET /v1/litellm/config` (LiteLLM-`model_list`-Export)
+- `GET /v1/videos/{id}`, `/content` (mit `?variant=` und `?output=`),
+  `/last_frame`, `POST /v1/videos/{id}/remix`, `/v1/videos/edits`,
+  `/v1/videos/extensions`, `DELETE`
+- `POST /v1/audio/speech` (Kling TTS, Modell `kling-tts`)
+- `/v1/assets` für Kling-Elements und -Voices
+- native Routen: `/v1/providers/google/veo/…` und `/v1/providers/kling/…`
+- signierte Webhooks über `webhook_url` für alle Anbieter
+- temporäre Uploads über `POST /v1/media/references`
+- automatische temporäre Real-Human-Registrierung bei Seedance über
+  `real_human: true`
+- Seedance-Altfelder (`reference_urls`, `ratio`, `duration`, `content` …) bleiben
+  gültig
+
+Die Video-IDs in Antworten haben das LiteLLM-Format `video_<base64>`; eingehend
+werden auch die internen IDs (`cgt-…`, `vid-<anbieter>-…`) akzeptiert.
+
+## Teststand
+
+Alle Anbieter sind mit simulierten Upstreams getestet. Live geprüft wurde
+bisher nur Veo 3.1 Lite auf Vertex AI (Region `global`, einmalig) sowie die
+kostenfreien Credential-Prüfungen. ADR-001 hält zusätzlich einen einmaligen
+Direktaufruf der Gemini-API-Omni fest.
+
+**Nicht live getestet:** alle Kling-Generierungen und alle Omni-Generierungen
+über den Proxy. Seedance mit einem freigeschalteten Real-Human-Asset ist
+ebenfalls noch offen. Details stehen in
+[Entwicklung und Tests](docs/entwicklung-und-tests/README.md).
 
 ## Die wichtige Einschränkung bei Video-Uploads
 
-ModelArk akzeptiert Referenzvideos **nur als öffentlich abrufbare URL**, nicht
+Seedance und Kling brauchen Referenzvideos als öffentlich abrufbare URL, nicht
 als Base64 oder Multipart-Upload. Die Kette funktioniert daher so:
 
 ```text
 Client --multipart--> LiteLLM --multipart--> dieser Proxy
-       dieser Proxy --öffentliche, zufällige URL--> ModelArk/Seedance
+       dieser Proxy --öffentliche, zufällige URL--> ModelArk/Seedance/Kling
 ```
 
 Der Proxy speichert den Upload temporär unter einer kryptografisch zufälligen
@@ -44,6 +78,8 @@ URL. `PUBLIC_BASE_URL` muss deshalb aus dem Internet per HTTPS erreichbar sein;
 `localhost`, eine reine Docker-Adresse oder ein nur internes LAN reichen nicht.
 Die Dateien werden standardmäßig nach 24 Stunden entfernt. Für eine Produktion
 sollte TLS vor dem Dienst terminiert werden (z. B. Caddy, Traefik oder Nginx).
+Google-Modelle bekommen die Bytes dagegen direkt vom Proxy und brauchen die
+öffentliche URL nicht.
 
 Seedance 2.0 nimmt direkte Referenz-Uploads mit echten menschlichen Gesichtern
 laut ModelArk-Dokumentation nicht allgemein an. Dafür müssen die von BytePlus
@@ -57,122 +93,137 @@ Dateisignatur und erkennt MP4/MOV unabhängig vom von LiteLLM gesetzten MIME-Typ
 
 ## Start
 
+### Entwicklung
+
+Entwicklungsserver starten ausschließlich über die eingecheckte
+VS-Code-Konfiguration **Local Full Stack** (`.vscode/launch.json`). Sie lädt die
+Secrets aus `.env` und startet:
+
+| Komponente | Adresse |
+|---|---|
+| Proxy | `http://127.0.0.1:8081` |
+| Studio-Backend | `http://127.0.0.1:3000` |
+| Vite-Frontend | `http://127.0.0.1:5173` |
+
+Der Proxy nutzt bewusst nicht Port 8080, den ein anderes lokales Projekt belegt.
+`docker compose up/run`, `docker run` oder ein direkt aufgerufenes
+`uvicorn`/Vite sind für die Entwicklung nicht vorgesehen.
+
 ```bash
 cp .env.example .env
-# .env ausfüllen, einschließlich UI_USERNAME, UI_PASSWORD und UI_SESSION_SECRET
-# Zufallswerte zum Beispiel mit: openssl rand -hex 32
-docker compose up -d
-curl http://localhost:8080/health
-curl http://localhost:3000/health
+# .env ausfüllen. Zufallswerte zum Beispiel mit: openssl rand -hex 32
+curl http://127.0.0.1:8081/health
+curl -H "Authorization: Bearer $PROXY_API_KEY" \
+  http://127.0.0.1:8081/v1/real-human/configuration
 ```
 
-Die Single-User-Oberfläche ist anschließend unter `http://localhost:3000`
-erreichbar. Bei Betrieb hinter HTTPS muss `UI_COOKIE_SECURE=true` gesetzt sein.
+Ein gestarteter Server berechtigt zu keiner kostenpflichtigen oder
+biometrischen Generierung. Erst `/health` und den read-only-Aufruf
+`/v1/real-human/configuration` nutzen; Live-Tests nur auf ausdrückliche
+Anforderung (siehe [Betrieb und Sicherheit](docs/betrieb-und-sicherheit/README.md)).
 
-Wesentliche Variablen:
+### Deployment (Docker)
+
+Docker dient der Image-Prüfung und dem Deployment. Nur auf ausdrückliche
+Anforderung starten:
+
+```bash
+docker compose up -d
+curl http://localhost:5192/health   # Proxy (Container-Port 8080)
+curl http://localhost:5191/health   # Studio (Container-Port 3000)
+```
+
+`./secrets` wird schreibgeschützt nach `/app/secrets` gemountet; für Vertex AI
+liegt dort die Service-Account-JSON, deren Dateiname in `GOOGLE_CREDENTIALS_FILE`
+steht (Compose setzt daraus `GOOGLE_APPLICATION_CREDENTIALS`). Bei Betrieb hinter
+HTTPS muss `UI_COOKIE_SECURE=true` gesetzt sein.
+
+Wesentliche Variablen (vollständige Liste in
+[Installation und Konfiguration](docs/installation-und-konfiguration/README.md)):
 
 | Variable | Bedeutung |
 |---|---|
-| `ARK_API_KEY` | ModelArk API Key |
-| `CREDENTIAL_VALIDATION_INTERVAL_SECONDS` | Abstand der erneuten API-Key-/IAM-Prüfung (Standard: drei Stunden) |
-| `UPSTREAM_RETRY_ATTEMPTS` | Versuche je ModelArk-Aufruf bei Verbindungsfehlern wie DNS-Ausfällen (Standard: 3) |
+| `ARK_API_KEY` | ModelArk API Key (Seedance) |
+| `BYTEPLUS_ACCESS_KEY_ID` / `BYTEPLUS_SECRET_ACCESS_KEY` | IAM-Zugang für Modellliste und Real-Human-Assets |
+| `GEMINI_API_KEY` | Gemini API (Omni; Veo nur bis zur Abschaltung der Preview-Modelle am 22.10.2026) |
+| `VERTEX_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS` | Vertex AI (Veo 3.1, Omni Preview); ohne Datei gelten Application Default Credentials |
+| `GOOGLE_VEO_BACKEND` / `GOOGLE_VEO_LOCATION` | `vertex` oder `gemini`, Region (Standard `us-central1`) |
+| `GOOGLE_OMNI_BACKEND` / `GOOGLE_OMNI_LOCATION` | `vertex` oder `gemini`, Region (Standard `global`) |
+| `KLING_API_KEY`, `KLING_BASE_URL` | Kling (Standard-Endpunkt `https://api-singapore.klingai.com`) |
+| `WEBHOOK_SECRET` | Signaturschlüssel für `webhook_url` (`whsec_<base64>`) |
 | `PUBLIC_BASE_URL` | Öffentliche HTTPS-Basis-URL dieses Proxys; für Uploads Pflicht |
-| `PROXY_API_KEY` | verpflichtender Schlüssel im Docker-Deployment zwischen LiteLLM und Proxy |
-| `BYTEPLUS_ACCESS_KEY_ID` / `BYTEPLUS_SECRET_ACCESS_KEY` | verpflichtender IAM-Zugang für die Live-Modellliste |
-| `MODEL_CACHE_TTL_SECONDS` | Cache-Dauer der live abgerufenen Modellauswahl |
+| `PROXY_API_KEY` | Bearer-Key zwischen Clients, Studio und Proxy (mindestens 32 Zeichen im Docker-Deployment) |
+| `BYTEPLUS_ASSET_GROUP_ID` | verifizierte Real-Human-Asset-Gruppe |
 
-Der Proxy prüft beim Start mit kostenfreien Read-only-Aufrufen sowohl den
-`ARK_API_KEY` als auch den IAM-Zugang und wiederholt dies standardmäßig alle drei
-Stunden. Bei ungültigen Zugangsdaten bleibt der Prozess samt `/health` erreichbar,
-antwortet auf Fachrouten aber mit `503 upstream_credentials_invalid`. Sobald eine
-spätere Prüfung erfolgreich ist, werden die Routen automatisch wieder freigegeben.
+Ein Anbieter ist aktiv, sobald seine Zugangsdaten gesetzt sind. Der Proxy prüft
+sie beim Start mit kostenfreien Read-only-Aufrufen und wiederholt dies
+standardmäßig alle drei Stunden. Ungültige Zugangsdaten sperren nur den
+betroffenen Anbieter (`503 upstream_credentials_invalid`); `/health` bleibt
+erreichbar und nennt den Zustand je Anbieter unter `providers`.
 
 Ein reiner Netzwerk- oder DNS-Ausfall gilt dabei nicht als ungültiger Zugang: ein
 zuvor bestätigter Schlüssel behält den Zustand `valid`, und solange der Zustand
 nicht `valid` ist, wird alle 30 Sekunden statt alle drei Stunden erneut geprüft.
-Ausgehende ModelArk-Aufrufe wiederholen Verbindungsfehler zudem selbstständig mit
-Backoff, und ein Real-Human-Job, der ModelArk gerade nicht erreicht, wartet
-darauf statt endgültig zu scheitern. Details unter
-[Fehlerbehebung](docs/fehlerbehebung/README.md).
+Ausgehende Aufrufe wiederholen Verbindungsfehler zudem selbstständig mit
+Backoff. Details unter [Fehlerbehebung](docs/fehlerbehebung/README.md).
 
 Der allgemeine BytePlus-Kontosaldo ist kein verlässlicher Indikator für
 Seedance-Resource-Packages und wird daher weder angezeigt noch als Sperre
-verwendet. BytePlus dokumentiert die Package-Restmenge derzeit nur im Billing
-Center. Meldet ModelArk bei einem echten Generierungsaufruf ein erschöpftes
+verwendet. Meldet ModelArk bei einem echten Generierungsaufruf ein erschöpftes
 Package, reicht der Proxy dessen Fehlercode und Meldung an LiteLLM und UI weiter.
+
+## Beispiel: ein Aufruf für jedes Modell
+
+```bash
+curl -X POST http://127.0.0.1:8081/v1/videos \
+  -H "Authorization: Bearer $PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "veo-3.1-fast-generate-001",
+    "prompt": "A fox running through fresh snow",
+    "seconds": 8,
+    "resolution": "720p",
+    "aspect_ratio": "16:9"
+  }'
+```
+
+Die Antwort kommt sofort mit `queued` oder `in_progress`. Danach
+`GET /v1/videos/{id}` pollen (etwa alle 10 Sekunden) und bei `completed`
+`/content` laden. Welche Werte ein Modell akzeptiert, steht im
+Capability-Dokument unter `GET /v1/models`; nicht unterstützte Werte führen
+standardmäßig zu `400` (`parameter_policy: "strict"`), mit
+`"parameter_policy": "adapt"` passt der Proxy sie an und meldet die Änderung
+unter `adjustments`.
 
 ## LiteLLM anbinden
 
-Den Eintrag aus `litellm-config.example.yaml` in die LiteLLM-Konfiguration
-übernehmen und beim LiteLLM-Container setzen:
+Die `model_list`-Einträge erzeugt der Proxy selbst:
+
+```bash
+curl -H "Authorization: Bearer $PROXY_API_KEY" \
+  'http://127.0.0.1:8081/v1/litellm/config?format=yaml&api_base=http://modelarkapi_server:8080/v1' \
+  > litellm-models.yaml
+```
+
+Beim LiteLLM-Container setzen:
 
 ```bash
 MODELARK_PROXY_API_KEY=<derselbe mindestens 32 Zeichen lange PROXY_API_KEY>
 ```
 
-`api_base` muss auf `/v1` dieses Dienstes zeigen. Weil LiteLLM Seedance noch
-nicht nativ kennt, wird bewusst sein vorhandener `openai`-Video-Adapter benutzt.
-LiteLLM sendet die konkrete, versionierte ModelArk-ID. Die aktuell verfügbaren
-Seedance-IDs liefert dieser Proxy über `GET /v1/models`; das Beispiel verwendet
-`dreamina-seedance-2-0-fast-260128`. Jedes weitere im BytePlus-Konto
-freigeschaltete Modell – etwa `dreamina-seedance-2-5-260628` – braucht nur einen
-zusätzlichen Eintrag derselben Form.
+`api_base` muss auf `/v1` dieses Dienstes zeigen. Weil LiteLLM die Anbieter nicht
+nativ kennt, wird bewusst sein vorhandener `openai`-Video-Adapter benutzt.
+`model_info` enthält je Modell `capabilities` und den Prompt Guide im Volltext;
+Apps lesen beides über `GET /v1/model/info`. Was über LiteLLM funktioniert und
+was nur direkt am Proxy (Liste, `DELETE`, `variant`), steht in der
+[LiteLLM-Integration](docs/litellm-integration/README.md). Die Beispieldatei
+`litellm-config.example.yaml` zeigt zwei Seedance-Einträge in der bisherigen
+Namensform.
 
-Text-to-video über das LiteLLM Gateway:
-
-```bash
-curl -X POST http://localhost:4000/v1/videos \
-  -H "Authorization: Bearer $LITELLM_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dreamina-seedance-2-0-fast-260128",
-    "prompt": "A fox running through fresh snow",
-    "seconds": "5",
-    "size": "1280x720"
-  }'
-```
-
-Videoreferenz hochladen:
-
-```bash
-curl -X POST http://localhost:4000/v1/videos \
-  -H "Authorization: Bearer $LITELLM_KEY" \
-  -F 'model=dreamina-seedance-2-0-fast-260128' \
-  -F 'prompt=Continue this scene with a slow camera pullback' \
-  -F 'seconds=6' \
-  -F 'size=1280x720' \
-  -F 'input_reference=@reference.mp4;type=video/mp4'
-```
-
-Status und Ergebnis:
-
-```bash
-curl -H "Authorization: Bearer $LITELLM_KEY" \
-  http://localhost:4000/v1/videos/VIDEO_ID
-
-curl -H "Authorization: Bearer $LITELLM_KEY" \
-  http://localhost:4000/v1/videos/VIDEO_ID/content \
-  --output result.mp4
-```
-
-LiteLLM kodiert die zurückgegebene Video-ID intern mit Routing-Informationen.
-Beim Status- und Download-Aufruf muss deshalb genau die von LiteLLM erhaltene
-ID verwendet werden.
-
-Videogenerierung ist auch am LiteLLM Gateway asynchron. LiteLLM gibt den
-Create-Aufruf mit Video-ID und Anfangsstatus zurück, pollt einen gestarteten
-Job aber nicht selbstständig bis zum Abschluss. Der aufrufende Client oder ein
-eigener Job-Worker muss `GET /v1/videos/VIDEO_ID` etwa alle 10 Sekunden
-wiederholen, bis `status` den Wert `completed` oder `failed` erreicht. Erst bei
-`completed` darf `/content` geladen werden. Dieses Verfahren entspricht dem
-von LiteLLM für Vertex AI Veo dokumentierten Ablauf.
-
-Bei Real-Human-Referenzen betrifft dieses externe Polling nur die
-Statusanzeige: Der ModelArk-Proxy verarbeitet Asset-Registrierung,
-Verifizierung und den anschließenden Seedance-Task unabhängig davon in
-persistenten Hintergrundjobs weiter. Das Seedance Web Studio pollt seine
-aktiven Jobs bereits selbst; es kommuniziert direkt mit diesem Proxy und nicht
-über LiteLLM.
+Videogenerierung ist auch am LiteLLM Gateway asynchron. LiteLLM pollt einen
+gestarteten Job nicht selbstständig: Der aufrufende Client wiederholt
+`GET /v1/videos/VIDEO_ID` etwa alle 10 Sekunden, bis `status` den Wert
+`completed` oder `failed` erreicht, und lädt erst dann `/content`.
 
 ## Eigene Gesichter: Freischaltung und Verifizierung
 
@@ -180,7 +231,8 @@ Seedance 2.0 akzeptiert ein Foto oder Video mit einer realen Person nicht als
 gewöhnliche URL oder Datei. Für das eigene Gesicht ist die private
 **Real-human Asset Library** vorgesehen. BytePlus führt dabei eine
 Echtzeit-Lebendprüfung durch und vergleicht spätere Uploads biometrisch mit der
-verifizierten Person.
+verifizierten Person. Das gilt nur für Seedance; das Flag `real_human` wertet
+kein anderer Anbieter aus.
 
 Offizielle Dokumentation:
 
@@ -235,9 +287,9 @@ video = video_generation(
     api_base="http://modelarkapi_server:8080/v1",
     api_key="your-proxy-key",
     extra_body={
-        "reference_urls": [{
+        "references": [{
+            "type": "video",
             "url": "https://example.com/person.mp4",
-            "media_type": "video",
             "real_human": True,
         }],
         "generate_audio": False,
@@ -247,42 +299,29 @@ video = video_generation(
 
 ## Provider-spezifische Optionen
 
-Bei einem direkten Request an diesen Proxy können ModelArk-Felder wie
-`generate_audio`, `watermark`, `resolution`, `ratio`, `duration`, `priority`,
-`service_tier`, `return_last_frame` sowie die Seedance-2.5-Felder
-`output_format` und `omni_reference_task_type` mitgegeben werden. Welche Werte
-das gewählte Modell unterstützt, steht in `capabilities` aus
-`GET /v1/models`; der Proxy validiert dagegen, bevor er einen Task anlegt.
-Mehrere öffentliche Referenzen sind über `reference_urls` möglich:
+Anbieterfelder ohne einheitliche Entsprechung gehören in
+`provider_options.<anbieter>` (`modelark`, `google`, `kling`); nur der Block des
+Zielmodells wird ausgewertet. Seedance-Felder wie `service_tier`,
+`execution_expires_after`, `priority`, `camera_fixed`, `frames`, `draft`,
+`callback_url` und `safety_identifier` stehen weiterhin auf oberster Ebene.
+Welche Felder ein Modell kennt, listet sein Capability-Dokument unter
+`provider_options` beziehungsweise `native_fields`. Die Seedance-Regeln stehen
+in [Video-Generierung](docs/video-generierung/README.md).
 
-```json
-{
-  "model": "dreamina-seedance-2-0-260128",
-  "prompt": "Use @Video1 as the motion reference",
-  "reference_urls": [
-    {"url": "https://example.com/reference.mp4", "media_type": "video/mp4"}
-  ],
-  "generate_audio": true,
-  "ratio": "16:9",
-  "resolution": "720p",
-  "duration": 6
-}
-```
+## Lokal testen
 
-Die standardisierte OpenAI/LiteLLM-Oberfläche besitzt nur ein
-`input_reference`-Feld. Der Adapter nutzt deshalb `reference_urls` oder
-`content` als Provider-Erweiterungen für mehrere Referenzen. Extern gelieferte
-Asset-IDs werden abgewiesen.
-
-## Lokal entwickeln und testen
+Die Python-Umgebung einmalig einrichten; Server starten über **Local Full
+Stack**:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[test]'
 pytest
+cd ui/frontend && npm ci && npm test
 ```
 
-Die Tests verwenden simulierte ModelArk-Antworten und verursachen keine Kosten.
-Der Live-Test für ein verifiziertes Real-Human-Asset bleibt bewusst ausstehend,
-bis Freischaltung, Einwilligung und Asset-Status `Active` bestätigt sind.
+Die Tests verwenden simulierte Upstreams und verursachen keine Kosten. Die
+LiteLLM-Ende-zu-Ende-Suite ist opt-in
+(`LITELLM_VENVS=/venv-a:/venv-b pytest -m litellm`). Live-Tests gegen Anbieter
+gibt es nur auf ausdrückliche Anforderung.

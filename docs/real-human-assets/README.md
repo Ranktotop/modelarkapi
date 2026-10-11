@@ -1,5 +1,8 @@
 # Real-Human-Assets und Gesichtsverifizierung
 
+Dieses Verfahren betrifft ausschließlich Seedance (BytePlus ModelArk). Veo, Omni
+und Kling kennen kein `real_human`; der Proxy wertet das Flag bei ihnen nicht aus.
+
 ## Warum die Verifizierung nötig ist
 
 Seedance 2.0 akzeptiert Referenzbilder oder -videos realer Personen nicht
@@ -67,11 +70,15 @@ Hauptkontos verwendet werden:
 
    ```bash
    curl -H "Authorization: Bearer $PROXY_API_KEY" \
-     http://localhost:8080/v1/real-human/configuration
+     http://127.0.0.1:8081/v1/real-human/configuration
    ```
 
-   `configured: true` und `verified: true` bestätigen, dass der intern
-   verwendete `ListAssetGroups`-Aufruf die konfigurierte Gruppe findet.
+   Der Aufruf ist read-only und kostenfrei; er gehört nach jedem Serverstart vor
+   jeden kostenpflichtigen Test (der Serverstart allein berechtigt nicht zu einer
+   biometrischen Generierung). `configured: true` und `verified: true` bestätigen,
+   dass der intern verwendete `ListAssetGroups`-Aufruf die konfigurierte Gruppe
+   findet. Der Port `8081` gilt für die VS-Code-Konfiguration **Local Full Stack**,
+   im Docker-Deployment ist der Proxy auf Host-Port `5192` erreichbar.
    `AccessDenied` weist meist auf fehlendes `ArkFullAccess`, ein falsches
    Projekt oder einen Schlüssel des falschen Kontos hin.
 
@@ -118,25 +125,36 @@ bis zum Status `Active` verfügbar und wird danach sofort entfernt.
 
 ## Verwendung
 
-Automatische Registrierung einer neuen URL:
+Automatische Registrierung einer neuen URL (einheitlicher Vertrag):
 
 ```json
 {
+  "model": "dreamina-seedance-2-0-fast-260128",
   "prompt": "Edit Video 1.",
-  "reference_urls": [
+  "references": [
     {
+      "type": "video",
       "url": "https://proxy.example.com/media/reference/example.mp4",
-      "media_type": "video",
-      "role": "reference_video",
       "real_human": true
     }
   ]
 }
 ```
 
+Das Altformat bleibt gültig: `reference_urls` mit `media_type`, `role`
+(`reference_video`) und `real_human: true`; bei Multipart-Einzelreferenzen steht
+`real_human` auf oberster Ebene.
+
 Ist `real_human` nicht gesetzt oder `false`, wird die Referenz ohne
-Asset-Registrierung normal an Seedance übergeben. Extern gelieferte Asset-IDs
-werden abgewiesen; die temporäre ID bleibt ausschließlich im Proxy.
+Asset-Registrierung normal an Seedance übergeben. Die temporäre Asset-ID bleibt
+ausschließlich im Proxy: Die Altfelder `asset_id`, `input_reference_asset`,
+`input_reference_asset_type`, `reference_asset_ids`, `reference_assets` und
+`asset://`-URIs in `content` werden abgewiesen. Eine öffentliche ModelArk-Asset-ID
+(`asset-…`, etwa aus der Digital-Character-Library) ist dagegen in
+`references[].asset_id` erlaubt und wird als `asset://asset-…` weitergereicht.
+
+Der Aufruf liefert eine lokale `video-rh-…`-ID (in Antworten als `video_…`
+kodiert); `DELETE` bricht den Job ab und löscht die temporären Assets.
 
 ## Alternativen für Gesichter
 
