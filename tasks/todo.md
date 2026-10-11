@@ -19,7 +19,7 @@ Details: [plan.md](plan.md) · Recherche: [research/](research/)
 
 ## Phase 2: Google
 - [x] T9: Gemini- und Vertex-Backend; Veo Text→Video mit allen Parametern (M)
-- [ ] T10: Veo Bild→Video, Start+Ende und Referenzbilder (M)
+- [x] T10: Veo Bild→Video, Start+Ende und Referenzbilder (M)
 - [ ] T11: Veo-Extension (beide Backends) (S)
 - [ ] T12: Omni Text→Video, Bild→Video und Start+Ende (Interactions, background) (M)
 - [ ] T13: Omni-Referenzen, Edit, Extend und Multi-Turn (M)

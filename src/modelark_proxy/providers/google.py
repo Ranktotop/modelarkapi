@@ -11,13 +11,15 @@ import httpx
 from fastapi import UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from ..capabilities import ModelCapabilities
 from ..config import Settings
 from ..downloads import stream_remote
 from ..errors import ApiError, openai_error
 from ..outputs import OutputStore
 from ..provider_jobs import TERMINAL_STATUSES, ProviderJobStore
+from ..references import ReferenceResolver
 from ..schemas import VideoObject
-from ..unified import normalize_request
+from ..unified import UnifiedRequest, normalize_request
 from ..validation import ContractError, validate
 from .base import ProviderUnavailable, strip_model_namespace
 from .google_backends import GoogleBackend
@@ -36,12 +38,14 @@ class GoogleProvider:
         veo_backend: GoogleBackend | None,
         jobs: ProviderJobStore,
         outputs: OutputStore,
+        references: ReferenceResolver,
         download_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.settings = settings
         self.veo_backend = veo_backend
         self.jobs = jobs
         self.outputs = outputs
+        self.references = references
         self.download_transport = download_transport
         self.model_cache: list[dict[str, Any]] | None = None
         self.model_cache_expires_at = 0.0
@@ -111,8 +115,9 @@ class GoogleProvider:
                 code="unsupported_parameter",
                 param="provider_options",
             )
+        images = await self._resolve_images(caps, request)
         operation = await self.veo_backend.start_veo(
-            model, build_veo_body(request, caps)
+            model, build_veo_body(request, caps, images)
         )
         job = self._register(
             model, request.task, request.prompt, request.params, operation
@@ -120,6 +125,32 @@ class GoogleProvider:
         if adjustments:
             self.jobs.update(job["id"], adjustments=adjustments)
         return self.jobs.to_video(self.jobs.get(job["id"]) or job)
+
+    async def _resolve_images(
+        self, caps: ModelCapabilities, request: UnifiedRequest
+    ) -> dict[str, list[dict[str, str]]]:
+        slots = {slot.role: slot for slot in caps.tasks[request.task].references}
+        images: dict[str, list[dict[str, str]]] = {}
+        for reference in request.references:
+            media = await self.references.fetch(reference)
+            slot = slots[reference["role"]]
+            if slot.formats and media.mime_type not in slot.formats:
+                raise ContractError(
+                    f"{reference['role']} must be {' or '.join(slot.formats)}, "
+                    f"not {media.mime_type}",
+                    code="reference_limit",
+                    param="references",
+                )
+            if slot.max_bytes and len(media.data) > slot.max_bytes:
+                raise ContractError(
+                    f"{reference['role']} may not exceed {slot.max_bytes} bytes",
+                    code="reference_limit",
+                    param="references",
+                )
+            images.setdefault(reference["role"], []).append(
+                {"bytesBase64Encoded": media.base64, "mimeType": media.mime_type}
+            )
+        return images
 
     def _register(
         self,

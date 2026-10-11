@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     media_ttl_seconds: int = 86_400
     media_cleanup_interval_seconds: int = 900
     max_upload_bytes: int = 200 * 1024 * 1024
+    max_inline_reference_bytes: int = 25 * 1024 * 1024
     request_timeout_seconds: float = 60.0
     download_timeout_seconds: float = 600.0
     max_upstream_connections: int = 100

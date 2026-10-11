@@ -460,3 +460,144 @@ async def test_native_route_passes_the_veo_body_through(tmp_path: Path):
     assert google.created() == native_body
     assert created.json()["name"].endswith("/operations/op-1")
     assert status.json()["status"] == "completed"
+
+
+# --- T10: image modes -------------------------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+PNG_URI = "data:image/png;base64," + base64.b64encode(PNG).decode()
+PNG_B64 = base64.b64encode(PNG).decode()
+
+
+def image(role: str | None = None) -> dict[str, Any]:
+    reference = {"type": "image", "url": PNG_URI}
+    return {**reference, "role": role} if role else reference
+
+
+async def test_vertex_image_to_video_embeds_the_first_frame(tmp_path: Path):
+    google = FakeGoogle(polls=[vertex_done()])
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        google,
+        create({"model": "veo-3.1-fast-generate-001", "references": [image()]}),
+    )
+
+    assert created.status_code == 200
+    body = google.created()
+    assert body["instances"] == [
+        {
+            "prompt": "",
+            "image": {"bytesBase64Encoded": PNG_B64, "mimeType": "image/png"},
+        }
+    ]
+
+
+async def test_first_and_last_frame_force_eight_seconds(tmp_path: Path):
+    google = FakeGoogle(polls=[vertex_done()])
+
+    created, rejected = await run(
+        settings_for(tmp_path, "vertex"),
+        google,
+        create(
+            {
+                "model": "veo-3.1-generate-001",
+                "prompt": "morph",
+                "references": [image("first_frame"), image("last_frame")],
+            }
+        ),
+        create(
+            {
+                "model": "veo-3.1-generate-001",
+                "prompt": "morph",
+                "seconds": 4,
+                "references": [image("first_frame"), image("last_frame")],
+            }
+        ),
+    )
+
+    instance = google.created()["instances"][0]
+    assert set(instance) == {"prompt", "image", "lastFrame"}
+    assert google.created()["parameters"]["durationSeconds"] == 8
+    assert created.status_code == 200
+    assert rejected.status_code == 400
+
+
+async def test_reference_images_become_asset_references(tmp_path: Path):
+    google = FakeGoogle(polls=[vertex_done()])
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        google,
+        create(
+            {
+                "model": "veo-3.1-generate-001",
+                "prompt": "the cat",
+                "references": [image(), image()],
+            }
+        ),
+    )
+
+    assert created.status_code == 200
+    body = google.created()
+    assert (
+        body["instances"][0]["referenceImages"]
+        == [
+            {
+                "image": {"bytesBase64Encoded": PNG_B64, "mimeType": "image/png"},
+                "referenceType": "asset",
+            }
+        ]
+        * 2
+    )
+    assert body["parameters"]["durationSeconds"] == 8
+
+
+async def test_lite_has_no_reference_images(tmp_path: Path):
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeGoogle(),
+        create(
+            {
+                "model": "veo-3.1-lite-generate-001",
+                "prompt": "x",
+                "references": [image(), image()],
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_task"
+
+
+async def test_veo_accepts_only_image_references(tmp_path: Path):
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeGoogle(),
+        create(
+            {
+                "model": "veo-3.1-generate-001",
+                "prompt": "x",
+                "references": [
+                    image(),
+                    {"type": "audio", "url": "https://e.example/a.mp3"},
+                ],
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reference_limit"
+
+
+async def test_gemini_image_modes_send_allow_adult(tmp_path: Path):
+    google = FakeGoogle(polls=[{"done": False}])
+
+    (created,) = await run(
+        settings_for(tmp_path, "gemini"),
+        google,
+        create({"model": "veo-3.1-fast-generate-preview", "references": [image()]}),
+    )
+
+    assert created.status_code == 200
+    assert google.created()["parameters"]["personGeneration"] == "allow_adult"

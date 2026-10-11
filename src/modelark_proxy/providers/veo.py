@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..capabilities import Constraint, ModelCapabilities, Param, TaskSpec
+from ..capabilities import Constraint, ModelCapabilities, Param, ReferenceSlot, TaskSpec
 from ..unified import UnifiedRequest
 
 LABELS = {
@@ -29,6 +29,15 @@ PARAMETER_FIELDS = {
     "person_generation": "personGeneration",
 }
 VERTEX_OPTIONS = ("compressionQuality", "resizeMode")
+IMAGE_FORMATS = ("image/jpeg", "image/png")
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+IMAGE_TASKS = ("image_to_video", "first_last_frame", "reference_to_video")
+
+
+def _frame(role: str) -> ReferenceSlot:
+    return ReferenceSlot(
+        role, ("image",), 1, 1, max_bytes=MAX_IMAGE_BYTES, formats=IMAGE_FORMATS
+    )
 
 
 def veo_family(model: str) -> str:
@@ -65,26 +74,67 @@ def veo_capabilities(model: str, backend: str) -> ModelCapabilities:
         parameters["negative_prompt"] = Param()
         parameters["generate_audio"] = Param(default=True)
         parameters["enhance_prompt"] = Param(default=True)
+    eight_seconds = {"seconds": Param(values=(8,), default=8)}
+    tasks: dict[str, TaskSpec] = {
+        "text_to_video": TaskSpec(),
+        "image_to_video": TaskSpec(
+            references=(_frame("first_frame"),), prompt_required=False
+        ),
+        # Practice-verified: lastFrame is rejected unless durationSeconds is 8.
+        "first_last_frame": TaskSpec(
+            references=(_frame("first_frame"), _frame("last_frame")),
+            parameters=eight_seconds,
+            prompt_required=False,
+        ),
+    }
+    if not lite:
+        tasks["reference_to_video"] = TaskSpec(
+            references=(
+                ReferenceSlot(
+                    "reference",
+                    ("image",),
+                    1,
+                    3,
+                    max_bytes=MAX_IMAGE_BYTES,
+                    formats=IMAGE_FORMATS,
+                ),
+            ),
+            parameters=eight_seconds,
+        )
+    constraints = [
+        Constraint(
+            when={"resolution": ("1080p", "4k")},
+            then={"seconds": (8,)},
+            message="Veo renders 1080p and 4k only with 8 seconds",
+        )
+    ]
+    if not vertex:
+        constraints.append(
+            Constraint(
+                when={"task": IMAGE_TASKS},
+                then={"person_generation": ("allow_adult",)},
+                message="The Gemini API only allows allow_adult for image-based modes",
+            )
+        )
     return ModelCapabilities(
         provider="google",
         backend=backend,
         family=family,
         launch_stage="preview" if model.endswith("-preview") or lite else "ga",
         parameters=parameters,
-        tasks={"text_to_video": TaskSpec()},
-        constraints=(
-            Constraint(
-                when={"resolution": ("1080p", "4k")},
-                then={"seconds": (8,)},
-                message="Veo renders 1080p and 4k only with 8 seconds",
-            ),
-        ),
+        tasks=tasks,
+        constraints=tuple(constraints),
         max_outputs=4 if vertex else 1,
         provider_options=VERTEX_OPTIONS if vertex else (),
     )
 
 
-def build_veo_body(request: UnifiedRequest, caps: ModelCapabilities) -> dict[str, Any]:
+def build_veo_body(
+    request: UnifiedRequest,
+    caps: ModelCapabilities,
+    images: dict[str, list[dict[str, str]]] | None = None,
+) -> dict[str, Any]:
+    """`images` maps a reference role to Veo image objects (bytes + MIME type)."""
     params = dict(request.params)
     for name in ("seconds", "resolution", "aspect_ratio"):
         if name not in params and caps.parameters[name].default is not None:
@@ -96,7 +146,17 @@ def build_veo_body(request: UnifiedRequest, caps: ModelCapabilities) -> dict[str
     }
     parameters["sampleCount"] = params.get("n", 1)
     parameters.update(request.provider_options.get("google") or {})
-    return {"instances": [{"prompt": request.prompt}], "parameters": parameters}
+    instance: dict[str, Any] = {"prompt": request.prompt}
+    images = images or {}
+    if images.get("first_frame"):
+        instance["image"] = images["first_frame"][0]
+    if images.get("last_frame"):
+        instance["lastFrame"] = images["last_frame"][0]
+    if images.get("reference"):
+        instance["referenceImages"] = [
+            {"image": image, "referenceType": "asset"} for image in images["reference"]
+        ]
+    return {"instances": [instance], "parameters": parameters}
 
 
 def parse_operation(operation: dict[str, Any]) -> dict[str, Any]:

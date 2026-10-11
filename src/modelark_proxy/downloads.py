@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+import asyncio
+import ipaddress
+import socket
+from collections.abc import AsyncIterator, Callable, Mapping
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+
+from .validation import ContractError
 
 
 def host_allowed(url: str, allowed_host_suffixes: list[str]) -> bool:
@@ -75,3 +80,83 @@ async def stream_remote(
 
     content_type = media_type or response.headers.get("content-type", "").split(";")[0]
     return StreamingResponse(body(), media_type=content_type or None)
+
+
+def system_resolver(host: str) -> list[str]:
+    return [info[4][0] for info in socket.getaddrinfo(host, 443)]
+
+
+def is_public_address(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+async def host_is_public(host: str, resolver: Callable[[str], list[str]]) -> bool:
+    try:
+        addresses = await asyncio.to_thread(resolver, host)
+    except OSError:
+        return False
+    return bool(addresses) and all(is_public_address(address) for address in addresses)
+
+
+async def safe_fetch(
+    url: str,
+    *,
+    max_bytes: int,
+    transport: httpx.AsyncBaseTransport | None,
+    resolver: Callable[[str], list[str]] = system_resolver,
+    timeout: float = 60.0,
+    max_redirects: int = 3,
+) -> tuple[bytes, str | None]:
+    """Download a client-supplied URL without letting it reach private networks.
+
+    Only https is allowed, and every hop (including redirects) must resolve
+    to public addresses only.
+    """
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        for _ in range(max_redirects + 1):
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.hostname:
+                raise ContractError(
+                    "Reference URLs must use https",
+                    code="reference_unavailable",
+                    param="references",
+                )
+            if not await host_is_public(parsed.hostname, resolver):
+                raise ContractError(
+                    f"Reference host {parsed.hostname} is not publicly reachable",
+                    code="reference_unavailable",
+                    param="references",
+                )
+            async with client.stream("GET", url) as response:
+                if response.is_redirect:
+                    url = urljoin(url, response.headers["location"])
+                    continue
+                if response.is_error:
+                    raise ContractError(
+                        f"Reference download failed with HTTP {response.status_code}",
+                        code="reference_unavailable",
+                        param="references",
+                    )
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > max_bytes:
+                        raise ContractError(
+                            f"Reference exceeds {max_bytes} bytes",
+                            code="reference_limit",
+                            param="references",
+                        )
+                return bytes(data), response.headers.get("content-type")
+    raise ContractError(
+        "Reference URL redirects too often",
+        code="reference_unavailable",
+        param="references",
+    )

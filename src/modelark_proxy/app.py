@@ -7,6 +7,7 @@ import logging
 import re
 import mimetypes
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 from pathlib import Path
@@ -34,13 +35,15 @@ from .credentials import (
     kling_check,
     modelark_check,
 )
+from .downloads import system_resolver
 from .errors import ApiError, openai_error
 from .google_auth import TokenSource, VertexTokenSource
 from .ids import decode_video_id, encode_video_id
 from .litellm_export import export_model_list
-from .media import MediaStore, UploadTooLarge, upload_chunks
+from .media import REFERENCE_SIZE_LIMITS, MediaStore, UploadTooLarge, upload_chunks
 from .outputs import OutputStore
 from .prompt_guides import PromptGuides
+from .references import ReferenceResolver
 from .provider_jobs import ProviderJobStore, purge_expired
 from .providers import (
     DEFAULT_PROVIDER,
@@ -61,11 +64,6 @@ from .workers import JobRunner
 logger = logging.getLogger(__name__)
 # Seedance 2.5 accepts 30 images + 10 videos + 10 audio clips in one request.
 MAX_REFERENCE_UPLOADS = 50
-REFERENCE_SIZE_LIMITS = {
-    "image": 30 * 1024 * 1024,
-    "video": 200 * 1024 * 1024,
-    "audio": 15 * 1024 * 1024,
-}
 
 
 def modelark_error_code(error: ModelArkError) -> str:
@@ -223,6 +221,8 @@ def create_app(
     google_transport: httpx.AsyncBaseTransport | None = None,
     kling_transport: httpx.AsyncBaseTransport | None = None,
     vertex_token_source: TokenSource | None = None,
+    reference_transport: httpx.AsyncBaseTransport | None = None,
+    reference_resolver: Callable[[str], list[str]] | None = None,
     validate_startup_credentials: bool = True,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -289,6 +289,14 @@ def create_app(
         )
     elif settings.google_veo_backend == "gemini" and settings.gemini_api_key:
         veo_backend = GeminiBackend(settings, google_api)
+    references = ReferenceResolver(
+        settings,
+        media,
+        provider_jobs,
+        outputs,
+        transport=reference_transport,
+        resolver=reference_resolver or system_resolver,
+    )
     enabled_providers: list[VideoProvider] = []
     if settings.modelark_configured:
         enabled_providers.append(
@@ -301,6 +309,7 @@ def create_app(
                 veo_backend,
                 provider_jobs,
                 outputs,
+                references,
                 download_transport or google_transport,
             )
         )

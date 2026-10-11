@@ -13,6 +13,14 @@ async def upload_chunks(upload: UploadFile) -> AsyncIterator[bytes]:
         yield chunk
 
 
+# Per-type ceilings for reference files (the largest any provider accepts).
+REFERENCE_SIZE_LIMITS = {
+    "image": 30 * 1024 * 1024,
+    "video": 200 * 1024 * 1024,
+    "audio": 15 * 1024 * 1024,
+}
+
+
 class UploadTooLarge(ValueError):
     pass
 

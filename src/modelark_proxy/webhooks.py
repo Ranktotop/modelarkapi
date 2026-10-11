@@ -8,14 +8,11 @@ are retried with backoff.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
-import socket
 import sqlite3
 import time
 import uuid
@@ -27,6 +24,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .downloads import host_is_public, system_resolver
 from .retry import backoff_delay
 from .schemas import VideoObject
 
@@ -36,10 +34,6 @@ EVENT_STATUSES = {"in_progress", "completed", "failed"}
 TERMINAL_STATUSES = {"completed", "failed"}
 
 Resolver = Callable[[str], list[str]]
-
-
-def system_resolver(host: str) -> list[str]:
-    return [info[4][0] for info in socket.getaddrinfo(host, 443)]
 
 
 def signing_key(secret: str) -> bytes:
@@ -58,18 +52,6 @@ def validate_webhook_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("webhook_url must be an absolute https URL")
-
-
-def _is_public(address: str) -> bool:
-    ip = ipaddress.ip_address(address)
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
 
 
 class WebhookDispatcher:
@@ -188,12 +170,7 @@ class WebhookDispatcher:
         )
 
     async def _target_is_public(self, url: str) -> bool:
-        host = urlparse(url).hostname or ""
-        try:
-            addresses = await asyncio.to_thread(self.resolver, host)
-        except OSError:
-            return False
-        return bool(addresses) and all(_is_public(address) for address in addresses)
+        return await host_is_public(urlparse(url).hostname or "", self.resolver)
 
     async def deliver_due(self) -> None:
         with self.lock:
