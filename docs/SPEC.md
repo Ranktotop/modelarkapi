@@ -343,8 +343,8 @@ insgesamt höchstens `MAX_UPLOAD_BYTES` pro Request.
   gesetzt und unterschiedlich, gibt es 400.
 - `-1` oder `"auto"`: Das Modell wählt die Dauer (Seedance); bei anderen
   Modellen gilt der Default aus dem Capability-Dokument.
-- Tasks ohne Dauer (`motion_control`, `edit` bei Kling Omni und Seedance-Edit,
-  `lip_sync`, `effect`): `seconds` führt bei `strict` zu 400 und wird bei
+- Tasks ohne Dauer (`motion_control`, `edit` bei Kling Omni, Gemini Omni und
+  Seedance-Edit, `lip_sync`, `effect`): `seconds` führt bei `strict` zu 400 und wird bei
   `adapt` ignoriert.
 
 ### 8.2 `size`, `resolution`, `aspect_ratio`
@@ -356,6 +356,9 @@ insgesamt höchstens `MAX_UPLOAD_BYTES` pro Request.
   Seedance-Tabelle (`SIZE_TO_FORMAT`) bleibt als exakte Zuordnung erhalten.
 - Explizite `resolution` und `aspect_ratio` haben Vorrang vor `size`.
 - `adaptive`: Seitenverhältnis kommt vom Eingabebild oder -video (Seedance).
+  Beim `edit` mit Gemini Omni ist `adaptive` der einzige Wert; der Proxy sendet
+  dann weder `aspect_ratio` noch `duration`, weil Google beides beim Edit aus
+  dem Quellvideo nimmt (`aspect_ratio` lehnt Google dort ab).
   Bei Kling Image-to-Video gibt es kein `aspect_ratio`; das Feld wird bei
   `adapt` ignoriert und bei `strict` abgelehnt, sofern es nicht `adaptive` ist.
 - In der Antwort steht `size` als `BREITExHÖHE` gemäß Seedance-Tabelle bzw.
@@ -707,7 +710,8 @@ Regeln:
   für diesen Task (Schnittmenge).
 - `constraints` sind bedingte Einschränkungen: Erfüllt der Request alle
   `if`-Bedingungen, gelten die `then`-Werte. Die UI wertet sie aus, der Proxy
-  ebenso.
+  ebenso. Fehlt das Feld im Request, setzt der Proxy den Default des Modells,
+  wenn die Constraint ihn erlaubt, sonst den ersten `then`-Wert.
 - Reference-Slots: `role`, `types`, `min`, `max` und optional `max_bytes`,
   `formats`, `min_seconds`, `max_seconds`, `total_max_seconds`, `min_px`,
   `max_px`, `aspect_range`.
@@ -925,7 +929,7 @@ Jede Fähigkeit aus den Research-Berichten ist genau einer Stelle zugeordnet.
 | Veo `storageUri` | gesperrt; der Proxy nutzt Inline-Bytes (ADR-001) |
 | Veo `mask` (insert/remove/outpaint), `task: upscale`, `cameraControl`, Style-Referenz | **nicht angeboten**: für 3.1 nicht dokumentiert bzw. nicht unterstützt |
 | **Omni** T2V, I2V, First/Last, Referenzbilder, Videoreferenzen, Edit, Extend, Multi-Turn | Tasks; Multi-Turn über `task_id`/Remix |
-| Omni `response_format` (`aspect_ratio`, `resolution` inkl. 360p, `duration`, `delivery`) | 5.1; `delivery` verwaltet der Proxy |
+| Omni `response_format` (`aspect_ratio`, `resolution` inkl. 360p, `duration`, `delivery`) | 5.1; `delivery` verwaltet der Proxy; beim `edit` nur `resolution` |
 | Omni `stream` | nicht angeboten (Proxy nutzt `background`) |
 | Omni `cancel`, `delete` | `DELETE /v1/videos/{id}` |
 | **Kling** T2V, I2V, First/Last, Multi-Shot, native Audio, Voices, Elements | Tasks, Referenzen `element`/`voice` |

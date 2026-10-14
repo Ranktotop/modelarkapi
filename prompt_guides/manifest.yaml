@@ -24,7 +24,7 @@ guides:
     file: gemini_omni_flash.md
     title: Gemini Omni Flash Prompting Guide
     language: de
-    updated: 2026-10-11
+    updated: 2026-10-14
     models: [gemini-omni-]
   - id: kling_3_0
     file: kling_3_0.md

@@ -124,6 +124,12 @@ Weitere Hinweise:
 - Omni-Edit und -Extend über die Gemini API sind laut Recherche im EWR
   eingeschränkt; Vertex ist der Standard. Bei einem Omni-Ergebnis ohne Video lautet
   der Fehler `content_policy: Omni returned no video`.
+- `Editing keeps the aspect ratio and duration of the input video` (400,
+  `param` `aspect_ratio` oder `seconds`): Ein Omni-Edit übernimmt Format und Länge
+  des Quellvideos. `aspect_ratio`, `size` und `seconds` weglassen oder
+  `parameter_policy: "adapt"` setzen. Ältere Proxy-Versionen schickten das Format
+  mit, und Google antwortete mit `Aspect ratio cannot be set in response format
+  for edit task`.
 - Ein frisch fertiger Gemini-Output kann kurz noch nicht herunterladbar sein; der
   Job bleibt dann `in_progress` mit `provider_status: finalizing`.
 - Veo-Extension über die Gemini API funktioniert nur mit Videos, die dieser Proxy

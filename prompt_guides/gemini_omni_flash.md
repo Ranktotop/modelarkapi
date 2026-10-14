@@ -1,6 +1,6 @@
 # Gemini Omni Flash Prompting Guide
 
-**Stand: 11. Oktober 2026**  
+**Stand: 14. Oktober 2026**  
 **Fokus:** Google Gemini Omni Flash (`gemini-omni-1.1-flash` auf der Gemini API, `gemini-omni-1.1-flash-preview` und `gemini-omni-flash-preview` auf Vertex AI / Gemini Enterprise Agent Platform) für Text-to-Video, Image-to-Video, First/Last Frame, Referenzen aus Bildern und kurzen Videoclips, Video-Editing, Multi-Turn-Editing, Extension und nativen Ton  
 **Ziel:** aus einer Idee eine Anweisung machen, die Omnis Weltwissen nutzt, statt gegen es anzuschreiben – und die trotzdem genau festlegt, **wie viele Einstellungen** entstehen, **welche Datei welche Rolle hat**, **was sich ändern darf** und **was man hört**
 
@@ -59,7 +59,7 @@ Gemini Omni Flash ist Googles nativ multimodales Video-Modell auf Gemini-Basis. 
 | API | Interactions API (`/v1beta/interactions`), nicht `predictLongRunning` |
 | Dauer | 3–10 s pro Aufruf, ganze Sekunden |
 | Auflösung | 360p, 720p (Default), 1080p und 4k – **1080p und 4k sind hochskaliert** |
-| Seitenverhältnis | 16:9 (Default) oder 9:16 – **kein 1:1** |
+| Seitenverhältnis | 16:9 (Default) oder 9:16 – **kein 1:1**; ein Edit behält das Format des Quellvideos |
 | Framerate | 24 fps |
 | Ton | wird **immer** erzeugt (Sprache, Musik, SFX); Steuerung nur über den Prompt |
 | Negativprompt-Feld | **gibt es nicht** – Negatives gehören in den normalen Prompt |
@@ -115,6 +115,7 @@ Konsequenz: **Veo-Prompts funktionieren bei Omni, aber oft schlechter als nötig
 ### 3.1 Was der Proxy für dich erledigt (praxisverifiziert aus dem Code)
 
 - `seconds` → `response_format.duration` (`"8s"`), `aspect_ratio` und `resolution` → `response_format`. Fehlen die Felder, setzt der Proxy die Defaults **8 s, 16:9, 720p**. Omni muss Dauer und Format also **nie** aus dem Prompt ableiten.
+- **Ausnahme Edit:** Bei `task: "edit"` (auch `/v1/videos/edits` und Remix) sendet der Proxy nur `resolution`. Google lehnt `aspect_ratio` beim Edit ab („Aspect ratio cannot be set in response format for edit task“) und dokumentiert dort auch kein `duration` **(praxisverifiziert)**. Im Capability-Dokument steht deshalb für `edit` `aspect_ratio: adaptive` und `seconds: auto`. Wer `aspect_ratio` oder `seconds` trotzdem mitschickt, bekommt mit `strict` einen 400-Fehler; `adapt` verwirft die Werte und meldet sie unter `adjustments`.
 - Referenzen werden als Inhalts-Parts vor den Prompt gestellt, und zwar in dieser Reihenfolge: `first_frame`, `last_frame`, alle `reference`-Einträge (in der Reihenfolge deines `references`-Arrays), `base_video`, dann der Text.
 - Für jeden Task außer `text_to_video` setzt der Proxy `generation_config.video_config.task` (`first_last_frame` → `image_to_video`).
 - Verweist `base_video` per `task_id` auf einen **fertigen Omni-Job desselben Backends**, lädt der Proxy das Video nicht neu hoch, sondern sendet `previous_interaction_id`. Das ist Googles Multi-Turn-Weg – und auf der Gemini API der **einzige** Weg, mit dem Nutzer im EWR Videos bearbeiten oder verlängern können.
@@ -268,8 +269,8 @@ Auf `gemini-omni-flash-preview` (Vertex) existieren nur `text_to_video` und `edi
 
 | Feld (Proxy) | Werte | Omni-Feld | Anmerkung |
 |---|---|---|---|
-| `seconds` | 3–10 (Default 8) | `response_format.duration` | bei Extend: Länge der Fortsetzung |
-| `aspect_ratio` | `16:9`, `9:16` | `response_format.aspect_ratio` | kein 1:1 |
+| `seconds` | 3–10 (Default 8); bei Edit nur `auto` | `response_format.duration` | bei Extend: Länge der Fortsetzung; bei Edit nicht gesendet |
+| `aspect_ratio` | `16:9`, `9:16`; bei Edit nur `adaptive` | `response_format.aspect_ratio` | kein 1:1; bei Edit nicht gesendet |
 | `resolution` | `360p`, `720p`, `1080p`, `4k` | `response_format.resolution` | 1080p/4k hochskaliert; `gemini-omni-flash-preview` nur 720p |
 | `task` | siehe §6.2 | `generation_config.video_config.task` | weglassen = Proxy leitet ihn aus den Rollen ab |
 | `references[].role` | `first_frame`, `last_frame`, `reference`, `base_video` | Reihenfolge der Inhalts-Parts | Tags im Prompt binden die Rolle zusätzlich |
@@ -281,7 +282,7 @@ Struktur (ein Shot oder Sequenz), Kamera, Subjekt, Aktion, Ort, Licht, Stil, Ton
 
 ### 7.3 Was nicht in den Prompt gehört
 
-- **Dauer, Seitenverhältnis, Auflösung als Text** („7 second video“, „9:16“, „in 4K“). Google zeigt in Vertex-Beispielen zwar Prompts wie `5 second, 9:16 video.` und schreibt, man könne diese Angaben „alternatively“ im Prompt machen – im Proxy sind die Felder aber **immer** gesetzt. Ein abweichender Text stiftet nur Widerspruch **(Empfehlung)**.
+- **Dauer, Seitenverhältnis, Auflösung als Text** („7 second video“, „9:16“, „in 4K“). Google zeigt in Vertex-Beispielen zwar Prompts wie `5 second, 9:16 video.` und schreibt, man könne diese Angaben „alternatively“ im Prompt machen – im Proxy sind die Felder aber gesetzt (beim Edit gibt das Quellvideo Dauer und Format vor). Ein abweichender Text stiftet nur Widerspruch **(Empfehlung)**.
 - Ausnahme: Der offizielle Upscaling-Beispielprompt endet mit `photorealistic, 4k` als **Look-Beschreibung**. Das ist unschädlich, ersetzt aber nicht `resolution`.
 - Framerate-Wünsche. Omni rendert 24 fps; „12fps line boiling“ im DeepMind-Beispiel ist ein **Stilmittel**, keine Ausgabe-Framerate.
 
@@ -887,7 +888,6 @@ Hochgeladenes Video (≤10 s auf der Gemini API, 1–30 s auf Vertex):
   "model": "gemini-omni-1.1-flash",
   "task": "edit",
   "prompt": "Make the phone invisible. Keep everything else the same.",
-  "seconds": 6,
   "references": [
     {"upload_id": "<video>", "type": "video", "role": "base_video"}
   ]
@@ -898,9 +898,9 @@ Alternativ über den OpenAI-kompatiblen Weg `POST /v1/videos/edits` mit `{"video
 
 > **EWR-Hinweis:** Auf der Gemini API sind Edit und Extend **hochgeladener** Videos in EWR, Schweiz und UK nicht verfügbar **(offiziell)**. Läuft das Omni-Backend des Proxys über die Gemini API aus diesen Regionen, funktionieren nur Edits früherer **Omni-Jobs** (Multi-Turn, §21). Für Vertex ist eine solche Sperre nicht dokumentiert **(unverifiziert)**.
 
-### 20.5 Was `seconds` bei Edit bedeutet
+### 20.5 Dauer und Format beim Edit
 
-Der Proxy setzt die Ausgabedauer immer. Ob Omni bei einem Edit die Länge des Quellvideos beibehält oder dem Feld folgt, ist **nicht dokumentiert** **(unverifiziert)**. **Empfehlung:** `seconds` gleich der Länge des Quellvideos setzen (gerundet, 3–10).
+Ein Edit übernimmt Seitenverhältnis und Länge des Quellvideos. Google lehnt `aspect_ratio` beim Edit ab **(praxisverifiziert)**; die Edit-Beispiele von Google enthalten weder `aspect_ratio` noch `duration` **(offiziell)**. Der Proxy sendet deshalb nur `resolution`. `seconds` und `aspect_ratio` lässt du weg (oder setzt `auto` bzw. `adaptive`).
 
 ---
 
@@ -926,7 +926,6 @@ Im Proxy: Den früheren Omni-Job als `base_video` per `task_id` übergeben (oder
   "model": "gemini-omni-1.1-flash",
   "task": "edit",
   "prompt": "Change the car color to metallic blue. Keep everything else the same.",
-  "seconds": 8,
   "references": [
     {"task_id": "<video_id des früheren Omni-Jobs>", "role": "base_video"}
   ]
@@ -1091,8 +1090,8 @@ Siehe §21.4. Quelljob noch vorhanden? Gleiches Backend? Prompt auf die Änderun
 
 ### Modus und Parameter
 - [ ] Genau ein Modus; existiert er auf diesem Modell (`capabilities.tasks`)?
-- [ ] `seconds` 3–10 gesetzt; bei Extend = Länge des **neuen** Teils; Gesamtlänge ≤40 s?
-- [ ] `aspect_ratio` 16:9 oder 9:16; kein Format- oder Dauerwunsch im Prompt, der den Feldern widerspricht?
+- [ ] `seconds` 3–10 gesetzt; bei Extend = Länge des **neuen** Teils; Gesamtlänge ≤40 s? Bei Edit weglassen.
+- [ ] `aspect_ratio` 16:9 oder 9:16 (bei Edit weglassen); kein Format- oder Dauerwunsch im Prompt, der den Feldern widerspricht?
 - [ ] `resolution` bewusst: 360p für Drafts, 720p als Standard, 1080p/4k (hochskaliert) für das Finale?
 - [ ] Keine Felder, die Omni nicht kennt (`negative_prompt`, `seed`, `generate_audio`)?
 

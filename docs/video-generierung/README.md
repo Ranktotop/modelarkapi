@@ -268,6 +268,11 @@ die Interactions API mit `background: true` und Polling.
 
 - Dauer 3–10 s; Auflösung 360p, 720p, 1080p, 4k (Flash Preview: nur 720p);
   Format 16:9 oder 9:16.
+- Ein `edit` behält Format und Länge des Quellvideos: Das Capability-Dokument
+  erlaubt dort nur `aspect_ratio: adaptive` und `seconds: auto`, und der Proxy
+  sendet nur `resolution`. Google lehnt `aspect_ratio` beim Edit ab. Mit
+  `strict` ergibt ein anderer Wert 400, mit `adapt` eine `adjustments`-Meldung.
+  `extend` nimmt `seconds` (Länge der Fortsetzung) und `aspect_ratio` weiter an.
 - Tasks: Text, Bild, First/Last, Referenzen (bis 10 Bilder und 3 Videos von
   höchstens 3 s), `edit`, `extend`. `gemini-omni-flash-preview` kann nur Text und
   `edit`.

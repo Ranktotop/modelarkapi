@@ -96,6 +96,25 @@ test("parameter values honour task overrides and fall back to v1", () => {
   assert.deepEqual(parameterValues(v1Only, "text_to_video", "aspect_ratio"), ["adaptive", "16:9"]);
 });
 
+test("task constraints narrow the offered values", () => {
+  const omni = {
+    parameters: {
+      seconds: { values: [3, 8, 10, "auto"], default: 8 },
+      aspect_ratio: { values: ["16:9", "9:16", "adaptive"], default: "16:9" },
+    },
+    tasks: { text_to_video: {}, edit: {} },
+    constraints: [
+      { if: { task: ["edit"] }, then: { aspect_ratio: ["adaptive"], seconds: ["auto"] }, message: "keeps input" },
+      { if: { task: ["text_to_video"] }, then: { aspect_ratio: ["16:9", "9:16"], seconds: [3, 8, 10] }, message: "formats" },
+    ],
+  };
+  assert.deepEqual(parameterValues(omni, "text_to_video", "aspect_ratio"), ["16:9", "9:16"]);
+  assert.deepEqual(parameterValues(omni, "text_to_video", "seconds"), [3, 8, 10]);
+  assert.deepEqual(parameterValues(omni, "edit", "seconds"), [-1]);
+  assert.equal(lockedValue(omni, "text_to_video", "aspect_ratio"), null);
+  assert.deepEqual(lockedValue(omni, "edit", "aspect_ratio"), { value: "adaptive", message: "keeps input" });
+});
+
 test("task constraints lock values with their reason", () => {
   assert.deepEqual(lockedValue(seedance25, "image_to_video", "aspect_ratio"), { value: "adaptive", message: "keeps ratio" });
   assert.deepEqual(lockedValue(seedance25, "edit", "seconds"), { value: -1, message: "keeps input" });
