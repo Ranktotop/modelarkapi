@@ -575,6 +575,40 @@ async def test_ui_exposes_prompt_guides(ui_settings: UISettings):
 
 
 @pytest.mark.asyncio
+async def test_ui_exposes_the_litellm_export(ui_settings: UISettings):
+    captured: list[httpx.Request] = []
+    responses = [
+        httpx.Response(200, text="model_list:\n- model_name: veo_31_api\n"),
+        httpx.Response(401, json={"error": {"message": "Invalid proxy key"}}),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/litellm/config"):
+            captured.append(request)
+            return responses.pop(0)
+        return httpx.Response(200, json={"object": "list", "data": []})
+
+    app = create_app(
+        ui_settings,
+        proxy_transport=httpx.MockTransport(handler),
+        static_dir=Path("/does-not-exist"),
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://studio"
+        ) as client,
+    ):
+        export = await client.get("/api/litellm-config")
+        failed = await client.get("/api/litellm-config")
+
+    assert export.json() == {"yaml": "model_list:\n- model_name: veo_31_api\n"}
+    assert captured[0].url.params["format"] == "yaml"
+    assert failed.status_code == 401
+    assert failed.json()["error"]["message"] == "Invalid proxy key"
+
+
+@pytest.mark.asyncio
 async def test_ui_forwards_assets_effects_and_content_variants(ui_settings: UISettings):
     captured: list[httpx.Request] = []
 
