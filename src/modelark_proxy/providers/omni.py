@@ -9,7 +9,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..capabilities import GroupLimit, ModelCapabilities, Param, ReferenceSlot, TaskSpec
+from ..capabilities import (
+    Constraint,
+    GroupLimit,
+    ModelCapabilities,
+    Param,
+    ReferenceSlot,
+    TaskSpec,
+)
 from ..unified import UnifiedRequest
 
 LABELS = {
@@ -29,6 +36,8 @@ OMNI_TASKS = {
     "extend": "extend",
 }
 RUNNING = {"in_progress", "queued", "requires_action"}
+RATIOS = ("16:9", "9:16")
+DURATIONS = tuple(range(3, 11))
 
 
 def omni_family(model: str) -> str:
@@ -110,14 +119,29 @@ def omni_capabilities(model: str, backend: str) -> ModelCapabilities:
         family=family,
         launch_stage="preview" if model.endswith("-preview") else "ga",
         parameters={
-            "seconds": Param(values=tuple(range(3, 11)), default=8),
+            # "auto" and "adaptive" exist only for edits (see the constraints).
+            "seconds": Param(values=(*DURATIONS, "auto"), default=8),
             "resolution": Param(
                 values=("720p",) if limited else ("360p", "720p", "1080p", "4k"),
                 default="720p",
             ),
-            "aspect_ratio": Param(values=("16:9", "9:16"), default="16:9"),
+            "aspect_ratio": Param(values=(*RATIOS, "adaptive"), default="16:9"),
         },
         tasks=tasks,
+        constraints=(
+            # Google rejects `aspect_ratio` for edits and documents no
+            # `duration` there: the edit keeps the format of the input video.
+            Constraint(
+                when={"task": ("edit",)},
+                then={"aspect_ratio": ("adaptive",), "seconds": ("auto",)},
+                message="Editing keeps the aspect ratio and duration of the input video",
+            ),
+            Constraint(
+                when={"task": tuple(task for task in tasks if task != "edit")},
+                then={"aspect_ratio": RATIOS, "seconds": DURATIONS},
+                message="Omni generates 16:9 or 9:16 videos of 3 to 10 seconds",
+            ),
+        ),
         continuation="none" if limited else "multi_turn",
     )
 
@@ -137,10 +161,13 @@ def build_omni_body(
             params[name] = caps.parameters[name].default
     response_format: dict[str, Any] = {
         "type": "video",
-        "aspect_ratio": params["aspect_ratio"],
         "resolution": params["resolution"],
-        "duration": f"{params['seconds']}s",
     }
+    # An edit takes both from the input video ("adaptive", "auto").
+    if params["aspect_ratio"] != "adaptive":
+        response_format["aspect_ratio"] = params["aspect_ratio"]
+    if params["seconds"] != "auto":
+        response_format["duration"] = f"{params['seconds']}s"
     if delivery_uri:
         response_format["delivery"] = "uri"
     parts = [

@@ -69,9 +69,26 @@ function parameterSpec(caps: ModelCapabilities, task: string, name: string) {
   return caps.tasks?.[task]?.parameters?.[name] ?? caps.parameters?.[name];
 }
 
+// Constraints that depend on the task alone and narrow `name`.
+function taskConstraints(caps: ModelCapabilities, task: string, name: string) {
+  return (caps.constraints ?? []).filter(constraint => {
+    const conditions = Object.keys(constraint.if);
+    return conditions.length > 0
+      && conditions.every(key => key === "task")
+      && constraint.if.task.includes(task)
+      && Boolean(constraint.then[name]);
+  });
+}
+
 export function parameterValues(caps: ModelCapabilities | undefined, task: string, name: string): (string | number)[] {
   if (!caps) return [];
-  if (caps.parameters) return (parameterSpec(caps, task, name)?.values ?? []).map(toUi);
+  if (caps.parameters) {
+    let values = parameterSpec(caps, task, name)?.values ?? [];
+    for (const constraint of taskConstraints(caps, task, name)) {
+      values = values.filter(value => constraint.then[name].includes(value));
+    }
+    return values.map(toUi);
+  }
   const v1 = V1_PARAMETERS[name];
   return v1 ? [...((caps[v1] as (string | number)[] | undefined) ?? [])] : [];
 }
@@ -93,15 +110,8 @@ export function lockedValue(
 ): { value: string | number; message: string } | null {
   if (!caps) return null;
   if (caps.constraints) {
-    for (const constraint of caps.constraints) {
-      const conditions = Object.keys(constraint.if);
-      const applies = conditions.length > 0
-        && conditions.every(key => key === "task")
-        && constraint.if.task.includes(task);
-      const values = constraint.then[name];
-      if (applies && values?.length === 1) return { value: toUi(values[0]), message: constraint.message };
-    }
-    return null;
+    const constraint = taskConstraints(caps, task, name).find(item => item.then[name].length === 1);
+    return constraint ? { value: toUi(constraint.then[name][0]), message: constraint.message } : null;
   }
   const taskTypes = caps.task_types ?? [];
   const frameTask = task === "image_to_video" || task === "first_last_frame";

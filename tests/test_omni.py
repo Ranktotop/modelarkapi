@@ -153,7 +153,12 @@ async def test_vertex_lists_the_omni_preview_models(tmp_path: Path):
     assert set(by_id) == {"gemini-omni-1.1-flash-preview", "gemini-omni-flash-preview"}
     full = by_id["gemini-omni-1.1-flash-preview"]["capabilities"]
     assert full["backend"] == "vertex"
-    assert full["parameters"]["seconds"]["values"] == list(range(3, 11))
+    assert full["parameters"]["seconds"]["values"] == [*range(3, 11), "auto"]
+    assert full["constraints"][0] == {
+        "if": {"task": ["edit"]},
+        "then": {"aspect_ratio": ["adaptive"], "seconds": ["auto"]},
+        "message": "Editing keeps the aspect ratio and duration of the input video",
+    }
     assert set(full["tasks"]) >= {"text_to_video", "image_to_video", "first_last_frame"}
     limited = by_id["gemini-omni-flash-preview"]["capabilities"]
     assert limited["parameters"]["resolution"]["values"] == ["720p"]
@@ -438,6 +443,8 @@ async def test_uploaded_videos_are_edited_inline(tmp_path: Path):
         "data": MP4_B64,
     }
     assert body["generation_config"] == {"video_config": {"task": "edit"}}
+    # Google rejects aspect_ratio for edits; the edit keeps the input's format.
+    assert body["response_format"] == {"type": "video", "resolution": "720p"}
     assert "previous_interaction_id" not in body
 
 
@@ -497,7 +504,7 @@ async def test_remix_edits_the_source_video_with_extra_body_fields(tmp_path: Pat
     ][1]
     assert body["previous_interaction_id"] == "v1_abc"
     assert body["generation_config"] == {"video_config": {"task": "edit"}}
-    assert body["response_format"]["resolution"] == "1080p"
+    assert body["response_format"] == {"type": "video", "resolution": "1080p"}
 
 
 async def test_edits_and_extensions_routes_follow_the_openai_shape(tmp_path: Path):
@@ -533,7 +540,114 @@ async def test_edits_and_extensions_routes_follow_the_openai_shape(tmp_path: Pat
         "edit",
         "extend",
     ]
-    assert bodies[2]["response_format"]["duration"] == "6s"
+    assert bodies[1]["response_format"] == {"type": "video", "resolution": "720p"}
+    # Google documents aspect_ratio and duration for extensions.
+    assert bodies[2]["response_format"] == {
+        "type": "video",
+        "aspect_ratio": "16:9",
+        "resolution": "720p",
+        "duration": "6s",
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "param"),
+    [
+        ({"aspect_ratio": "9:16"}, "aspect_ratio"),
+        ({"size": "1280x720"}, "aspect_ratio"),
+        ({"seconds": 5}, "seconds"),
+    ],
+)
+async def test_strict_edits_reject_a_format(tmp_path: Path, body, param):
+    fake = FakeOmni()
+
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create(
+            {
+                "model": "gemini-omni-1.1-flash-preview",
+                "task": "edit",
+                "prompt": "make it night",
+                "references": [{"type": "video", "url": MP4_URI}],
+                **body,
+            }
+        ),
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["param"] == param
+    assert "keeps the aspect ratio and duration" in error["message"]
+    assert not any(r.method == "POST" for r in fake.requests)
+
+
+async def test_adapted_edits_drop_the_format(tmp_path: Path):
+    fake = FakeOmni()
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create(
+            {
+                "model": "gemini-omni-1.1-flash-preview",
+                "task": "edit",
+                "prompt": "make it night",
+                "aspect_ratio": "9:16",
+                "seconds": 5,
+                "parameter_policy": "adapt",
+                "references": [{"type": "video", "url": MP4_URI}],
+            }
+        ),
+    )
+
+    assert created.status_code == 200
+    assert fake.created()["response_format"] == {"type": "video", "resolution": "720p"}
+    applied = {a["field"]: a["applied"] for a in created.json()["adjustments"]}
+    assert applied == {"aspect_ratio": "adaptive", "seconds": "auto"}
+
+
+@pytest.mark.parametrize(
+    ("model", "body", "param"),
+    [
+        ("gemini-omni-1.1-flash-preview", {"aspect_ratio": "adaptive"}, "aspect_ratio"),
+        ("gemini-omni-1.1-flash-preview", {"seconds": "auto"}, "seconds"),
+        ("gemini-omni-flash-preview", {"aspect_ratio": "adaptive"}, "aspect_ratio"),
+        (
+            "gemini-omni-1.1-flash-preview",
+            {"references": [{"type": "image", "url": PNG_URI}], "seconds": "auto"},
+            "seconds",
+        ),
+    ],
+)
+async def test_only_edits_follow_the_input_format(tmp_path: Path, model, body, param):
+    (response,) = await run(
+        settings_for(tmp_path, "vertex"),
+        FakeOmni(),
+        create({"model": model, "prompt": "x", **body}),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == param
+
+
+async def test_generation_defaults_stay_16_9_and_8_seconds(tmp_path: Path):
+    fake = FakeOmni()
+
+    (created,) = await run(
+        settings_for(tmp_path, "vertex"),
+        fake,
+        create({"model": "gemini-omni-1.1-flash-preview", "prompt": "a boat"}),
+    )
+
+    assert created.status_code == 200
+    assert created.json()["seconds"] == "8"
+    assert fake.created()["response_format"] == {
+        "type": "video",
+        "aspect_ratio": "16:9",
+        "resolution": "720p",
+        "duration": "8s",
+    }
 
 
 async def test_the_first_omni_preview_cannot_extend(tmp_path: Path):

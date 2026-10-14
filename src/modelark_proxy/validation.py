@@ -252,7 +252,14 @@ def validate(
             continue
         for key, values in constraint.then.items():
             if key not in request.params:
-                request.params[key] = values[0]
+                # The model's default when the constraint allows it, else the
+                # first allowed value.
+                default = parameters[key].default if key in parameters else None
+                request.params[key] = (
+                    default
+                    if default is not None and _allowed(default, values)
+                    else values[0]
+                )
                 continue
             request.params[key] = _check_value(
                 key,
