@@ -28,6 +28,10 @@ den Browser.
   auswählen, neu anlegen und beobachten, bis sie bereit sind.
 - **Prompt-Guide-Modal:** Für Modelle mit Guide öffnet ein Button den Guide in
   einem Dialog (`GET /v1/prompt-guides/{id}` mit `Accept: application/json`).
+- **LiteLLM-Export:** Der Button „LiteLLM“ oben rechts zeigt die ganze
+  `model_list` für LiteLLM als YAML (`GET /v1/litellm/config?format=yaml`).
+  „Kopieren“ legt den Text in die Zwischenablage. Siehe
+  [LiteLLM-Integration](../litellm-integration/README.md).
 - **Kostenhinweis je Anbieter:** Vor dem Start erscheint eine Bestätigung, die
   den Abrechnenden nennt (BytePlus, Google (Gemini API), Google Cloud (Vertex AI)
   oder Kling), plus Hinweis, dass das Ergebnis nur etwa 24 Stunden verfügbar ist.

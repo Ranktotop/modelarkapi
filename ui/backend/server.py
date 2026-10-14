@@ -545,6 +545,17 @@ def create_app(
         )
         return JSONResponse(body, status_code=status)
 
+    @app.get("/api/litellm-config")
+    async def litellm_config() -> JSONResponse:
+        response = await proxy.get("/litellm/config", params={"format": "yaml"})
+        if response.is_error:
+            try:
+                body = response.json()
+            except ValueError:
+                body = {"error": {"message": response.text or "LiteLLM export failed"}}
+            return JSONResponse(body, status_code=response.status_code)
+        return JSONResponse({"yaml": response.text})
+
     @app.post("/api/references")
     async def upload_references(request: Request) -> JSONResponse:
         form = await request.form()

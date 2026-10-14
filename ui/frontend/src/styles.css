@@ -314,3 +314,4 @@ textarea::placeholder, input::placeholder { color: #555761; }
 .asset-create { display: grid; gap: 8px; font-size: 12px; }
 .asset-create summary { cursor: pointer; color: var(--muted); }
 .asset-create input { width: 100%; margin-top: 6px; }
+.litellm-yaml { width: 100%; height: min(60vh, 560px); resize: vertical; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: #08090c; color: #c7c9cf; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; line-height: 1.5; white-space: pre; }

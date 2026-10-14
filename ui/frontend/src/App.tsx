@@ -214,6 +214,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   const [error, setError] = useState("");
   const [previewRatio, setPreviewRatio] = useState<number | null>(null);
   const [guide, setGuide] = useState<{ title: string; markdown: string } | null>(null);
+  const [litellmExport, setLitellmExport] = useState<string | null>(null);
   const [extras, setExtras] = useState<TaskExtras>(EMPTY_EXTRAS);
   const [assetRefs, setAssetRefs] = useState<AssetRef[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -261,6 +262,12 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [guide]);
+  useEffect(() => {
+    if (litellmExport === null) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setLitellmExport(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [litellmExport]);
   useEffect(() => {
     if (detailsId && jobs.length && !jobs.some(job => job.id === detailsId)) setDetailsId(null);
   }, [detailsId, jobs]);
@@ -510,6 +517,14 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     }
   }
 
+  async function openLitellmExport() {
+    try {
+      setLitellmExport((await api<{ yaml: string }>("/api/litellm-config")).yaml);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "LiteLLM-Export konnte nicht geladen werden");
+    }
+  }
+
   async function logout() {
     await api("/api/session", { method: "DELETE" });
     onLogout();
@@ -518,7 +533,7 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
   return <div className="studio-shell">
     <header className="topbar">
       <div className="brand"><a className="brand-logo" href="https://marcmeese.de" target="_blank" rel="noreferrer" aria-label="Marc Meese Website"><img src={logoWhite} alt="Marc Meese" /></a><div><strong>AI Video Studio</strong><span>Seedance · Veo · Omni · Kling</span></div></div>
-      <div className="topbar-actions"><span className="retention-pill"><i /> Alles wird nach 24 h gelöscht</span><button className="icon-button" onClick={logout} title="Abmelden"><Icon name="logout" /></button></div>
+      <div className="topbar-actions"><button className="action" onClick={openLitellmExport} title="model_list für die LiteLLM-Konfiguration anzeigen">LiteLLM-Export</button><span className="retention-pill"><i /> Alles wird nach 24 h gelöscht</span><button className="icon-button" onClick={logout} title="Abmelden"><Icon name="logout" /></button></div>
     </header>
 
     <main className="studio-grid">
@@ -588,8 +603,34 @@ function Studio({ config, onLogout }: { config: StudioConfig; onLogout: () => vo
     </footer>
 
     {guide && <div className="modal-backdrop" onMouseDown={() => setGuide(null)}><div className="details-modal guide-modal" role="dialog" aria-modal="true" aria-label={guide.title} onMouseDown={event => event.stopPropagation()}><div className="guide-header"><p className="eyebrow">PROMPT GUIDE</p><button className="icon-button" onClick={() => setGuide(null)} aria-label="Schließen" title="Schließen">✕</button></div><h2>{guide.title}</h2><div className="guide-body">{guide.markdown}</div></div></div>}
+    {litellmExport !== null && <LitellmExport yaml={litellmExport} onClose={() => setLitellmExport(null)} />}
     {confirming && <div className="modal-backdrop" onMouseDown={() => setConfirming(false)}><div className="confirm-modal" onMouseDown={event => event.stopPropagation()}><div className="brand-mark"><Icon name="spark" /></div><p className="eyebrow">READY TO GENERATE</p><h2>Task jetzt starten?</h2><p>Dieser Aufruf kann Kosten bei {billingParty(capabilities)} verursachen. Das Ergebnis bleibt nur ungefähr 24 Stunden verfügbar.</p><div className="confirm-specs"><span>{MODES.find(item => item.id === mode)?.label}</span><span>{effectiveDuration === -1 ? "Automatische Dauer" : `${effectiveDuration} Sekunden`}</span><span>{resolution}</span><span>{effectiveRatio}</span><span>{allKinds.length} Referenzen</span></div><div className="modal-actions"><button className="action" onClick={() => setConfirming(false)}>Zurück</button><button className="generate-button" onClick={generate}><Icon name="spark" /> Kostenpflichtig starten</button></div></div></div>}
     {detailsJob && <JobDetails job={detailsJob} config={config} onClose={() => setDetailsId(null)} />}
+  </div>;
+}
+
+function LitellmExport({ yaml, onClose }: { yaml: string; onClose: () => void }) {
+  const text = useRef<HTMLTextAreaElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(yaml);
+    } catch {
+      // The Clipboard API needs HTTPS; over plain HTTP copy the selection instead.
+      text.current?.select();
+      document.execCommand("copy");
+    }
+    setCopied(true);
+  }
+
+  return <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className="details-modal guide-modal" role="dialog" aria-modal="true" aria-label="LiteLLM-Export" onMouseDown={event => event.stopPropagation()}>
+      <div className="guide-header"><p className="eyebrow">LITELLM-EXPORT</p><button className="icon-button" onClick={onClose} aria-label="Schließen" title="Schließen">✕</button></div>
+      <h2>model_list für LiteLLM</h2>
+      <textarea ref={text} className="litellm-yaml" readOnly spellCheck={false} value={yaml} onFocus={event => event.currentTarget.select()} />
+      <div className="modal-actions"><button className="action" onClick={onClose}>Schließen</button><button className="action primary" onClick={copy}>{copied ? "Kopiert" : "Kopieren"}</button></div>
+    </div>
   </div>;
 }
 
